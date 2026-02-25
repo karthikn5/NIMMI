@@ -6,7 +6,7 @@ name = "nimmi-backend"
 rootDir = "backend"
 
 [services.build]
-buildCommand = "pip install -r requirements.txt"
+buildCommand = "pip3 install -r requirements.txt"
 
 [services.deploy]
 startCommand = "gunicorn -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT main:app"

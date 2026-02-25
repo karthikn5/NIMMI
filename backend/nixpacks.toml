@@ -1,2 +1,5 @@
+[phases.install]
+cmds = ["python -m pip install -r requirements.txt"]
+
 [start]
 cmd = "gunicorn -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT main:app"

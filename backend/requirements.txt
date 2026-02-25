@@ -1,6 +1,5 @@
 fastapi
 uvicorn
-gunicorn
 sqlalchemy
 asyncpg
 python-dotenv
@@ -11,3 +10,7 @@ pydantic
 razorpay
 bcrypt
 httpx
+beautifulsoup4
+youtube-transcript-api
+openai
+groq

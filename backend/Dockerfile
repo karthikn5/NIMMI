@@ -9,10 +9,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY backend/ .
 
+# Remove .env if it exists (Railway provides env vars - don't let local .env override)
+RUN rm -f .env .env.local .env.railway
+
 # Create uploads directory
 RUN mkdir -p static/uploads
 
-# Expose port (Railway sets $PORT automatically)
-ENV PORT=8000
-
-CMD gunicorn -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT main:app
+# Use single uvicorn process - lower memory than gunicorn+workers on Railway free tier
+CMD uvicorn main:app --host 0.0.0.0 --port $PORT

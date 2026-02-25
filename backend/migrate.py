@@ -63,6 +63,25 @@ async def run_migration():
             print("✓ Added 'captured_data' column to conversations table")
         except Exception as e:
             print(f"Note: captured_data column - {e}")
+            
+        # Add AI Provider columns
+        try:
+            await conn.execute(text("ALTER TABLE bots ADD COLUMN IF NOT EXISTS ai_provider VARCHAR DEFAULT 'google'"))
+            print("✓ Added 'ai_provider' column")
+        except Exception as e:
+            print(f"Note: ai_provider column - {e}")
+
+        try:
+            await conn.execute(text("ALTER TABLE bots ADD COLUMN IF NOT EXISTS ai_model VARCHAR DEFAULT 'gemini-2.0-flash'"))
+            print("✓ Added 'ai_model' column")
+        except Exception as e:
+            print(f"Note: ai_model column - {e}")
+
+        try:
+            await conn.execute(text("ALTER TABLE bots ADD COLUMN IF NOT EXISTS ai_api_key VARCHAR"))
+            print("✓ Added 'ai_api_key' column")
+        except Exception as e:
+            print(f"Note: ai_api_key column - {e}")
     
     await engine.dispose()
     print("\n✅ Migration complete!")

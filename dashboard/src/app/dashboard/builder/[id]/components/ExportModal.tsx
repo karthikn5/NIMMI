@@ -42,19 +42,74 @@ export default function ExportModal({ botId, onClose }: ExportModalProps) {
     const handlePay = async () => {
         setPaying(true);
         try {
-            const res = await fetch(`${apiBase}/api/payments/create-checkout-session?bot_id=${botId}`, {
+            // 1. Create Razorpay order
+            const res = await fetch(`${apiBase}/api/payments/create-order?bot_id=${botId}`, {
                 method: 'POST'
             });
-            const data = await res.json();
-            if (res.ok && data.url) {
-                window.location.href = data.url;
-            } else {
-                alert("Failed to initiate payment: " + (data.detail || "Unknown error"));
+            const order = await res.json();
+
+            if (!res.ok) {
+                alert("Failed to initiate payment: " + (order.detail || "Unknown error"));
+                return;
             }
+
+            if (order.already_unlocked) {
+                setIsUnlocked(true);
+                return;
+            }
+
+            // 2. Load Razorpay script if not already loaded
+            if (!(window as any).Razorpay) {
+                await new Promise<void>((resolve, reject) => {
+                    const script = document.createElement('script');
+                    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+                    script.onload = () => resolve();
+                    script.onerror = () => reject(new Error("Failed to load Razorpay script"));
+                    document.body.appendChild(script);
+                });
+            }
+
+            // 3. Open Razorpay checkout modal
+            const options = {
+                key: order.key_id,
+                amount: order.amount,
+                currency: order.currency,
+                name: "Nimmi AI",
+                description: `Unlock Export – ${order.bot_name}`,
+                order_id: order.order_id,
+                handler: async (response: any) => {
+                    // 4. Verify payment on backend
+                    const verifyRes = await fetch(`${apiBase}/api/payments/verify`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            razorpay_order_id: response.razorpay_order_id,
+                            razorpay_payment_id: response.razorpay_payment_id,
+                            razorpay_signature: response.razorpay_signature,
+                            bot_id: botId,
+                        })
+                    });
+                    const verifyData = await verifyRes.json();
+                    if (verifyRes.ok && verifyData.success) {
+                        window.location.href = verifyData.redirect_url;
+                    } else {
+                        alert("Payment verification failed. Please contact support.");
+                        setPaying(false);
+                    }
+                },
+                prefill: {},
+                theme: { color: "#2563eb" },
+                modal: {
+                    ondismiss: () => { setPaying(false); }
+                }
+            };
+
+            const rzp = new (window as any).Razorpay(options);
+            rzp.open();
+
         } catch (err) {
             console.error("Payment error:", err);
-            alert("Payment failed to start.");
-        } finally {
+            alert("Payment failed to start. Please try again.");
             setPaying(false);
         }
     };

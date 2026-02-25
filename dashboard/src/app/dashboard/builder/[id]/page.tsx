@@ -5,7 +5,7 @@ import {
     Bot, Palette, Database, Brain, GitBranch,
     ChevronLeft, Save, Upload, Plus, MessageSquare,
     Smartphone, Monitor, Send, Image, Settings as SettingsIcon,
-    Play, Check, Inbox, List
+    Play, Check, Inbox, List, Search, ChevronDown, X, Globe, Video
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -19,7 +19,50 @@ import ExportModal from "./components/ExportModal";
 // Dynamic import for FlowBuilder to avoid SSR issues
 const FlowBuilder = dynamic(() => import("./components/FlowBuilder"), { ssr: false });
 
-const GOOGLE_FONTS_URL = "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Roboto:wght@400;700&family=Outfit:wght@400;700&display=swap";
+const GOOGLE_FONTS_BATCH_1 = "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Roboto:wght@400;700&family=Open+Sans:wght@400;700&family=Montserrat:wght@400;700&family=Poppins:wght@400;700&family=Lato:wght@400;700&family=Oswald:wght@400;700&family=Raleway:wght@400;700&family=Nunito:wght@400;700&family=Ubuntu:wght@400;700&family=Playfair+Display:wght@400;700&family=Lora:wght@400;700&family=Merriweather:wght@400;700&family=PT+Sans:wght@400;700&family=PT+Serif:wght@400;700&family=Noto+Sans:wght@400;700&family=Noto+Serif:wght@400;700&family=Work+Sans:wght@400;700&family=Fira+Sans:wght@400;700&family=Quicksand:wght@400;700&family=Josefin+Sans:wght@400;700&display=swap";
+const GOOGLE_FONTS_BATCH_2 = "https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@400;700&family=Caveat:wght@400;700&family=Lexend:wght@400;700&family=Kanit:wght@400;700&family=Outfit:wght@400;700&family=Syne:wght@400;700&family=Darker+Grotesque:wght@400;700&family=DM+Sans:wght@400;700&family=Manrope:wght@400;700&family=Sora:wght@400;700&family=Urbanist:wght@400;700&family=Figtree:wght@400;700&family=Archivo:wght@400;700&family=Schibsted+Grotesk:wght@400;700&family=Hanken+Grotesk:wght@400;700&family=Bricolage+Grotesque:wght@400;700&family=Young+Serif&family=Instrument+Serif&family=Playpen+Sans&family=Cabin:wght@400;700&display=swap";
+const GOOGLE_FONTS_BATCH_3 = "https://fonts.googleapis.com/css2?family=Arvo:wght@400;700&family=Exo+2:wght@400;700&family=Muli:wght@400;700&family=Titillium+Web:wght@400;700&family=Dosis:wght@400;700&family=Oxygen:wght@400;700&family=Hind:wght@400;700&family=Libre+Baskerville:wght@400;700&family=Anton&family=Karla:wght@400;700&family=Bitter:wght@400;700&family=Varela+Round&family=Crimson+Text:wght@400;700&family=Barlow:wght@400;700&family=Asap:wght@400;700&family=Fjalla+One&family=Pacifico&family=Questrial&family=Assistant:wght@400;700&family=Signika:wght@400;700&display=swap";
+const GOOGLE_FONTS_BATCH_4 = "https://fonts.googleapis.com/css2?family=Alegreya:wght@400;700&family=Alegreya+Sans:wght@400;700&family=Righteous&family=Patua+One&family=Comfortaa:wght@400;700&family=Lobster&family=Dancing+Script:wght@400;700&family=Kaushan+Script&family=Satisfy&family=Great+Vibes&family=Sacramento&family=Yellowtail&family=Cookie&family=Tangerine&family=Special+Elite&family=Luckiest+Guy&family=Bangers&family=Press+Start+2P&family=VT323&display=swap";
+const GOOGLE_FONTS_BATCH_5 = "https://fonts.googleapis.com/css2?family=Nanum+Gothic:wght@400;700&family=Cairo:wght@400;700&family=Mukta:wght@400;700&family=Heebo:wght@400;700&family=Prompt:wght@400;700&family=Spectral:wght@400;700&family=Cardo:wght@400;700&family=Crimson+Pro:wght@400;700&family=Eczar:wght@400;700&family=Domine:wght@400;700&family=Old+Standard+TT:wght@400;700&family=Cormorant:wght@400;700&family=Prata&family=Marcellus&family=Josefin+Slab:wght@400;700&family=BioRhyme:wght@400;700&family=Chivo:wght@400;700&family=Overpass:wght@400;700&family=Public+Sans:wght@400;700&family=Fraunces:wght@400;700&family=Besley:wght@400;700&family=Casta&family=Delius&family=Neucha&display=swap";
+
+const FONT_OPTIONS = [
+    { label: "Sans Serif", value: "sans-serif" }, { label: "Serif", value: "serif" }, { label: "Monospace", value: "monospace" },
+    { label: "Inter", value: "'Inter', sans-serif" }, { label: "Roboto", value: "'Roboto', sans-serif" }, { label: "Open Sans", value: "'Open Sans', sans-serif" },
+    { label: "Montserrat", value: "'Montserrat', sans-serif" }, { label: "Poppins", value: "'Poppins', sans-serif" }, { label: "Lato", value: "'Lato', sans-serif" },
+    { label: "Oswald", value: "'Oswald', sans-serif" }, { label: "Raleway", value: "'Raleway', sans-serif" }, { label: "Nunito", value: "'Nunito', sans-serif" },
+    { label: "Ubuntu", value: "'Ubuntu', sans-serif" }, { label: "Playfair Display", value: "'Playfair Display', serif" }, { label: "Lora", value: "'Lora', serif" },
+    { label: "Merriweather", value: "'Merriweather', serif" }, { label: "PT Sans", value: "'PT Sans', sans-serif" }, { label: "PT Serif", value: "'PT Serif', serif" },
+    { label: "Noto Sans", value: "'Noto Sans', sans-serif" }, { label: "Noto Serif", value: "'Noto Serif', serif" }, { label: "Work Sans", value: "'Work Sans', sans-serif" },
+    { label: "Fira Sans", value: "'Fira Sans', sans-serif" }, { label: "Quicksand", value: "'Quicksand', sans-serif" }, { label: "Josefin Sans", value: "'Josefin Sans', sans-serif" },
+    { label: "Bebas Neue", value: "'Bebas Neue', cursive" }, { label: "Space Grotesk", value: "'Space Grotesk', sans-serif" }, { label: "Caveat", value: "'Caveat', cursive" },
+    { label: "Lexend", value: "'Lexend', sans-serif" }, { label: "Kanit", value: "'Kanit', sans-serif" }, { label: "Outfit", value: "'Outfit', sans-serif" },
+    { label: "Syne", value: "'Syne', sans-serif" }, { label: "Darker Grotesque", value: "'Darker Grotesque', sans-serif" }, { label: "DM Sans", value: "'DM Sans', sans-serif" },
+    { label: "Manrope", value: "'Manrope', sans-serif" }, { label: "Sora", value: "'Sora', sans-serif" }, { label: "Urbanist", value: "'Urbanist', sans-serif" },
+    { label: "Figtree", value: "'Figtree', sans-serif" }, { label: "Archivo", value: "'Archivo', sans-serif" }, { label: "Schibsted Grotesk", value: "'Schibsted Grotesk', sans-serif" },
+    { label: "Hanken Grotesk", value: "'Hanken Grotesk', sans-serif" }, { label: "Bricolage Grotesque", value: "'Bricolage Grotesque', sans-serif" }, { label: "Young Serif", value: "'Young Serif', serif" },
+    { label: "Instrument Serif", value: "'Instrument Serif', serif" }, { label: "Playpen Sans", value: "'Playpen Sans', cursive" }, { label: "Cabin", value: "'Cabin', sans-serif" },
+    { label: "Arvo", value: "'Arvo', serif" }, { label: "Exo 2", value: "'Exo 2', sans-serif" }, { label: "Muli", value: "'Muli', sans-serif" },
+    { label: "Titillium Web", value: "'Titillium Web', sans-serif" }, { label: "Dosis", value: "'Dosis', sans-serif" }, { label: "Oxygen", value: "'Oxygen', sans-serif" },
+    { label: "Hind", value: "'Hind', sans-serif" }, { label: "Libre Baskerville", value: "'Libre Baskerville', serif" }, { label: "Anton", value: "'Anton', sans-serif" },
+    { label: "Karla", value: "'Karla', sans-serif" }, { label: "Bitter", value: "'Bitter', serif" }, { label: "Varela Round", value: "'Varela Round', sans-serif" },
+    { label: "Crimson Text", value: "'Crimson Text', serif" }, { label: "Barlow", value: "'Barlow', sans-serif" }, { label: "Asap", value: "'Asap', sans-serif" },
+    { label: "Fjalla One", value: "'Fjalla One', sans-serif" }, { label: "Pacifico", value: "'Pacifico', cursive" }, { label: "Questrial", value: "'Questrial', sans-serif" },
+    { label: "Assistant", value: "'Assistant', sans-serif" }, { label: "Signika", value: "'Signika', sans-serif" }, { label: "Alegreya", value: "'Alegreya', serif" },
+    { label: "Alegreya Sans", value: "'Alegreya Sans', sans-serif" }, { label: "Righteous", value: "'Righteous', cursive" }, { label: "Patua One", value: "'Patua One', cursive" },
+    { label: "Comfortaa", value: "'Comfortaa', cursive" }, { label: "Lobster", value: "'Lobster', cursive" }, { label: "Dancing Script", value: "'Dancing Script', cursive" },
+    { label: "Kaushan Script", value: "'Kaushan Script', cursive" }, { label: "Satisfy", value: "'Satisfy', cursive" }, { label: "Great Vibes", value: "'Great Vibes', cursive" },
+    { label: "Sacramento", value: "'Sacramento', cursive" }, { label: "Yellowtail", value: "'Yellowtail', cursive" }, { label: "Cookie", value: "'Cookie', cursive" },
+    { label: "Tangerine", value: "'Tangerine', cursive" }, { label: "Special Elite", value: "'Special Elite', cursive" }, { label: "Luckiest Guy", value: "'Luckiest Guy', cursive" },
+    { label: "Bangers", value: "'Bangers', cursive" }, { label: "Press Start 2P", value: "'Press Start 2P', cursive" }, { label: "VT323", value: "'VT323', monospace" },
+    { label: "Nanum Gothic", value: "'Nanum Gothic', sans-serif" }, { label: "Cairo", value: "'Cairo', sans-serif" }, { label: "Mukta", value: "'Mukta', sans-serif" },
+    { label: "Heebo", value: "'Heebo', sans-serif" }, { label: "Prompt", value: "'Prompt', sans-serif" }, { label: "Spectral", value: "'Spectral', serif" },
+    { label: "Cardo", value: "'Cardo', serif" }, { label: "Crimson Pro", value: "'Crimson Pro', serif" }, { label: "Eczar", value: "'Eczar', serif" },
+    { label: "Domine", value: "'Domine', serif" }, { label: "Old Standard TT", value: "'Old Standard TT', serif" }, { label: "Cormorant", value: "'Cormorant', serif" },
+    { label: "Prata", value: "'Prata', serif" }, { label: "Marcellus", value: "'Marcellus', serif" }, { label: "Josefin Slab", value: "'Josefin Slab', serif" },
+    { label: "BioRhyme", value: "'BioRhyme', serif" }, { label: "Chivo", value: "'Chivo', sans-serif" }, { label: "Overpass", value: "'Overpass', sans-serif" },
+    { label: "Public Sans", value: "'Public Sans', sans-serif" }, { label: "Fraunces", value: "'Fraunces', serif" }, { label: "Besley", value: "'Besley', serif" },
+    { label: "Casta", value: "'Casta', serif" }, { label: "Delius", value: "'Delius', cursive" }, { label: "Neucha", value: "'Neucha', cursive" }
+];
 
 function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params);
@@ -45,15 +88,27 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     const [logoSize, setLogoSize] = useState(32);
     const [rightPadding, setRightPadding] = useState(20);
     const [bottomPadding, setBottomPadding] = useState(20);
+    const [fontSearch, setFontSearch] = useState("");
+    const [backgroundImage, setBackgroundImage] = useState("");
+    const [backgroundOpacity, setBackgroundOpacity] = useState(1);
+    const [showFontDropdown, setShowFontDropdown] = useState(false);
+    const fontDropdownRef = useRef<HTMLDivElement>(null);
     const [knowledgeBase, setKnowledgeBase] = useState("");
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
     const [logoLoading, setLogoLoading] = useState(false);
     const [systemPrompt, setSystemPrompt] = useState("");
+    const [aiProvider, setAiProvider] = useState("google");
+    const [aiModel, setAiModel] = useState("gemini-1.5-flash");
+    const [aiApiKey, setAiApiKey] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
     const knowledgeInputRef = useRef<HTMLInputElement>(null);
     const [knowledgeLoading, setKnowledgeLoading] = useState(false);
+    const [crawlUrl, setCrawlUrl] = useState("");
+    const [youtubeUrl, setYoutubeUrl] = useState("");
+    const [liveSearchEnabled, setLiveSearchEnabled] = useState(false);
+    const [crawling, setCrawling] = useState(false);
     const router = useRouter();
 
     // Flow state
@@ -97,85 +152,106 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     }, [activeTab, id]);
 
     useEffect(() => {
-        const fetchConfig = async () => {
-            try {
-                const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bots/${id}/config`);
-                const data = await res.json();
-                if (res.ok) {
-                    setBotName(data.bot_name || "Nimmi Assistant");
-                    if (data.visual_config) {
-                        setColor(data.visual_config.color || "#3b82f6");
-                        setBotLogo(data.visual_config.logo_url || "");
-                        setPosition(data.visual_config.position || "right");
-                        setFontFamily(data.visual_config.font_family || "sans-serif");
-                        setTextColor(data.visual_config.text_color || "#ffffff");
-                        setInputBgColor(data.visual_config.input_bg_color || "#ffffff");
-                        setInputTextColor(data.visual_config.input_text_color || "#000000");
-                        setUserBubbleBg(data.visual_config.user_bubble_bg || data.visual_config.color || "#3b82f6");
-                        setUserBubbleText(data.visual_config.user_bubble_text || data.visual_config.text_color || "#ffffff");
-                        setAssistantBubbleBg(data.visual_config.assistant_bubble_bg || "#e5e7eb");
-                        setAssistantBubbleText(data.visual_config.assistant_bubble_text || "#000000");
-                        setChatBgColor(data.visual_config.chat_bg_color || "#f9fafb");
-                        setHeaderHeight(data.visual_config.header_height || 80);
-                        setBorderRadius(data.visual_config.border_radius || 24);
-                        setLauncherShape(data.visual_config.launcher_shape || "circle");
-                        setShowTail(data.visual_config.show_tail !== false);
-                        setShowLauncherBg(data.visual_config.show_launcher_bg !== false);
-                        setLogoSize(data.visual_config.logo_size || 32);
-                        setRightPadding(data.visual_config.right_padding || 20);
-                        setBottomPadding(data.visual_config.bottom_padding || 20);
-                    }
-                    setSystemPrompt(data.system_prompt || "");
-                    setKnowledgeBase(data.knowledge_base || "");
-                    if (data.flow_data) {
-                        setFlowNodes(data.flow_data.nodes || []);
-                        setFlowEdges(data.flow_data.edges || []);
-                    }
-
-                    // Sync lastSavedState to prevent redundant save on load
-                    lastSavedState.current = JSON.stringify({
-                        botName: data.bot_name || "Nimmi Assistant",
-                        systemPrompt: data.system_prompt || "",
-                        knowledgeBase: data.knowledge_base || "",
-                        color: data.visual_config?.color || "#3b82f6",
-                        botLogo: data.visual_config?.logo_url || "",
-                        position: data.visual_config?.position || "right",
-                        fontFamily: data.visual_config?.font_family || "sans-serif",
-                        textColor: data.visual_config?.text_color || "#ffffff",
-                        inputBgColor: data.visual_config?.input_bg_color || "#ffffff",
-                        inputTextColor: data.visual_config?.input_text_color || "#000000",
-                        userBubbleBg: data.visual_config?.user_bubble_bg || data.visual_config?.color || "#3b82f6",
-                        userBubbleText: data.visual_config?.user_bubble_text || data.visual_config?.text_color || "#ffffff",
-                        assistantBubbleBg: data.visual_config?.assistant_bubble_bg || "#e5e7eb",
-                        assistantBubbleText: data.visual_config?.assistant_bubble_text || "#000000",
-                        chatBgColor: data.visual_config?.chat_bg_color || "#f9fafb",
-                        headerHeight: data.visual_config?.header_height || 80,
-                        borderRadius: data.visual_config?.border_radius || 24,
-                        launcherShape: data.visual_config?.launcher_shape || "circle",
-                        showTail: data.visual_config?.show_tail !== false,
-                        showLauncherBg: data.visual_config?.show_launcher_bg !== false,
-                        logoSize: data.visual_config?.logo_size || 32,
-                        rightPadding: data.visual_config?.right_padding || 20,
-                        bottomPadding: data.visual_config?.bottom_padding || 20,
-                        nodes: data.flow_data?.nodes || [],
-                        edges: data.flow_data?.edges || []
-                    });
-                }
-            } catch (err) {
-                console.error("Failed to fetch bot config:", err);
-            } finally {
-                setLoading(false);
+        const handleClickOutside = (event: MouseEvent) => {
+            if (fontDropdownRef.current && !fontDropdownRef.current.contains(event.target as any)) {
+                setShowFontDropdown(false);
             }
         };
-        fetchConfig();
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    const fetchConfig = useCallback(async () => {
+        try {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bots/${id}/config`);
+            const data = await res.json();
+            if (res.ok) {
+                setBotName(data.bot_name || "Nimmi Assistant");
+                if (data.visual_config) {
+                    setColor(data.visual_config.color || "#3b82f6");
+                    setBotLogo(data.visual_config.logo_url || "");
+                    setPosition(data.visual_config.position || "right");
+                    setFontFamily(data.visual_config.font_family || "sans-serif");
+                    setTextColor(data.visual_config.text_color || "#ffffff");
+                    setInputBgColor(data.visual_config.input_bg_color || "#ffffff");
+                    setInputTextColor(data.visual_config.input_text_color || "#000000");
+                    setUserBubbleBg(data.visual_config.user_bubble_bg || data.visual_config.color || "#3b82f6");
+                    setUserBubbleText(data.visual_config.user_bubble_text || data.visual_config.text_color || "#ffffff");
+                    setAssistantBubbleBg(data.visual_config.assistant_bubble_bg || "#e5e7eb");
+                    setAssistantBubbleText(data.visual_config.assistant_bubble_text || "#000000");
+                    setChatBgColor(data.visual_config.chat_bg_color || "#f9fafb");
+                    setHeaderHeight(data.visual_config.header_height || 80);
+                    setBorderRadius(data.visual_config.border_radius || 24);
+                    setLauncherShape(data.visual_config.launcher_shape || "circle");
+                    setShowTail(data.visual_config.show_tail !== false);
+                    setShowLauncherBg(data.visual_config.show_launcher_bg !== false);
+                    setLogoSize(data.visual_config.logo_size || 32);
+                    setRightPadding(data.visual_config.right_padding || 20);
+                    setBottomPadding(data.visual_config.bottom_padding || 20);
+                    setBackgroundImage(data.visual_config.background_image || "");
+                    setBackgroundOpacity(data.visual_config.background_opacity ?? 1);
+                }
+                setSystemPrompt(data.system_prompt || "");
+                setKnowledgeBase(data.knowledge_base || "");
+                setAiProvider(data.ai_provider || "google");
+                setAiModel(data.ai_model || "gemini-1.5-flash");
+                setAiApiKey(data.ai_api_key || "");
+                if (data.flow_data) {
+                    setFlowNodes(data.flow_data.nodes || []);
+                    setFlowEdges(data.flow_data.edges || []);
+                }
+
+                lastSavedState.current = JSON.stringify({
+                    botName: data.bot_name || "Nimmi Assistant",
+                    systemPrompt: data.system_prompt || "",
+                    knowledgeBase: data.knowledge_base || "",
+                    color: data.visual_config?.color || "#3b82f6",
+                    botLogo: data.visual_config?.logo_url || "",
+                    position: data.visual_config?.position || "right",
+                    fontFamily: data.visual_config?.font_family || "sans-serif",
+                    textColor: data.visual_config?.text_color || "#ffffff",
+                    inputBgColor: data.visual_config?.input_bg_color || "#ffffff",
+                    inputTextColor: data.visual_config?.input_text_color || "#000000",
+                    userBubbleBg: data.visual_config?.user_bubble_bg || data.visual_config?.color || "#3b82f6",
+                    userBubbleText: data.visual_config?.user_bubble_text || data.visual_config?.text_color || "#ffffff",
+                    assistantBubbleBg: data.visual_config?.assistant_bubble_bg || "#e5e7eb",
+                    assistantBubbleText: data.visual_config?.assistant_bubble_text || "#000000",
+                    chatBgColor: data.visual_config?.chat_bg_color || "#f9fafb",
+                    headerHeight: data.visual_config?.header_height || 80,
+                    borderRadius: data.visual_config?.border_radius || 24,
+                    launcherShape: data.visual_config?.launcher_shape || "circle",
+                    showTail: data.visual_config?.show_tail !== false,
+                    showLauncherBg: data.visual_config?.show_launcher_bg !== false,
+                    logoSize: data.visual_config?.logo_size || 32,
+                    rightPadding: data.visual_config?.right_padding || 20,
+                    bottomPadding: data.visual_config?.bottom_padding || 20,
+                    backgroundImage: data.visual_config?.background_image || "",
+                    backgroundOpacity: data.visual_config?.background_opacity ?? 1,
+                    nodes: data.flow_data?.nodes || [],
+                    edges: data.flow_data?.edges || [],
+                    aiProvider: data.ai_provider || "google",
+                    aiModel: data.ai_model || "gemini-1.5-flash",
+                    aiApiKey: data.ai_api_key || ""
+                });
+            }
+        } catch (err) {
+            console.error("Failed to fetch bot config:", err);
+        } finally {
+            setLoading(false);
+        }
     }, [id]);
+
+    useEffect(() => {
+        fetchConfig();
+    }, [id, fetchConfig]);
 
     const handleSave = async (updatedNodes?: Node[], updatedEdges?: Edge[], overrideLogo?: string) => {
         try {
             const currentState = JSON.stringify({
-                botName, systemPrompt, knowledgeBase, color, botLogo, position, fontFamily, textColor, inputBgColor, inputTextColor, userBubbleBg, userBubbleText, assistantBubbleBg, assistantBubbleText, chatBgColor, headerHeight, borderRadius, launcherShape, showTail, showLauncherBg, logoSize, rightPadding, bottomPadding,
+                botName, systemPrompt, knowledgeBase, color, botLogo, position, fontFamily, textColor, inputBgColor, inputTextColor, userBubbleBg, userBubbleText, assistantBubbleBg, assistantBubbleText, chatBgColor, headerHeight, borderRadius, launcherShape, showTail, showLauncherBg, logoSize, rightPadding, bottomPadding, backgroundImage, backgroundOpacity,
                 nodes: updatedNodes || flowNodes,
-                edges: updatedEdges || flowEdges
+                edges: updatedEdges || flowEdges,
+                aiProvider, aiModel, aiApiKey
             });
 
             if (currentState === lastSavedState.current) {
@@ -190,6 +266,9 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                     bot_name: botName,
                     system_prompt: systemPrompt,
                     knowledge_base: knowledgeBase,
+                    ai_provider: aiProvider,
+                    ai_model: aiModel,
+                    ai_api_key: aiApiKey,
                     visual_config: {
                         color,
                         logo_url: overrideLogo || botLogo,
@@ -210,7 +289,9 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                         show_launcher_bg: showLauncherBg,
                         logo_size: logoSize,
                         right_padding: rightPadding,
-                        bottom_padding: bottomPadding
+                        bottom_padding: bottomPadding,
+                        background_image: backgroundImage,
+                        background_opacity: backgroundOpacity
                     },
                     flow_data: {
                         nodes: updatedNodes || flowNodes,
@@ -237,7 +318,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
             }, 1000);
             return () => clearTimeout(timer);
         }
-    }, [botName, systemPrompt, knowledgeBase, color, botLogo, position, fontFamily, textColor, inputBgColor, inputTextColor, userBubbleBg, userBubbleText, assistantBubbleBg, assistantBubbleText, chatBgColor, headerHeight, borderRadius, launcherShape, showTail, showLauncherBg, logoSize, rightPadding, bottomPadding, loading]);
+    }, [botName, systemPrompt, knowledgeBase, aiProvider, aiModel, aiApiKey, color, botLogo, position, fontFamily, textColor, inputBgColor, inputTextColor, userBubbleBg, userBubbleText, assistantBubbleBg, assistantBubbleText, chatBgColor, headerHeight, borderRadius, launcherShape, showTail, showLauncherBg, logoSize, rightPadding, bottomPadding, backgroundImage, backgroundOpacity, loading]);
 
     const handleFlowSave = useCallback((nodes: Node[], edges: Edge[]) => {
         setFlowNodes(nodes);
@@ -268,6 +349,54 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
         } finally {
             setKnowledgeLoading(false);
             if (knowledgeInputRef.current) knowledgeInputRef.current.value = "";
+        }
+    };
+
+    const handleCrawl = async () => {
+        if (!crawlUrl) return;
+        setCrawling(true);
+        try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/knowledge/crawl`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ bot_id: id, url: crawlUrl })
+            });
+            const data = await response.json();
+            if (response.ok && data.status === "success") {
+                fetchConfig();
+                alert("Website crawled successfully!");
+                setCrawlUrl("");
+            } else {
+                alert(data.error || "Failed to crawl website");
+            }
+        } catch (error) {
+            console.error("Crawl error:", error);
+        } finally {
+            setCrawling(false);
+        }
+    };
+
+    const handleYouTubeExtract = async () => {
+        if (!youtubeUrl) return;
+        setCrawling(true);
+        try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/knowledge/youtube`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ bot_id: id, url: youtubeUrl })
+            });
+            const data = await response.json();
+            if (response.ok && data.status === "success") {
+                fetchConfig();
+                alert("YouTube transcript extracted successfully!");
+                setYoutubeUrl("");
+            } else {
+                alert(data.error || "Failed to extract transcript");
+            }
+        } catch (error) {
+            console.error("YouTube error:", error);
+        } finally {
+            setCrawling(false);
         }
     };
     const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -410,7 +539,11 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     // Default layout for other tabs
     return (
         <div className="flex h-screen bg-[#050505] text-white">
-            <link rel="stylesheet" href={GOOGLE_FONTS_URL} />
+            <link rel="stylesheet" href={GOOGLE_FONTS_BATCH_1} />
+            <link rel="stylesheet" href={GOOGLE_FONTS_BATCH_2} />
+            <link rel="stylesheet" href={GOOGLE_FONTS_BATCH_3} />
+            <link rel="stylesheet" href={GOOGLE_FONTS_BATCH_4} />
+            <link rel="stylesheet" href={GOOGLE_FONTS_BATCH_5} />
             {/* Sidebar / Left Config */}
             <aside className="w-[450px] border-r border-white/5 flex flex-col">
                 <header className="px-4 py-4 border-b border-white/5 flex items-center justify-between gap-3">
@@ -575,18 +708,72 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                             <div className="relative w-10 h-10 rounded-full border border-white/20 overflow-hidden cursor-pointer hover:scale-110 transition-transform flex-shrink-0 shadow-lg ring-2 ring-white/5">
                                                 <input type="color" value={color} className="absolute inset-0 w-[200%] h-[200%] -top-1/2 -left-1/2 cursor-pointer" onChange={(e) => setColor(e.target.value)} />
                                             </div>
-                                            <select
-                                                value={fontFamily}
-                                                onChange={(e) => setFontFamily(e.target.value)}
-                                                className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-blue-500 transition-colors"
-                                            >
-                                                <option value="sans-serif">Sans Serif</option>
-                                                <option value="serif">Serif</option>
-                                                <option value="monospace">Monospace</option>
-                                                <option value="'Inter', sans-serif">Inter</option>
-                                                <option value="'Roboto', sans-serif">Roboto</option>
-                                                <option value="'Outfit', sans-serif">Outfit</option>
-                                            </select>
+                                            <div className="flex-1 relative" ref={fontDropdownRef}>
+                                                <button
+                                                    onClick={() => setShowFontDropdown(!showFontDropdown)}
+                                                    className="w-full bg-[#111] border border-white/10 rounded-xl px-3 py-2 text-xs flex items-center justify-between hover:border-blue-500 transition-colors text-white"
+                                                >
+                                                    <span className="truncate">
+                                                        {FONT_OPTIONS.find(f => f.value === fontFamily)?.label || "Select Font"}
+                                                    </span>
+                                                    <ChevronDown size={14} className={`transition-transform grow-0 shrink-0 ${showFontDropdown ? 'rotate-180' : ''}`} />
+                                                </button>
+
+                                                <AnimatePresence>
+                                                    {showFontDropdown && (
+                                                        <motion.div
+                                                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                                                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                                                            className="absolute bottom-full mb-2 left-0 w-64 bg-[#111] border border-white/10 rounded-2xl shadow-2xl z-[100] overflow-hidden flex flex-col"
+                                                        >
+                                                            <div className="p-2 border-b border-white/5">
+                                                                <div className="relative">
+                                                                    <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+                                                                    <input
+                                                                        autoFocus
+                                                                        type="text"
+                                                                        placeholder="Search fonts..."
+                                                                        value={fontSearch}
+                                                                        onChange={(e) => setFontSearch(e.target.value)}
+                                                                        className="w-full bg-white/5 border border-white/5 rounded-lg pl-8 pr-8 py-1.5 text-[11px] outline-none focus:border-blue-500/50 transition-colors"
+                                                                    />
+                                                                    {fontSearch && (
+                                                                        <button
+                                                                            onClick={() => setFontSearch("")}
+                                                                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 hover:bg-white/10 rounded"
+                                                                        >
+                                                                            <X size={10} className="text-white/40" />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                            <div className="max-h-60 overflow-y-auto p-1 custom-scrollbar">
+                                                                {FONT_OPTIONS.filter(f => f.label.toLowerCase().includes(fontSearch.toLowerCase())).map((font) => (
+                                                                    <button
+                                                                        key={font.value}
+                                                                        onClick={() => {
+                                                                            setFontFamily(font.value);
+                                                                            setShowFontDropdown(false);
+                                                                            setFontSearch("");
+                                                                        }}
+                                                                        className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center justify-between group ${fontFamily === font.value ? 'bg-blue-600 text-white' : 'hover:bg-white/5 text-white/70 hover:text-white'}`}
+                                                                        style={{ fontFamily: font.value.includes("'") ? font.value : font.value }}
+                                                                    >
+                                                                        <span>{font.label}</span>
+                                                                        {fontFamily === font.value && <Check size={12} />}
+                                                                    </button>
+                                                                ))}
+                                                                {FONT_OPTIONS.filter(f => f.label.toLowerCase().includes(fontSearch.toLowerCase())).length === 0 && (
+                                                                    <div className="px-3 py-4 text-center text-white/20 text-[10px] uppercase font-bold tracking-widest">
+                                                                        No fonts found
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </motion.div>
+                                                    )}
+                                                </AnimatePresence>
+                                            </div>
                                         </div>
                                     </div>
 
@@ -675,7 +862,71 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                 </div>
 
                                 <div className="p-4 bg-white/5 rounded-2xl border border-white/10 space-y-6">
-                                    <div className="grid grid-cols-4 gap-4">
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-[10px] font-bold text-white/50 mb-3 uppercase tracking-widest">Chat Background Image</label>
+                                            <div className="flex gap-2">
+                                                <div className="relative flex-1">
+                                                    <input
+                                                        type="text"
+                                                        placeholder="https://example.com/bg.png"
+                                                        value={backgroundImage}
+                                                        onChange={(e) => setBackgroundImage(e.target.value)}
+                                                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs outline-none focus:border-blue-500 transition-colors"
+                                                    />
+                                                </div>
+                                                <button
+                                                    onClick={() => {
+                                                        const input = document.createElement('input');
+                                                        input.type = 'file';
+                                                        input.accept = 'image/*';
+                                                        input.onchange = async (e: any) => {
+                                                            const file = e.target.files?.[0];
+                                                            if (file) {
+                                                                setLogoLoading(true);
+                                                                const formData = new FormData();
+                                                                formData.append("file", file);
+                                                                try {
+                                                                    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bots/${id}/logo`, {
+                                                                        method: "POST",
+                                                                        body: formData,
+                                                                    });
+                                                                    const data = await res.json();
+                                                                    if (res.ok && data.logo_url) setBackgroundImage(data.logo_url);
+                                                                } catch (err) {
+                                                                    console.error("Upload failed", err);
+                                                                } finally {
+                                                                    setLogoLoading(false);
+                                                                }
+                                                            }
+                                                        };
+                                                        input.click();
+                                                    }}
+                                                    className="p-2 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-colors"
+                                                    title="Upload Background"
+                                                >
+                                                    <Upload size={14} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div className="flex justify-between items-center mb-2">
+                                                <label className="block text-[10px] font-bold text-white/50 uppercase tracking-widest">Background Opacity</label>
+                                                <span className="text-[10px] text-blue-400 font-mono">{Math.round(backgroundOpacity * 100)}%</span>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.01"
+                                                value={backgroundOpacity}
+                                                onChange={(e) => setBackgroundOpacity(parseFloat(e.target.value))}
+                                                className="w-full accent-blue-500 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="pt-4 border-t border-white/5 grid grid-cols-4 gap-4">
                                         {[
                                             { label: "Header", value: textColor, setter: setTextColor },
                                             { label: "Chat BG", value: chatBgColor, setter: setChatBgColor },
@@ -734,6 +985,155 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
 
                         {activeTab === "knowledge" && (
                             <motion.div key="knowledge" className="space-y-6">
+                                <div className="p-6 bg-white/5 border border-white/10 rounded-3xl space-y-6">
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <div className="p-2 bg-blue-500/10 rounded-lg">
+                                            <Brain size={20} className="text-blue-400" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-sm font-bold">AI Model & Provider</h3>
+                                            <p className="text-[10px] text-white/40 uppercase tracking-widest font-bold">Configure your brain</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest">Provider</label>
+                                            <select
+                                                value={aiProvider}
+                                                onChange={(e) => {
+                                                    const p = e.target.value;
+                                                    setAiProvider(p);
+                                                    if (p === "google") setAiModel("gemini-1.5-flash");
+                                                    if (p === "openai") setAiModel("gpt-4o-mini");
+                                                    if (p === "groq") setAiModel("llama3-8b-8192");
+                                                }}
+                                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500 transition-colors"
+                                            >
+                                                <option value="google" className="bg-[#111]">Google (Gemini)</option>
+                                                <option value="openai" className="bg-[#111]">OpenAI (ChatGPT)</option>
+                                                <option value="groq" className="bg-[#111]">Llama 3 (via Groq)</option>
+                                            </select>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest">Model</label>
+                                            <select
+                                                value={aiModel}
+                                                onChange={(e) => setAiModel(e.target.value)}
+                                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500 transition-colors"
+                                            >
+                                                {aiProvider === "google" && (
+                                                    <>
+                                                        <option value="gemini-2.0-flash-001" className="bg-[#111]">Gemini 2.0 Flash (Latest / Free)</option>
+                                                        <option value="gemini-1.5-flash" className="bg-[#111]">Gemini 1.5 Flash (Free Tier)</option>
+                                                        <option value="gemini-1.5-flash-8b" className="bg-[#111]">Gemini 1.5 Flash-8B (Fastest / Free)</option>
+                                                        <option value="gemini-1.5-pro" className="bg-[#111]">Gemini 1.5 Pro</option>
+                                                    </>
+                                                )}
+                                                {aiProvider === "openai" && (
+                                                    <>
+                                                        <option value="gpt-4o-mini" className="bg-[#111]">GPT-4o Mini (Best Value / "Free")</option>
+                                                        <option value="gpt-4o" className="bg-[#111]">GPT-4o (SOTA)</option>
+                                                        <option value="gpt-4-turbo" className="bg-[#111]">GPT-4 Turbo</option>
+                                                        <option value="gpt-3.5-turbo" className="bg-[#111]">GPT-3.5 Turbo</option>
+                                                    </>
+                                                )}
+                                                {aiProvider === "groq" && (
+                                                    <>
+                                                        <option value="llama-3.3-70b-versatile" className="bg-[#111]">Llama 3.3 70B (Latest)</option>
+                                                        <option value="llama-3.1-8b-instant" className="bg-[#111]">Llama 3.1 8B (Fast / Free Beta)</option>
+                                                        <option value="llama-3.2-11b-vision-preview" className="bg-[#111]">Llama 3.2 11B (Vision / Free Beta)</option>
+                                                        <option value="mixtral-8x7b-32768" className="bg-[#111]">Mixtral 8x7B</option>
+                                                    </>
+                                                )}
+                                            </select>
+                                        </div>
+
+                                        <div className="col-span-2 space-y-2">
+                                            <div className="flex justify-between items-center">
+                                                <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest">API Key (Leave blank to use system default)</label>
+                                                {aiApiKey && <Check size={12} className="text-green-500" />}
+                                            </div>
+                                            <input
+                                                type="password"
+                                                value={aiApiKey}
+                                                onChange={(e) => setAiApiKey(e.target.value)}
+                                                placeholder={`Enter your ${aiProvider.toUpperCase()} API Key`}
+                                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500 transition-colors"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div className="p-5 bg-white/5 border border-white/10 rounded-3xl space-y-4">
+                                        <div className="flex items-center gap-2">
+                                            <Globe size={16} className="text-blue-400" />
+                                            <h4 className="text-xs font-bold uppercase tracking-widest text-white/70">Website Crawler</h4>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <input
+                                                type="text"
+                                                placeholder="https://example.com"
+                                                value={crawlUrl}
+                                                onChange={(e) => setCrawlUrl(e.target.value)}
+                                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500"
+                                            />
+                                            <button
+                                                onClick={handleCrawl}
+                                                disabled={crawling}
+                                                className="w-full py-2.5 bg-blue-600 rounded-xl text-xs font-bold hover:bg-blue-500 disabled:opacity-50 transition-all"
+                                            >
+                                                {crawling ? "Crawling..." : "Start Crawling"}
+                                            </button>
+                                        </div>
+                                        <p className="text-[10px] text-white/30 leading-relaxed">Enter a URL to ingest its text content into the knowledge base.</p>
+                                    </div>
+
+                                    <div className="p-5 bg-white/5 border border-white/10 rounded-3xl space-y-4">
+                                        <div className="flex items-center gap-2">
+                                            <Video size={16} className="text-red-400" />
+                                            <h4 className="text-xs font-bold uppercase tracking-widest text-white/70">YouTube Extract</h4>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <input
+                                                type="text"
+                                                placeholder="YouTube Video URL"
+                                                value={youtubeUrl}
+                                                onChange={(e) => setYoutubeUrl(e.target.value)}
+                                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-red-500"
+                                            />
+                                            <button
+                                                onClick={handleYouTubeExtract}
+                                                disabled={crawling}
+                                                className="w-full py-2.5 bg-red-600 rounded-xl text-xs font-bold hover:bg-red-500 disabled:opacity-50 transition-all"
+                                            >
+                                                {crawling ? "Extracting..." : "Extract Transcript"}
+                                            </button>
+                                        </div>
+                                        <p className="text-[10px] text-white/30 leading-relaxed">Extract transcripts from videos to teach your bot.</p>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center justify-between p-5 bg-gradient-to-r from-blue-600/10 to-purple-600/10 border border-white/10 rounded-3xl">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-10 h-10 bg-white/5 rounded-2xl flex items-center justify-center">
+                                            <Search size={20} className="text-blue-400" />
+                                        </div>
+                                        <div>
+                                            <h4 className="font-bold text-sm">Live Web Search (RAG)</h4>
+                                            <p className="text-xs text-white/40">Real-time search via Tavily & Perplexity</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => setLiveSearchEnabled(!liveSearchEnabled)}
+                                        className={`w-12 h-6 rounded-full transition-all relative ${liveSearchEnabled ? 'bg-blue-600' : 'bg-white/10'}`}
+                                    >
+                                        <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${liveSearchEnabled ? 'right-1' : 'left-1'}`} />
+                                    </button>
+                                </div>
+
                                 <div
                                     onClick={() => !knowledgeLoading && knowledgeInputRef.current?.click()}
                                     className={`border-2 border-dashed rounded-3xl p-8 text-center transition-all cursor-pointer group ${knowledgeLoading ? 'border-blue-500 bg-blue-500/5' : 'border-white/10 hover:border-blue-500/50 hover:bg-blue-500/5'}`}
@@ -925,18 +1325,31 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                 <span>{botName}</span>
                             </div>
                         </div>
-                        <div className="flex-1 p-6 space-y-4 overflow-y-auto" style={{ backgroundColor: chatBgColor }}>
-                            <div
-                                className="p-4 rounded-tl-none text-xs leading-relaxed max-w-[85%]"
-                                style={{ backgroundColor: assistantBubbleBg, color: assistantBubbleText, borderRadius: `${borderRadius}px` }}
-                            >
-                                Hello! I'm trained on your company data. How can I help you today?
-                            </div>
-                            <div
-                                className="p-4 rounded-tr-none text-xs leading-relaxed max-w-[80%] self-end"
-                                style={{ backgroundColor: userBubbleBg, color: userBubbleText, borderRadius: `${borderRadius}px` }}
-                            >
-                                What's the return policy?
+                        <div className="flex-1 p-6 space-y-4 overflow-y-auto relative" style={{ backgroundColor: chatBgColor }}>
+                            {backgroundImage && (
+                                <div
+                                    className="absolute inset-0 z-0 pointer-events-none"
+                                    style={{
+                                        backgroundImage: `url(${backgroundImage})`,
+                                        backgroundSize: 'cover',
+                                        backgroundPosition: 'center',
+                                        opacity: backgroundOpacity
+                                    }}
+                                />
+                            )}
+                            <div className="relative z-10 space-y-4 flex flex-col">
+                                <div
+                                    className="p-4 rounded-tl-none text-xs leading-relaxed max-w-[85%]"
+                                    style={{ backgroundColor: assistantBubbleBg, color: assistantBubbleText, borderRadius: `${borderRadius}px` }}
+                                >
+                                    Hello! I'm trained on your company data. How can I help you today?
+                                </div>
+                                <div
+                                    className="p-4 rounded-tr-none text-xs leading-relaxed max-w-[80%] self-end"
+                                    style={{ backgroundColor: userBubbleBg, color: userBubbleText, borderRadius: `${borderRadius}px` }}
+                                >
+                                    What's the return policy?
+                                </div>
                             </div>
                         </div>
                         <div className="p-4 bg-zinc-800/50 border-t border-white/5 flex gap-2">

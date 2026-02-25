@@ -6,12 +6,16 @@ from typing import List, Optional
 import shutil
 import uuid
 import os
+import httpx
 from dotenv import load_dotenv
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models import Bot, User, Message, Conversation
+from crawler import extract_text_from_url, extract_youtube_transcript
+import asyncio
 import logging
+import traceback
 
 load_dotenv()
 
@@ -86,6 +90,32 @@ class UserLogin(BaseModel):
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
+
+class AIPromptRequest(BaseModel):
+    bot_id: str
+    prompt: str
+    visitor_session_id: str
+    context: Optional[str] = ""
+
+class HTTPProxyRequest(BaseModel):
+    url: str
+    method: str = "GET"
+    headers: Optional[dict] = {}
+    body: Optional[dict] = {}
+
+class GoogleSheetsSyncRequest(BaseModel):
+    bot_id: str
+    spreadsheet_id: str
+    sheet_name: str = "Sheet1"
+    data: dict
+
+class KnowledgeCrawlRequest(BaseModel):
+    bot_id: str
+    url: str
+
+class YouTubeCrawlRequest(BaseModel):
+    bot_id: str
+    url: str
 
 # Password hashing
 import bcrypt as bcrypt_lib
@@ -205,26 +235,99 @@ async def list_bots(user_id: str, db: AsyncSession = Depends(get_db)):
 
 @app.get("/api/bots/{bot_id}/config")
 async def get_bot_config(bot_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Bot).where(Bot.bot_id == bot_id))
-    bot = result.scalars().first()
-    if not bot:
-        raise HTTPException(status_code=404, detail="Bot not found")
-    
-    return {
-        "bot_id": str(bot.bot_id),
+    try:
+        try:
+            bot_uuid = uuid.UUID(bot_id)
+            result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+        except (ValueError, AttributeError):
+            raise HTTPException(status_code=400, detail="Invalid Bot ID format")
+            
+        bot = result.scalars().first()
+        if not bot:
+            raise HTTPException(status_code=404, detail="Bot not found")
+        
+        return {
+            "bot_id": str(bot.bot_id),
         "bot_name": bot.bot_name,
         "system_prompt": bot.system_prompt,
         "visual_config": bot.visual_config,
         "flow_data": bot.flow_data,
         "knowledge_base": bot.knowledge_base,
+        "ai_provider": bot.ai_provider,
+        "ai_model": bot.ai_model,
+        "ai_api_key": bot.ai_api_key,
         "is_active": bot.is_active,
         "export_unlocked": bot.export_unlocked,
         "created_at": bot.created_at
     }
+    except Exception as e:
+        with open("backend_traceback.log", "a") as f:
+            f.write(f"Error in get_bot_config: {str(e)}\n")
+            traceback.print_exc(file=f)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/bots/{bot_id}/config")
+async def update_bot_config(bot_id: str, config_data: dict, db: AsyncSession = Depends(get_db)):
+    try:
+        result = await db.execute(select(Bot).where(Bot.bot_id == bot_id))
+        bot = result.scalars().first()
+        if not bot:
+            raise HTTPException(status_code=404, detail="Bot not found")
+        
+        # Map frontend fields to DB fields
+        if "botName" in config_data:
+            bot.bot_name = config_data["botName"]
+        if "systemPrompt" in config_data:
+            bot.system_prompt = config_data["systemPrompt"]
+        if "knowledgeBase" in config_data:
+            bot.knowledge_base = config_data["knowledgeBase"]
+        if "aiProvider" in config_data:
+            bot.ai_provider = config_data["aiProvider"]
+        if "aiModel" in config_data:
+            bot.ai_model = config_data["aiModel"]
+        if "aiApiKey" in config_data:
+            bot.ai_api_key = config_data["aiApiKey"]
+            
+        # Visual config grouping
+        visual_fields = [
+            "color", "botLogo", "position", "fontFamily", "textColor", 
+            "inputBgColor", "inputTextColor", "userBubbleBg", "userBubbleText", 
+            "assistantBubbleBg", "assistantBubbleText", "chatBgColor", 
+            "headerHeight", "borderRadius", "launcherShape", "showTail", 
+            "showLauncherBg", "logoSize", "rightPadding", "bottomPadding",
+            "backgroundImage", "backgroundOpacity"
+        ]
+        
+        current_visual = bot.visual_config or {}
+        for field in visual_fields:
+            if field in config_data:
+                current_visual[field] = config_data[field]
+        
+        bot.visual_config = current_visual
+        
+        # Flow data
+        bot.flow_data = {
+            "nodes": config_data.get("nodes", []),
+            "edges": config_data.get("edges", [])
+        }
+        
+        await db.commit()
+        return {"message": "Bot configuration updated"}
+    except Exception as e:
+        with open("backend_traceback.log", "a") as f:
+            f.write(f"Error in update_bot: {str(e)}\n")
+            traceback.print_exc(file=f)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.patch("/api/bots/{bot_id}")
 async def update_bot(bot_id: str, bot_data: dict, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Bot).where(Bot.bot_id == bot_id))
+    try:
+        bot_uuid = uuid.UUID(bot_id)
+        result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid Bot ID format")
+        
     bot = result.scalars().first()
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
@@ -239,9 +342,31 @@ async def update_bot(bot_id: str, bot_data: dict, db: AsyncSession = Depends(get
         bot.flow_data = bot_data["flow_data"]
     if "knowledge_base" in bot_data:
         bot.knowledge_base = bot_data["knowledge_base"]
+    if "ai_provider" in bot_data:
+        bot.ai_provider = bot_data["ai_provider"]
+    if "ai_model" in bot_data:
+        bot.ai_model = bot_data["ai_model"]
+    if "ai_api_key" in bot_data:
+        bot.ai_api_key = bot_data["ai_api_key"]
     
     await db.commit()
     return {"message": "Bot updated"}
+
+@app.delete("/api/bots/{bot_id}")
+async def delete_bot(bot_id: str, db: AsyncSession = Depends(get_db)):
+    try:
+        bot_uuid = uuid.UUID(bot_id)
+        result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid Bot ID format")
+        
+    bot = result.scalars().first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    
+    await db.delete(bot)
+    await db.commit()
+    return {"message": "Bot deleted successfully"}
 
 from utils import extract_text_from_pdf, extract_text_from_txt, generate_ai_response
 
@@ -255,8 +380,11 @@ async def upload_logo(bot_id: str, file: UploadFile = File(...)):
     unique_filename = f"{uuid.uuid4()}{file_extension}"
     file_path = os.path.join("static/uploads", unique_filename)
     
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    async def save_logo():
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+    await asyncio.to_thread(save_logo)
     
     # Return the URL for the logo
     logo_url = f"{os.getenv('BACKEND_URL', 'http://localhost:8000')}/static/uploads/{unique_filename}"
@@ -271,9 +399,9 @@ async def upload_knowledge(bot_id: str, file: UploadFile = File(...), db: AsyncS
     
     extracted_text = ""
     if file.filename.endswith(".pdf"):
-        extracted_text = extract_text_from_pdf(file.file)
+        extracted_text = await asyncio.to_thread(extract_text_from_pdf, file.file)
     elif file.filename.endswith(".txt"):
-        extracted_text = extract_text_from_txt(file.file)
+        extracted_text = await asyncio.to_thread(extract_text_from_txt, file.file)
     else:
         raise HTTPException(status_code=400, detail="Only PDF and TXT files are supported")
     
@@ -291,7 +419,12 @@ async def upload_knowledge(bot_id: str, file: UploadFile = File(...), db: AsyncS
 
 @app.post("/api/chat/message")
 async def chat_message(chat: ChatMessage, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Bot).where(Bot.bot_id == chat.bot_id))
+    try:
+        bot_uuid = uuid.UUID(chat.bot_id)
+        result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid Bot ID format")
+        
     bot = result.scalars().first()
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
@@ -304,12 +437,22 @@ async def chat_message(chat: ChatMessage, db: AsyncSession = Depends(get_db)):
     logger.info(f"Context Length: {len(knowledge_context)} characters")
     
     try:
-        answer = generate_ai_response(system_prompt, knowledge_context, chat.message)
+        answer = generate_ai_response(
+            system_prompt, 
+            knowledge_context, 
+            chat.message,
+            provider=bot.ai_provider,
+            model_name=bot.ai_model,
+            api_key=bot.ai_api_key
+        )
         return {
             "answer": answer,
             "bot_id": chat.bot_id
         }
     except Exception as e:
+        with open("backend_traceback.log", "a") as f:
+            f.write(f"Error in chat_message: {str(e)}\n")
+            traceback.print_exc(file=f)
         logger.error(f"AI Response Error: {e}")
         return {
             "answer": "Sorry, I'm having trouble thinking right now. Please try again.",
@@ -347,6 +490,49 @@ async def capture_variables(data: VariableCapture, db: AsyncSession = Depends(ge
     await db.commit()
     return {"status": "success", "captured": captured}
 
+@app.post("/api/chat/ai-prompt")
+async def ai_custom_prompt(data: AIPromptRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Bot).where(Bot.bot_id == data.bot_id))
+    bot = result.scalars().first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    
+    try:
+        answer = generate_ai_response(
+            "Execute the following specific prompt based on the context.", 
+            data.context or bot.knowledge_base or "", 
+            data.prompt,
+            provider=bot.ai_provider,
+            model_name=bot.ai_model,
+            api_key=bot.ai_api_key
+        )
+        return {"answer": answer}
+    except Exception as e:
+        logger.error(f"AI Prompt Error: {e}")
+        return {"answer": "Error generating AI response."}
+
+@app.post("/api/chat/proxy-http")
+async def proxy_http_request(data: HTTPProxyRequest):
+    async with httpx.AsyncClient() as client:
+        try:
+            if data.method.upper() == "GET":
+                resp = await client.get(data.url, headers=data.headers)
+            elif data.method.upper() == "POST":
+                resp = await client.post(data.url, headers=data.headers, json=data.body)
+            elif data.method.upper() == "PATCH":
+                resp = await client.patch(data.url, headers=data.headers, json=data.body)
+            elif data.method.upper() == "DELETE":
+                resp = await client.delete(data.url, headers=data.headers)
+            else:
+                return {"error": "Method not supported"}
+            
+            return {
+                "status": resp.status_code,
+                "data": resp.json() if "application/json" in resp.headers.get("content-type", "") else resp.text
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
 @app.get("/api/bots/{bot_id}/leads")
 async def get_bot_leads(bot_id: str, db: AsyncSession = Depends(get_db)):
     logger.info(f"Fetching leads for bot: {bot_id}")
@@ -375,6 +561,91 @@ async def get_bot_leads(bot_id: str, db: AsyncSession = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error fetching leads: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+
+@app.post("/api/integrations/google-sheets")
+async def sync_to_google_sheets(data: GoogleSheetsSyncRequest):
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        
+        # Check for service account key file
+        key_path = "google_sheets_key.json"
+        if not os.path.exists(key_path):
+            return {"error": "Google Sheets Service Account key (google_sheets_key.json) not found in backend."}
+            
+        scopes = ['https://www.googleapis.com/auth/spreadsheets']
+        creds = service_account.Credentials.from_service_account_file(key_path, scopes=scopes)
+        service = build('sheets', 'v4', credentials=creds)
+        
+        # Prepare row data
+        # First row is often headers, but for append we just provide values
+        values = [[str(v) for v in data.data.values()]]
+        
+        body = {
+            'values': values
+        }
+        
+        result = service.spreadsheets().values().append(
+            spreadsheetId=data.spreadsheet_id,
+            range=f"{data.sheet_name}!A1",
+            valueInputOption='RAW',
+            insertDataOption='INSERT_ROWS',
+            body=body
+        ).execute()
+        
+        return {"status": "success", "updatedRange": result.get('updates').get('updatedRange')}
+        
+    except Exception as e:
+        logger.error(f"Google Sheets Sync Error: {e}")
+        return {"error": str(e)}
+
+@app.post("/api/knowledge/crawl")
+async def crawl_website(data: KnowledgeCrawlRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        text = await extract_text_from_url(data.url)
+        if text.startswith("Error"):
+            return {"error": text}
+            
+        bot_uuid = uuid.UUID(data.bot_id)
+        result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+        bot = result.scalars().first()
+        if not bot:
+            return {"error": "Bot not found"}
+            
+        # Append to knowledge base
+        current_kb = bot.knowledge_base or ""
+        new_kb = f"{current_kb}\n\n--- Source: {data.url} ---\n{text}"
+        bot.knowledge_base = new_kb
+        await db.commit()
+        
+        return {"status": "success", "message": f"Crawled {len(text)} characters from {data.url}"}
+    except Exception as e:
+        logger.error(f"Crawl Error: {e}")
+        return {"error": str(e)}
+
+@app.post("/api/knowledge/youtube")
+async def crawl_youtube(data: YouTubeCrawlRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        text = await extract_youtube_transcript(data.url)
+        if text.startswith("Error"):
+            return {"error": text}
+            
+        bot_uuid = uuid.UUID(data.bot_id)
+        result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+        bot = result.scalars().first()
+        if not bot:
+            return {"error": "Bot not found"}
+            
+        # Append to knowledge base
+        current_kb = bot.knowledge_base or ""
+        new_kb = f"{current_kb}\n\n--- YouTube Source ---\n{text}"
+        bot.knowledge_base = new_kb
+        await db.commit()
+        
+        return {"status": "success", "message": f"Extracted {len(text)} characters from YouTube"}
+    except Exception as e:
+        logger.error(f"YouTube Extract Error: {e}")
+        return {"error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn

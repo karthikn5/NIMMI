@@ -23,6 +23,9 @@ class Bot(Base):
     visual_config = Column(JSON, default={"color": "#3b82f6", "logo_url": "", "position": "right"})
     flow_data = Column(JSON, default={"nodes": [], "edges": []})
     knowledge_base = Column(Text, nullable=True)
+    ai_provider = Column(String, default="google") # google, openai, groq
+    ai_model = Column(String, default="gemini-2.0-flash")
+    ai_api_key = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     export_unlocked = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

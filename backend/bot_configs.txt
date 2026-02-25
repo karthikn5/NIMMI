@@ -1,0 +1,145 @@
+--- BOT CONFIG CHECK ---
+Bot ID: 09a268e7-5019-4a41-9bba-ea8dfc9c30ef
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: 335530ce-ffac-4444-a7fb-a2b43485566e
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: 5dd16481-abe2-4166-b7bd-ccc545eb812e
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: 7617b9f9-070d-4dbc-a9fb-74fa7d8cd0c8
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: 7d870a28-c49e-4106-b953-8fce2b6e7a5d
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: 7fed50fd-0ebb-4837-bad3-aafaefa37eb6
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: 84046c12-af7a-4f72-8129-abcfc8b24d2f
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: c3781cc4-d174-42d4-a248-41427cb19e85
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: cb44be55-e6ad-424e-a15a-ca1c52d0749f
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: ef307e94-3b27-4fc3-882b-dc64f1a24638
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: 10b3ef89-8e60-430a-b785-d7f1ea8fa20d
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: 8380d4f2-981c-4aa4-8b2f-d19a803f528f
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: bad257d3-52ff-4e70-a5ab-99a94f927dbf
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: d9c5ea9c-f22a-4442-bc0b-4fb9663f6d7c
+Name: Nimmi
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: 250a6f0d-78c5-4368-8e1b-8940bfb6183d
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: 4f098279-2f9b-4324-8b59-04737f4de04f
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: b6ece2ae-26f3-4ecb-bb55-88ee477c666c
+Name: Movie Suggesting Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: dd0146c1-0928-45f4-a5c8-a82b2c7fdd2f
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: e85841e4-9eca-4cf6-8c32-48cf302aa1e6
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: a186269c-14da-42e3-99a3-dadb9312e20b
+Name: Snow
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: a9782ec4-fa5b-4bac-9658-480622e8df95
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: 1abe9b12-1f2e-46c7-8136-a6c4ad61f9de
+Name: New AI Bot
+Provider: google
+Model: gemini-1.5-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: f09bdbeb-cd9f-47e4-a5a6-0b0253e4661d
+Name: New AI Bot
+Provider: google
+Model: gemini-1.5-flash
+API Key (Prefix): None
+-------------------------
+Bot ID: 16f6318c-87e5-47bb-a22a-0786a025fcd7
+Name: New AI Bot
+Provider: google
+Model: gemini-2.0-flash-001
+API Key (Prefix): AIzaSyDA...
+-------------------------

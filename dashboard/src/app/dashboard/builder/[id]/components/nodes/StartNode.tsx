@@ -11,7 +11,7 @@ interface StartNodeProps {
 export default function StartNode({ data, selected }: StartNodeProps) {
     return (
         <div
-            className={`px-6 py-4 rounded-xl bg-gradient-to-br from-green-500 to-green-600 text-white shadow-lg transition-all ${selected ? "ring-2 ring-white ring-offset-2 ring-offset-[#0a0a0a]" : ""
+            className={`w-64 px-6 py-4 rounded-xl bg-gradient-to-br from-green-500 to-green-600 text-white shadow-lg transition-all ${selected ? "ring-2 ring-white ring-offset-2 ring-offset-[#0a0a0a]" : ""
                 }`}
         >
             <div className="flex items-center gap-2 font-bold">

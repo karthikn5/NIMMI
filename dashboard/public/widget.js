@@ -8,11 +8,21 @@
         return;
     }
 
-    // Styles
-    const fontLink = document.createElement('link');
-    fontLink.rel = 'stylesheet';
-    fontLink.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Roboto:wght@400;700&family=Outfit:wght@400;700&display=swap';
-    document.head.appendChild(fontLink);
+    // Styles - Load 100+ premium fonts in batches
+    const fontBatches = [
+        "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Roboto:wght@400;700&family=Open+Sans:wght@400;700&family=Montserrat:wght@400;700&family=Poppins:wght@400;700&family=Lato:wght@400;700&family=Oswald:wght@400;700&family=Raleway:wght@400;700&family=Nunito:wght@400;700&family=Ubuntu:wght@400;700&family=Playfair+Display:wght@400;700&family=Lora:wght@400;700&family=Merriweather:wght@400;700&family=PT+Sans:wght@400;700&family=PT+Serif:wght@400;700&family=Noto+Sans:wght@400;700&family=Noto+Serif:wght@400;700&family=Work+Sans:wght@400;700&family=Fira+Sans:wght@400;700&family=Quicksand:wght@400;700&family=Josefin+Sans:wght@400;700&display=swap",
+        "https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@400;700&family=Caveat:wght@400;700&family=Lexend:wght@400;700&family=Kanit:wght@400;700&family=Outfit:wght@400;700&family=Syne:wght@400;700&family=Darker+Grotesque:wght@400;700&family=DM+Sans:wght@400;700&family=Manrope:wght@400;700&family=Sora:wght@400;700&family=Urbanist:wght@400;700&family=Figtree:wght@400;700&family=Archivo:wght@400;700&family=Schibsted+Grotesk:wght@400;700&family=Hanken+Grotesk:wght@400;700&family=Bricolage+Grotesque:wght@400;700&family=Young+Serif&family=Instrument+Serif&family=Playpen+Sans&family=Cabin:wght@400;700&display=swap",
+        "https://fonts.googleapis.com/css2?family=Arvo:wght@400;700&family=Exo+2:wght@400;700&family=Muli:wght@400;700&family=Titillium+Web:wght@400;700&family=Dosis:wght@400;700&family=Oxygen:wght@400;700&family=Hind:wght@400;700&family=Libre+Baskerville:wght@400;700&family=Anton&family=Karla:wght@400;700&family=Bitter:wght@400;700&family=Varela+Round&family=Crimson+Text:wght@400;700&family=Barlow:wght@400;700&family=Asap:wght@400;700&family=Fjalla+One&family=Pacifico&family=Questrial&family=Assistant:wght@400;700&family=Signika:wght@400;700&display=swap",
+        "https://fonts.googleapis.com/css2?family=Alegreya:wght@400;700&family=Alegreya+Sans:wght@400;700&family=Righteous&family=Patua+One&family=Comfortaa:wght@400;700&family=Lobster&family=Dancing+Script:wght@400;700&family=Kaushan+Script&family=Satisfy&family=Great+Vibes&family=Sacramento&family=Yellowtail&family=Cookie&family=Tangerine&family=Special+Elite&family=Luckiest+Guy&family=Bangers&family=Press+Start+2P&family=VT323&display=swap",
+        "https://fonts.googleapis.com/css2?family=Nanum+Gothic:wght@400;700&family=Cairo:wght@400;700&family=Mukta:wght@400;700&family=Heebo:wght@400;700&family=Prompt:wght@400;700&family=Spectral:wght@400;700&family=Cardo:wght@400;700&family=Crimson+Pro:wght@400;700&family=Eczar:wght@400;700&family=Domine:wght@400;700&family=Old+Standard+TT:wght@400;700&family=Cormorant:wght@400;700&family=Prata&family=Marcellus&family=Josefin+Slab:wght@400;700&family=BioRhyme:wght@400;700&family=Chivo:wght@400;700&family=Overpass:wght@400;700&family=Public+Sans:wght@400;700&family=Fraunces:wght@400;700&family=Besley:wght@400;700&family=Casta&family=Delius&family=Neucha&display=swap"
+    ];
+
+    fontBatches.forEach(url => {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = url;
+        document.head.appendChild(link);
+    });
 
     const style = document.createElement('style');
     style.innerHTML = `
@@ -48,13 +58,13 @@
             overflow: hidden;
             border: 1px solid rgba(0,0,0,0.1);
         }
-        #nimmi-chat-header {
-            padding: 24px;
-            font-weight: bold;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-shrink: 0;
+        #nimmi-chat-bg {
+            position: absolute;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            background-size: cover;
+            background-position: center;
         }
         #nimmi-chat-messages {
             flex: 1;
@@ -63,14 +73,19 @@
             display: flex;
             flex-direction: column;
             gap: 16px;
+            z-index: 10;
+            position: relative;
         }
         #nimmi-chat-input-area {
             padding: 16px;
-            background: rgba(0,0,0,0.02);
+            background: #ffffff;
             border-top: 1px solid rgba(0,0,0,0.05);
             display: flex;
             gap: 8px;
             align-items: center;
+            position: relative;
+            z-index: 10;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
         }
         #nimmi-chat-input {
             flex: 1;
@@ -143,7 +158,10 @@
                     show_launcher_bg = true,
                     logo_size = 32,
                     right_padding = 20,
-                    bottom_padding = 20
+                    bottom_padding = 20,
+                    background_image = '',
+                    background_opacity = 1
+
                 } = visual_config;
 
                 const { nodes = [], edges = [] } = config.flow_data || {};
@@ -165,7 +183,7 @@
 
                 const msg = `
                 <div id="nimmi-chat-window">
-                    <div id="nimmi-chat-header">
+                    <div id="nimmi-chat-header" style="position: relative; z-index: 10;">
                         <div style="display: flex; align-items: center; gap: 12px;">
                             <div id="nimmi-header-logo" style="width: 40px; height: 40px; background: rgba(255,255,255,0.2); border-radius: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0;">
                                 ${visual_config.logo_url ? `<img src="${visual_config.logo_url}" style="width: 100%; height: 100%; object-fit: cover;">` : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4"></path><line x1="8" y1="16" x2="8" y2="16"></line><line x1="16" y1="16" x2="16" y2="16"></line></svg>`}
@@ -174,7 +192,9 @@
                         </div>
                         <span id="nimmi-close" style="cursor:pointer; font-size: 24px; opacity: 0.7;">×</span>
                     </div>
-                    <div id="nimmi-chat-messages"></div>
+                    <div id="nimmi-chat-messages">
+                        ${background_image ? `<div id="nimmi-chat-bg" style="background-image: url('${background_image}'); opacity: ${background_opacity};"></div>` : ''}
+                    </div>
                     <div id="nimmi-chat-input-area">
                         <input type="text" id="nimmi-chat-input" placeholder="Type a message...">
                         <button id="nimmi-chat-send">
@@ -209,6 +229,7 @@
                 header.style.height = `${header_height}px`;
                 header.style.display = 'flex';
                 header.style.alignItems = 'center';
+                header.style.boxShadow = '0 2px 10px rgba(0,0,0,0.1)';
 
                 window.style.borderRadius = `${border_radius * 1.5}px`;
 
@@ -255,10 +276,12 @@
                 window.style.right = visual_config.position === 'right' ? '0' : 'auto';
                 window.style.left = visual_config.position === 'left' ? '0' : 'auto';
 
-                const addMessage = (text, role) => {
+                const addMessage = (content, role, isHtml = false) => {
                     const div = document.createElement('div');
                     div.style.marginBottom = '10px';
                     div.style.textAlign = role === 'user' ? 'right' : 'left';
+                    div.style.position = 'relative';
+                    div.style.zIndex = '10';
                     const bg = role === 'user' ? user_bubble_bg : assistant_bubble_bg;
                     const txt = role === 'user' ? user_bubble_text : assistant_bubble_text;
 
@@ -274,7 +297,9 @@
                     inner.style.color = txt;
                     inner.style.maxWidth = '85%';
                     inner.style.wordBreak = 'break-word';
-                    inner.innerText = text;
+
+                    if (isHtml) inner.innerHTML = content;
+                    else inner.innerText = content;
 
                     div.appendChild(inner);
                     messages.appendChild(div);
@@ -288,6 +313,8 @@
                     div.style.display = 'flex';
                     div.style.flexWrap = 'wrap';
                     div.style.gap = '5px';
+                    div.style.position = 'relative';
+                    div.style.zIndex = '10';
 
                     options.forEach(opt => {
                         const btn = document.createElement('button');
@@ -311,6 +338,68 @@
                     messages.scrollTop = messages.scrollHeight;
                 };
 
+                const addRating = (onSelect) => {
+                    const div = document.createElement('div');
+                    div.style.marginBottom = '10px';
+                    div.style.display = 'flex';
+                    div.style.gap = '8px';
+                    div.style.position = 'relative';
+                    div.style.zIndex = '10';
+
+                    for (let i = 1; i <= 5; i++) {
+                        const btn = document.createElement('button');
+                        btn.innerText = i;
+                        btn.style.width = '36px';
+                        btn.style.height = '36px';
+                        btn.style.borderRadius = '50%';
+                        btn.style.border = `1px solid ${color}`;
+                        btn.style.background = 'transparent';
+                        btn.style.color = color;
+                        btn.style.cursor = 'pointer';
+                        btn.onclick = () => {
+                            div.remove();
+                            addMessage(String(i), 'user');
+                            onSelect(i);
+                        };
+                        div.appendChild(btn);
+                    }
+                    messages.appendChild(div);
+                    messages.scrollTop = messages.scrollHeight;
+                };
+
+                const addFileLink = (onSelect) => {
+                    const div = document.createElement('div');
+                    div.style.marginBottom = '10px';
+                    div.style.position = 'relative';
+                    div.style.zIndex = '10';
+
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.style.display = 'none';
+                    input.onchange = (e) => {
+                        const file = e.target.files[0];
+                        if (file) {
+                            addMessage(`Uploaded: ${file.name}`, 'user');
+                            onSelect(file.name);
+                        }
+                    };
+
+                    const btn = document.createElement('button');
+                    btn.innerText = "Upload File";
+                    btn.style.padding = '8px 16px';
+                    btn.style.borderRadius = '12px';
+                    btn.style.background = color;
+                    btn.style.color = text_color;
+                    btn.style.border = 'none';
+                    btn.style.cursor = 'pointer';
+                    btn.onclick = () => input.click();
+
+                    div.appendChild(input);
+                    div.appendChild(btn);
+                    messages.appendChild(div);
+                    messages.scrollTop = messages.scrollHeight;
+                };
+
                 const getNextNode = (nodeId, sourceHandle = null) => {
                     const edge = edges.find(e =>
                         e.source === nodeId && (!sourceHandle || e.sourceHandle === sourceHandle)
@@ -319,7 +408,7 @@
                 };
 
                 const setVariable = (node, value) => {
-                    const name = node.data.label || node.id;
+                    const name = node.data.variableName || node.data.label || node.id;
                     variables[name] = value;
                     console.log(`Nimmi AI: Set variable "${name}" to "${value}"`);
 
@@ -330,11 +419,9 @@
                             bot_id: botId,
                             visitor_session_id: visitorSessionId,
                             variable_name: name,
-                            variable_value: value
+                            variable_value: String(value)
                         })
-                    }).then(res => res.json())
-                        .then(d => console.log("Nimmi AI: Variable captured", d))
-                        .catch(e => console.error("Nimmi AI: Capture failed", e));
+                    }).catch(e => console.error("Nimmi AI: Capture failed", e));
                 };
 
                 const evaluateCondition = (node) => {
@@ -355,44 +442,157 @@
                     if (!node) return;
                     currentNodeId = node.id;
 
-                    setTimeout(() => {
-                        switch (node.type) {
-                            case 'start':
+                    switch (node.type) {
+                        case 'start':
+                            processNode(getNextNode(node.id));
+                            break;
+                        case 'message':
+                            addMessage(node.data.message || "...", 'assistant');
+                            setTimeout(() => processNode(getNextNode(node.id)), 600);
+                            break;
+                        case 'image':
+                            addMessage(`<img src="${node.data.imageUrl}" style="width:100%; border-radius:12px;">`, 'assistant', true);
+                            setTimeout(() => processNode(getNextNode(node.id)), 600);
+                            break;
+                        case 'video':
+                            addMessage(`<video src="${node.data.videoUrl}" controls style="width:100%; border-radius:12px;"></video>`, 'assistant', true);
+                            setTimeout(() => processNode(getNextNode(node.id)), 600);
+                            break;
+                        case 'multipleChoice':
+                            addMessage(node.data.message || "Please choose an option:", 'assistant');
+                            addOptions(node.data.options || [], (choice) => {
+                                setVariable(node, choice);
                                 processNode(getNextNode(node.id));
-                                break;
-                            case 'message':
-                                addMessage(node.data.message || "...", 'assistant');
+                            });
+                            break;
+                        case 'rating':
+                            addMessage(node.data.message || "Rate your experience:", 'assistant');
+                            addRating((val) => {
+                                setVariable(node, val);
                                 processNode(getNextNode(node.id));
-                                break;
-                            case 'multipleChoice':
-                                addMessage(node.data.message || "Please choose an option:", 'assistant');
-                                addOptions(node.data.options || [], (choice) => {
-                                    setVariable(node, choice);
+                            });
+                            break;
+                        case 'fileUpload':
+                            addMessage(node.data.message || "Please upload a file:", 'assistant');
+                            addFileLink((fileName) => {
+                                setVariable(node, fileName);
+                                processNode(getNextNode(node.id));
+                            });
+                            break;
+                        case 'textInput':
+                        case 'emailInput':
+                        case 'numberInput':
+                        case 'phoneInput':
+                        case 'datePicker':
+                            addMessage(node.data.message || node.data.label || "Please provide input:", 'assistant');
+                            input.placeholder = node.data.placeholder || (node.type === 'numberInput' ? "Enter a number..." : "Type here...");
+                            input.type = node.type === 'numberInput' ? 'number' : 'text';
+                            break;
+                        case 'delay':
+                            const ms = (node.data.delayTime || 2) * 1000;
+                            setTimeout(() => processNode(getNextNode(node.id)), ms);
+                            break;
+                        case 'variable':
+                            setVariable({ ...node, data: { ...node.data, label: node.data.variableName } }, node.data.variableValue);
+                            processNode(getNextNode(node.id));
+                            break;
+                        case 'condition':
+                            const result = evaluateCondition(node);
+                            processNode(getNextNode(node.id, result ? 'true' : 'false'));
+                            break;
+                        case 'aiPrompt':
+                            addMessage("...", 'assistant'); // Typing indicator placeholder
+                            fetch(`${API_BASE}/api/chat/ai-prompt`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    bot_id: botId,
+                                    prompt: node.data.systemPrompt,
+                                    visitor_session_id: visitorSessionId
+                                })
+                            }).then(res => res.json())
+                                .then(data => {
+                                    messages.lastChild.remove(); // Remove thinking indicator
+                                    addMessage(data.answer, 'assistant');
+                                    setVariable(node, data.answer);
                                     processNode(getNextNode(node.id));
                                 });
-                                break;
-                            case 'textInput':
-                            case 'emailInput':
-                            case 'numberInput':
-                            case 'datePicker':
-                                addMessage(node.data.message || node.data.label || "Please provide input:", 'assistant');
-                                input.placeholder = node.data.placeholder || (node.type === 'numberInput' ? "Enter a number..." : "Type here...");
-                                input.type = node.type === 'numberInput' ? 'number' : 'text';
-                                break;
-                            case 'condition':
-                                const result = evaluateCondition(node);
-                                processNode(getNextNode(node.id, result ? 'true' : 'false'));
-                                break;
-                            case 'end':
-                                addMessage(node.data.message || "Thank you!", 'assistant');
-                                flowActive = false;
-                                input.disabled = true;
-                                send.disabled = true;
-                                break;
-                            default:
+                            break;
+                        case 'httpRequest':
+                            fetch(`${API_BASE}/api/chat/proxy-http`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    url: node.data.url,
+                                    method: node.data.method,
+                                    body: {} // Simplify for now
+                                })
+                            }).then(res => res.json())
+                                .then(data => {
+                                    setVariable(node, JSON.stringify(data.data));
+                                    processNode(getNextNode(node.id));
+                                });
+                            break;
+                        case 'webhook':
+                            fetch(`${API_BASE}/api/chat/proxy-http`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    url: node.data.url,
+                                    method: 'POST',
+                                    body: variables // Send all captured variables
+                                })
+                            }).then(() => {
                                 processNode(getNextNode(node.id));
-                        }
-                    }, 500);
+                            });
+                            break;
+                        case 'slack':
+                            // Format variables for Slack
+                            let slackText = `*New Lead captured!* \n\n`;
+                            for (const [key, val] of Object.entries(variables)) {
+                                if (key !== 'bot_id' && key !== 'session_id') {
+                                    slackText += `*${key}*: ${val}\n`;
+                                }
+                            }
+
+                            fetch(`${API_BASE}/api/chat/proxy-http`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    url: node.data.url,
+                                    method: 'POST',
+                                    body: {
+                                        text: slackText,
+                                        channel: node.data.channel || undefined
+                                    }
+                                })
+                            }).then(() => {
+                                processNode(getNextNode(node.id));
+                            });
+                            break;
+                        case 'googleSheets':
+                            fetch(`${API_BASE}/api/integrations/google-sheets`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    bot_id: botId,
+                                    spreadsheet_id: node.data.spreadsheetId,
+                                    sheet_name: node.data.sheetName,
+                                    data: variables
+                                })
+                            }).then(() => {
+                                processNode(getNextNode(node.id));
+                            });
+                            break;
+                        case 'end':
+                            addMessage(node.data.message || "Thank you!", 'assistant');
+                            flowActive = false;
+                            input.disabled = true;
+                            send.disabled = true;
+                            break;
+                        default:
+                            processNode(getNextNode(node.id));
+                    }
                 };
 
                 if (flowActive) {
@@ -428,7 +628,7 @@
 
                     if (flowActive) {
                         const currentNode = nodes.find(n => n.id === currentNodeId);
-                        if (currentNode && ['textInput', 'emailInput', 'numberInput', 'datePicker'].includes(currentNode.type)) {
+                        if (currentNode && ['textInput', 'emailInput', 'numberInput', 'phoneInput', 'datePicker'].includes(currentNode.type)) {
                             addMessage(text, 'user');
                             setVariable(currentNode, text);
                             input.value = '';

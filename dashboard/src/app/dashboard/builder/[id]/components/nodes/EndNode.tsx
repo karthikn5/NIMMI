@@ -11,7 +11,7 @@ interface EndNodeProps {
 export default function EndNode({ data, selected }: EndNodeProps) {
     return (
         <div
-            className={`px-6 py-4 rounded-xl bg-gradient-to-br from-red-500 to-red-600 text-white shadow-lg transition-all ${selected ? "ring-2 ring-white ring-offset-2 ring-offset-[#0a0a0a]" : ""
+            className={`w-64 px-6 py-4 rounded-xl bg-gradient-to-br from-red-500 to-red-600 text-white shadow-lg transition-all ${selected ? "ring-2 ring-white ring-offset-2 ring-offset-[#0a0a0a]" : ""
                 }`}
         >
             <Handle

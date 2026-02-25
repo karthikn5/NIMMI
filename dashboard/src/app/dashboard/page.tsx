@@ -76,6 +76,29 @@ export default function Dashboard() {
         }
     };
 
+
+    const handleDeleteBot = async (botId: string, botName: string, e: React.MouseEvent) => {
+        e.stopPropagation(); // Prevent navigation to builder
+        if (!confirm(`Are you sure you want to delete "${botName}"? This action cannot be undone.`)) {
+            return;
+        }
+
+        try {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bots/${botId}`, {
+                method: "DELETE",
+            });
+
+            if (res.ok) {
+                setBots(bots.filter(bot => bot.id !== botId));
+            } else {
+                alert("Failed to delete bot");
+            }
+        } catch (err) {
+            console.error("Failed to delete bot:", err);
+            alert("Error deleting bot");
+        }
+    };
+
     const handleLogout = () => {
         localStorage.removeItem("nimmi_user_id");
         localStorage.removeItem("nimmi_user_name");
@@ -198,8 +221,12 @@ export default function Dashboard() {
                                 <Link href={`/dashboard/builder/${bot.id}`} className="flex-1 py-3 bg-white/5 rounded-xl text-center text-sm font-bold hover:bg-white/10 transition-colors">
                                     Edit Bot
                                 </Link>
-                                <button className="p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-colors">
-                                    <Settings size={18} className="text-white/60" />
+                                <button
+                                    onClick={(e) => handleDeleteBot(bot.id, bot.name, e)}
+                                    className="p-3 bg-white/5 rounded-xl hover:bg-red-500/20 hover:text-red-500 transition-colors group-delete"
+                                    title="Delete Bot"
+                                >
+                                    <LogOut size={18} className="text-white/60 group-delete-hover:text-red-500 transition-colors" />
                                 </button>
                             </div>
                         </div>

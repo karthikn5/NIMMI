@@ -89,8 +89,9 @@ export default function PropertiesPanel({ node, onUpdate, onDelete, onClose }: P
             case "emailInput":
             case "datePicker":
             case "numberInput":
-                const focusColor = node.type === "numberInput" ? "focus:border-orange-500" : "focus:border-purple-500";
-                const toggleBg = node.type === "numberInput" ? "bg-orange-500" : "bg-purple-500";
+            case "phoneInput":
+                const focusColor = node.type === "numberInput" ? "focus:border-orange-500" : (node.type === "phoneInput" ? "focus:border-green-500" : "focus:border-purple-500");
+                const toggleBg = node.type === "numberInput" ? "bg-orange-500" : (node.type === "phoneInput" ? "bg-green-500" : "bg-purple-500");
 
                 return (
                     <div className="space-y-4">
@@ -120,6 +121,282 @@ export default function PropertiesPanel({ node, onUpdate, onDelete, onClose }: P
                                 <div className={`w-4 h-4 bg-white rounded-full transition-transform ${formData.required ? "translate-x-5" : "translate-x-1"}`} />
                             </button>
                             <span className="text-xs text-white/50">Required field</span>
+                        </div>
+                    </div>
+                );
+
+            case "image":
+            case "video":
+                const mediaColor = node.type === "image" ? "focus:border-pink-500" : "focus:border-red-500";
+                return (
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">Label</label>
+                            <input
+                                type="text"
+                                value={formData.label || ""}
+                                onChange={(e) => handleChange("label", e.target.value)}
+                                className={`w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none ${mediaColor}`}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">{node.type === "image" ? "Image URL" : "Video URL"}</label>
+                            <input
+                                type="text"
+                                placeholder="https://..."
+                                value={node.type === "image" ? (formData.imageUrl || "") : (formData.videoUrl || "")}
+                                onChange={(e) => handleChange(node.type === "image" ? "imageUrl" : "videoUrl", e.target.value)}
+                                className={`w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none ${mediaColor}`}
+                            />
+                        </div>
+                    </div>
+                );
+
+            case "fileUpload":
+                return (
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">Label</label>
+                            <input
+                                type="text"
+                                value={formData.label || ""}
+                                onChange={(e) => handleChange("label", e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-500"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">Instructions</label>
+                            <input
+                                type="text"
+                                value={formData.placeholder || ""}
+                                onChange={(e) => handleChange("placeholder", e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-500"
+                            />
+                        </div>
+                    </div>
+                );
+
+            case "rating":
+                return (
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">Label</label>
+                            <input
+                                type="text"
+                                value={formData.label || ""}
+                                onChange={(e) => handleChange("label", e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-amber-500"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">Max Rating (Scale)</label>
+                            <select
+                                value={formData.scale || 5}
+                                onChange={(e) => handleChange("scale", parseInt(e.target.value))}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-amber-500 text-white"
+                            >
+                                <option value={3} className="bg-zinc-900">3 Stars</option>
+                                <option value={5} className="bg-zinc-900">5 Stars</option>
+                                <option value={10} className="bg-zinc-900">10 Stars</option>
+                            </select>
+                        </div>
+                    </div>
+                );
+
+            case "delay":
+                return (
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">Label</label>
+                            <input
+                                type="text"
+                                value={formData.label || ""}
+                                onChange={(e) => handleChange("label", e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-white"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">Delay (Seconds)</label>
+                            <input
+                                type="number"
+                                min={0.5}
+                                max={60}
+                                step={0.5}
+                                value={formData.delay || 2}
+                                onChange={(e) => handleChange("delay", parseFloat(e.target.value))}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-white"
+                            />
+                        </div>
+                    </div>
+                );
+
+            case "variable":
+                return (
+                    <div className="space-y-4">
+                        <div className="pt-2">
+                            <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-4">Set Local Variable</p>
+                            <div className="space-y-3">
+                                <div>
+                                    <label className="block text-[10px] font-bold text-white/40 mb-1 tracking-wider uppercase">Name</label>
+                                    <input
+                                        type="text"
+                                        placeholder="e.g. user_tier"
+                                        value={formData.variableName || ""}
+                                        onChange={(e) => handleChange("variableName", e.target.value)}
+                                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold text-white/40 mb-1 tracking-wider uppercase">Value</label>
+                                    <input
+                                        type="text"
+                                        placeholder="e.g. platinum"
+                                        value={formData.variableValue || ""}
+                                        onChange={(e) => handleChange("variableValue", e.target.value)}
+                                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+
+            case "aiPrompt":
+                return (
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">Label</label>
+                            <input
+                                type="text"
+                                value={formData.label || ""}
+                                onChange={(e) => handleChange("label", e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-cyan-500"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">AI Instructions (System Prompt)</label>
+                            <textarea
+                                rows={6}
+                                placeholder="Explain how the AI should reason or what knowledge it should use for this specific step..."
+                                value={formData.prompt || ""}
+                                onChange={(e) => handleChange("prompt", e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-cyan-500 resize-none leading-relaxed"
+                            />
+                        </div>
+                    </div>
+                );
+
+            case "httpRequest":
+                return (
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">API Endpoint (URL)</label>
+                            <input
+                                type="text"
+                                placeholder="https://api.example.com/webhook"
+                                value={formData.url || ""}
+                                onChange={(e) => handleChange("url", e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-500"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">HTTP Method</label>
+                            <select
+                                value={formData.method || "POST"}
+                                onChange={(e) => handleChange("method", e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-500 text-white"
+                            >
+                                <option value="GET" className="bg-zinc-900">GET</option>
+                                <option value="POST" className="bg-zinc-900">POST</option>
+                                <option value="PUT" className="bg-zinc-900">PUT</option>
+                                <option value="DELETE" className="bg-zinc-900">DELETE</option>
+                            </select>
+                        </div>
+                    </div>
+                );
+
+            case "webhook":
+                return (
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">Webhook URL (Zapier/Make)</label>
+                            <input
+                                type="text"
+                                placeholder="https://hooks.zapier.com/..."
+                                value={formData.url || ""}
+                                onChange={(e) => handleChange("url", e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-orange-500"
+                            />
+                        </div>
+                        <div className="p-3 bg-orange-500/10 border border-orange-500/20 rounded-xl">
+                            <p className="text-[10px] text-orange-400 leading-relaxed font-bold uppercase tracking-widest mb-1">Webhook Note</p>
+                            <p className="text-[10px] text-white/40 leading-relaxed">
+                                This node will send all collected session variables as a JSON payload to the URL above.
+                            </p>
+                        </div>
+                    </div>
+                );
+
+            case "slack":
+                return (
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">Slack Webhook URL</label>
+                            <input
+                                type="text"
+                                placeholder="https://hooks.slack.com/services/..."
+                                value={formData.url || ""}
+                                onChange={(e) => handleChange("url", e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-purple-500"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">Channel (optional)</label>
+                            <input
+                                type="text"
+                                placeholder="#leads"
+                                value={formData.channel || ""}
+                                onChange={(e) => handleChange("channel", e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-purple-500"
+                            />
+                        </div>
+                        <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded-xl">
+                            <p className="text-[10px] text-purple-400 leading-relaxed font-bold uppercase tracking-widest mb-1">Slack Note</p>
+                            <p className="text-[10px] text-white/40 leading-relaxed">
+                                A formatted alert with all captured variables will be sent to this Slack channel.
+                            </p>
+                        </div>
+                    </div>
+                );
+
+            case "googleSheets":
+                return (
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">Spreadsheet ID</label>
+                            <input
+                                type="text"
+                                placeholder="1BxiMVs0XRA5nFMdKv9u36vY8BvW_A3zXOSKu7Z3G8Rw"
+                                value={formData.spreadsheetId || ""}
+                                onChange={(e) => handleChange("spreadsheetId", e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-500"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-white/50 mb-2">Sheet Name</label>
+                            <input
+                                type="text"
+                                placeholder="Sheet1"
+                                value={formData.sheetName || "Sheet1"}
+                                onChange={(e) => handleChange("sheetName", e.target.value)}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-500"
+                            />
+                        </div>
+                        <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-xl">
+                            <p className="text-[10px] text-green-400 leading-relaxed font-bold uppercase tracking-widest mb-1">Sheets Note</p>
+                            <p className="text-[10px] text-white/40 leading-relaxed">
+                                Make sure to share your sheet with the service account email provided in settings.
+                            </p>
                         </div>
                     </div>
                 );

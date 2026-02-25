@@ -1,0 +1,30 @@
+[build]
+builder = "NIXPACKS"
+
+[[services]]
+name = "nimmi-backend"
+rootDir = "backend"
+
+[services.build]
+buildCommand = "pip install -r requirements.txt"
+
+[services.deploy]
+startCommand = "gunicorn -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT main:app"
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+[[services]]
+name = "nimmi-dashboard"
+rootDir = "dashboard"
+
+[services.build]
+buildCommand = "npm install && npm run build"
+
+[services.deploy]
+startCommand = "npm run start"
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

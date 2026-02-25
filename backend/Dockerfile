@@ -15,4 +15,4 @@ RUN mkdir -p static/uploads
 # Expose port (Railway sets $PORT automatically)
 ENV PORT=8000
 
-CMD gunicorn -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT main:app
+CMD gunicorn -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT main:app

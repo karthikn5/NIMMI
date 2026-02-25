@@ -3,7 +3,8 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Install dependencies (Railway builds from repo root)
-COPY dashboard/package.json dashboard/package-lock.json ./
+# Only copy package.json - not lockfile - so npm installs correct Linux binaries
+COPY dashboard/package.json ./
 RUN npm install --include=optional
 
 # Copy app and build

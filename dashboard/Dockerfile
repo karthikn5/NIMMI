@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install dependencies (Railway builds from repo root)
 COPY dashboard/package.json dashboard/package-lock.json ./
-RUN npm ci
+RUN npm install --include=optional
 
 # Copy app and build
 COPY dashboard/ .

@@ -27,10 +27,6 @@ ACTIVATION_AMOUNT = 5000
 
 
 def get_razorpay_client():
-    # Diagnostic logging to confirm keys are loaded in Railway (without exposing secrets)
-    logger.info(f"DEBUG: RAZORPAY_KEY_ID present: {bool(RAZORPAY_KEY_ID)} (Prefix: {RAZORPAY_KEY_ID[:8]}...)")
-    logger.info(f"DEBUG: RAZORPAY_KEY_SECRET present: {bool(RAZORPAY_KEY_SECRET)} (Length: {len(RAZORPAY_KEY_SECRET)})")
-    
     return razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
 

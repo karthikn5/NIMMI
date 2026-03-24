@@ -3,6 +3,7 @@ uvicorn
 gunicorn
 sqlalchemy
 asyncpg
+aiosqlite
 python-dotenv
 google-generativeai
 PyPDF2

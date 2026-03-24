@@ -39,6 +39,7 @@ async def log_requests(request: Request, call_next):
 
 # CORS Configuration
 raw_origins = os.getenv("ALLOWED_ORIGINS", "")
+dashboard_url = os.getenv("DASHBOARD_URL", "")
 if raw_origins:
     allowed_origins = raw_origins.split(",")
 else:
@@ -46,8 +47,21 @@ else:
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:3001",
-        "http://127.0.0.1:3001"
+        "http://127.0.0.1:3001",
     ]
+
+# Auto-add Railway dashboard URL if set
+if dashboard_url:
+    allowed_origins.append(dashboard_url)
+    # Also add without trailing slash
+    allowed_origins.append(dashboard_url.rstrip("/"))
+
+# Allow all railway.app subdomains
+allowed_origins.extend([
+    "https://nimmi-dashboard-production-91c6.up.railway.app",
+    "https://nimmi-backend-production-2e2f.up.railway.app",
+])
+
 
 app.add_middleware(
     CORSMiddleware,

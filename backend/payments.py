@@ -35,7 +35,7 @@ async def create_order(bot_id: str, db: AsyncSession = Depends(get_db)):
     """Creates a Razorpay order for bot export activation."""
     try:
         bot_uuid = uuid.UUID(bot_id)
-        result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+        result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
         bot = result.scalars().first()
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
@@ -98,7 +98,7 @@ async def verify_payment(request: Request, db: AsyncSession = Depends(get_db)):
 
         # Unlock the bot
         bot_uuid = uuid.UUID(bot_id)
-        result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+        result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
         bot = result.scalars().first()
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
@@ -153,7 +153,7 @@ async def razorpay_webhook(request: Request, db: AsyncSession = Depends(get_db))
             if bot_id:
                 try:
                     bot_uuid = uuid.UUID(bot_id)
-                    result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+                    result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
                     bot = result.scalars().first()
                     if bot and not bot.export_unlocked:
                         bot.export_unlocked = True

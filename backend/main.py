@@ -463,7 +463,7 @@ async def upload_logo(bot_id: str, file: UploadFile = File(...)):
 async def upload_knowledge(bot_id: str, file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
     try:
         bot_uuid = uuid.UUID(bot_id)
-        result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+        result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
     except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid Bot ID format")
         

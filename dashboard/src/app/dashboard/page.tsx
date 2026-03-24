@@ -4,6 +4,7 @@ import { Bot, Plus, Settings, BarChart2, LayoutDashboard, Database, User, Messag
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 
 export default function Dashboard() {
     const [bots, setBots] = useState<any[]>([]);
@@ -12,6 +13,7 @@ export default function Dashboard() {
     const [userEmail, setUserEmail] = useState("");
     const [showProfileMenu, setShowProfileMenu] = useState(false);
     const [creatingBot, setCreatingBot] = useState(false);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Mobile menu state
     const router = useRouter();
 
     useEffect(() => {
@@ -118,89 +120,134 @@ export default function Dashboard() {
 
     return (
         <div className="flex min-h-screen bg-[#050505] text-white">
-            {/* Sidebar */}
-            <aside className="w-64 border-r border-white/5 p-6 flex flex-col">
-                <div className="flex items-center gap-2 font-bold text-xl mb-8">
-                    <Bot className="text-blue-500" />
+            {/* Mobile Header */}
+            <header className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-black/80 backdrop-blur-xl border-b border-white/5 flex items-center justify-between px-6 z-50">
+                <div className="flex items-center gap-2 font-bold text-xl tracking-tight">
+                    <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(37,99,235,0.4)]">
+                        <Bot size={18} />
+                    </div>
                     Nimmi AI
                 </div>
+                <button 
+                    onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                    className="p-2 hover:bg-white/5 rounded-lg transition-colors"
+                >
+                    <Plus className={`transition-transform duration-300 ${isSidebarOpen ? 'rotate-45' : ''}`} />
+                </button>
+            </header>
 
-                <nav className="flex-1 flex flex-col gap-2">
-                    <Link href="/dashboard" className="flex items-center gap-3 px-4 py-3 bg-white/10 rounded-xl text-white">
-                        <LayoutDashboard size={20} /> Dashboard
-                    </Link>
-                    <Link href="#" className="flex items-center gap-3 px-4 py-3 text-white/50 hover:bg-white/5 rounded-xl transition-colors">
-                        <BarChart2 size={20} /> Analytics
-                    </Link>
-                    <Link href="#" className="flex items-center gap-3 px-4 py-3 text-white/50 hover:bg-white/5 rounded-xl transition-colors">
-                        <Database size={20} /> Knowledge Base
-                    </Link>
-                    <Link href="#" className="flex items-center gap-3 px-4 py-3 text-white/50 hover:bg-white/5 rounded-xl transition-colors">
-                        <Settings size={20} /> Settings
-                    </Link>
+            {/* Sidebar */}
+            <aside className={`
+                fixed inset-y-0 left-0 z-40 w-72 bg-[#0a0a0a] border-r border-white/5 flex flex-col transition-transform duration-300 ease-in-out lg:static lg:translate-x-0
+                ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+            `}>
+                <div className="p-8 pb-4">
+                    <div className="flex items-center gap-3 font-bold text-2xl tracking-tighter group cursor-default">
+                        <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(37,99,235,0.4)] group-hover:scale-105 transition-transform duration-300">
+                            <Bot size={24} className="text-white" />
+                        </div>
+                        <span className="bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">Nimmi AI</span>
+                    </div>
+                </div>
+
+                <nav className="flex-1 px-4 py-8 flex flex-col gap-1.5 overflow-y-auto">
+                    {[
+                        { name: 'Dashboard', icon: LayoutDashboard, href: '/dashboard', active: true },
+                        { name: 'Analytics', icon: BarChart2, href: '#' },
+                        { name: 'Knowledge Base', icon: Database, href: '#' },
+                        { name: 'Settings', icon: Settings, href: '#' },
+                    ].map((item) => (
+                        <Link 
+                            key={item.name}
+                            href={item.href} 
+                            onClick={() => setIsSidebarOpen(false)}
+                            className={`
+                                flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200
+                                ${item.active 
+                                    ? 'bg-blue-600/10 text-blue-500 shadow-[inset_0_0_10px_rgba(37,99,235,0.05)]' 
+                                    : 'text-white/40 hover:text-white/80 hover:bg-white/[0.03]'}
+                            `}
+                        >
+                            <item.icon size={20} className={item.active ? 'text-blue-500' : 'opacity-70'} />
+                            <span className="font-semibold text-sm">{item.name}</span>
+                            {item.active && <div className="ml-auto w-1 h-4 bg-blue-500 rounded-full shadow-[0_0_8px_rgba(37,99,235,0.8)]" />}
+                        </Link>
+                    ))}
                 </nav>
 
                 {/* User Profile Section */}
-                <div className="relative mt-auto pt-6 border-t border-white/5">
+                <div className="relative mt-auto p-4 mx-2 mb-2 rounded-2xl bg-white/[0.02] border border-white/5 shadow-2xl overflow-hidden group">
+                    <div className="absolute inset-0 bg-blue-600/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                    
                     <button
                         onClick={() => setShowProfileMenu(!showProfileMenu)}
-                        className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-colors group"
+                        className="w-full flex items-center gap-3 relative z-10 p-2"
                     >
-                        {/* Avatar */}
-                        <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center text-sm font-bold shrink-0">
+                        <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center text-sm font-bold shadow-lg shrink-0">
                             {userName ? userName[0].toUpperCase() : "U"}
                         </div>
-
-                        {/* Name & Email */}
                         <div className="flex-1 text-left min-w-0">
-                            <div className="font-semibold text-sm truncate">{userName || "User"}</div>
-                            <div className="text-xs text-white/40 truncate">{userEmail || "Loading..."}</div>
+                            <div className="font-bold text-sm truncate text-white/90 group-hover:text-white transition-colors">{userName || "User"}</div>
+                            <div className="text-[10px] text-white/30 truncate group-hover:text-white/50 transition-colors uppercase font-black tracking-widest">{userEmail || "Starter Plan"}</div>
                         </div>
-
-                        {/* Chevron */}
-                        <ChevronUp size={16} className={`text-white/40 transition-transform ${showProfileMenu ? '' : 'rotate-180'}`} />
+                        <ChevronUp size={16} className={`text-white/20 transition-transform duration-300 group-hover:text-white/40 ${showProfileMenu ? '' : 'rotate-180'}`} />
                     </button>
 
                     {/* Dropdown Menu */}
-                    {showProfileMenu && (
-                        <div className="absolute bottom-full left-0 right-0 mb-2 bg-zinc-900 border border-white/10 rounded-xl overflow-hidden shadow-xl">
-                            <div className="p-3 border-b border-white/5">
-                                <div className="flex items-center gap-2 text-xs text-white/50">
-                                    <Crown size={12} className="text-yellow-500" />
-                                    Free Plan
+                    <AnimatePresence>
+                        {showProfileMenu && (
+                            <motion.div 
+                                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                                className="absolute bottom-full left-0 right-0 mb-4 bg-[#111] border border-white/10 rounded-2xl overflow-hidden shadow-2xl z-50"
+                            >
+                                <div className="p-4 bg-white/[0.02] border-b border-white/5">
+                                    <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-yellow-500/80">
+                                        <Crown size={12} className="text-yellow-500" />
+                                        Starter Plan
+                                    </div>
                                 </div>
-                            </div>
-                            <Link
-                                href="/dashboard/profile"
-                                className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-white/5 transition-colors"
-                                onClick={() => setShowProfileMenu(false)}
-                            >
-                                <User size={16} className="text-white/60" />
-                                View Profile
-                            </Link>
-                            <button
-                                onClick={handleLogout}
-                                className="w-full flex items-center gap-3 px-4 py-3 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
-                            >
-                                <LogOut size={16} />
-                                Log Out
-                            </button>
-                        </div>
-                    )}
+                                <Link
+                                    href="/dashboard/profile"
+                                    className="flex items-center gap-3 px-4 py-3.5 text-sm font-medium hover:bg-white/5 transition-colors group/item"
+                                    onClick={() => setShowProfileMenu(false)}
+                                >
+                                    <User size={18} className="text-white/40 group-hover/item:text-blue-400 transition-colors" />
+                                    Profile Settings
+                                </Link>
+                                <button
+                                    onClick={handleLogout}
+                                    className="w-full flex items-center gap-3 px-4 py-3.5 text-sm font-medium text-red-400/80 hover:bg-red-500/10 hover:text-red-400 transition-all group/item"
+                                >
+                                    <LogOut size={18} className="text-red-400/60 group-hover/item:text-red-400 transition-colors" />
+                                    Logout Account
+                                </button>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
                 </div>
             </aside>
 
+            {/* Overlay for mobile sidebar */}
+            {isSidebarOpen && (
+                <div 
+                    className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 lg:hidden"
+                    onClick={() => setIsSidebarOpen(false)}
+                />
+            )}
+
             {/* Main */}
-            <main className="flex-1 p-10">
-                <header className="flex items-center justify-between mb-12">
+            <main className="flex-1 p-6 lg:p-12 mt-16 lg:mt-0">
+                <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
                     <div>
-                        <h2 className="text-3xl font-bold">Your Bots</h2>
-                        <p className="text-white/50 mt-1">Manage and monitor your AI assistants</p>
+                        <h2 className="text-3xl lg:text-4xl font-black bg-gradient-to-r from-white to-white/40 bg-clip-text text-transparent italic">Your Bots</h2>
+                        <p className="text-white/40 mt-2 font-medium">Manage and monitor your specialized AI assistants</p>
                     </div>
                     <button
                         onClick={handleCreateBot}
                         disabled={creatingBot}
-                        className={`flex items-center gap-2 px-6 py-3 bg-blue-600 rounded-full font-bold hover:bg-blue-500 transition-all ${creatingBot ? "opacity-70 cursor-not-allowed" : ""}`}
+                        className={`flex items-center gap-2 px-6 py-3 bg-blue-600 rounded-full font-bold hover:bg-blue-500 transition-all shadow-[0_4px_20px_rgba(37,99,235,0.3)] hover:shadow-[0_4px_25px_rgba(37,99,235,0.5)] ${creatingBot ? "opacity-70 cursor-not-allowed" : ""}`}
                     >
                         {creatingBot ? (
                             <>
@@ -217,38 +264,71 @@ export default function Dashboard() {
 
                 <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {loading ? (
-                        <div className="col-span-full text-center py-20 text-white/20">Loading bots...</div>
+                        <div className="col-span-full flex flex-col items-center justify-center py-32 space-y-4">
+                            <div className="w-12 h-12 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin" />
+                            <p className="text-white/40 font-medium animate-pulse">Synchronizing your bots...</p>
+                        </div>
                     ) : bots.length === 0 ? (
-                        <div className="col-span-full text-center py-20 bg-white/5 rounded-3xl border border-dashed border-white/10">
-                            <p className="text-white/40 mb-4">You haven't created any bots yet.</p>
-                            <button onClick={handleCreateBot} className="text-blue-500 font-bold hover:underline">Create your first bot</button>
+                        <div className="col-span-full text-center py-32 bg-white/[0.02] rounded-[3rem] border border-dashed border-white/10 mx-4">
+                            <div className="w-20 h-20 bg-white/5 rounded-3xl flex items-center justify-center mx-auto mb-6">
+                                <Plus size={32} className="text-white/20" />
+                            </div>
+                            <h3 className="text-2xl font-bold mb-2">No bots found</h3>
+                            <p className="text-white/40 mb-8 max-w-xs mx-auto text-sm">Create your first AI assistant to start automating your conversations.</p>
+                            <button 
+                                onClick={handleCreateBot} 
+                                className="px-8 py-3 bg-blue-600 rounded-full font-bold hover:bg-blue-500 transition-all shadow-[0_0_30px_rgba(37,99,235,0.2)]"
+                            >
+                                Start Building
+                            </button>
                         </div>
                     ) : bots.map(bot => (
-                        <div key={bot.id} className="group p-6 rounded-3xl bg-zinc-900 border border-white/5 hover:border-white/10 transition-all cursor-pointer">
-                            <div className="flex items-center justify-between mb-6">
-                                <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center group-hover:bg-blue-600/20 transition-colors">
-                                    <Bot className="text-white group-hover:text-blue-500 transition-colors" />
+                        <div 
+                            key={bot.id} 
+                            onClick={() => router.push(`/dashboard/builder/${bot.id}`)}
+                            className="group relative p-8 rounded-[2.5rem] bg-[#0c0c0c] border border-white/5 hover:border-blue-500/30 transition-all duration-500 cursor-pointer overflow-hidden shadow-2xl"
+                        >
+                            {/* Card Background Glow */}
+                            <div className="absolute -inset-2 bg-gradient-to-br from-blue-600/10 to-purple-600/10 opacity-0 group-hover:opacity-100 blur-2xl transition-opacity duration-500" />
+                            
+                            <div className="relative z-10">
+                                <div className="flex items-center justify-between mb-8">
+                                    <div className="w-14 h-14 bg-gradient-to-br from-white/10 to-white/[0.02] rounded-2xl flex items-center justify-center group-hover:scale-110 group-hover:bg-blue-600/10 transition-all duration-500 border border-white/5 group-hover:border-blue-500/20">
+                                        <Bot size={28} className="text-white/60 group-hover:text-blue-500 transition-colors" />
+                                    </div>
+                                    <div className="flex flex-col items-end gap-1.5">
+                                        <span className="px-3 py-1 bg-green-500/10 text-green-400 text-[10px] font-black uppercase tracking-widest rounded-full border border-green-500/20">
+                                            {bot.status}
+                                        </span>
+                                    </div>
                                 </div>
-                                <span className="px-3 py-1 bg-green-500/10 text-green-500 text-xs font-bold rounded-full border border-green-500/20">
-                                    {bot.status}
-                                </span>
-                            </div>
-                            <h3 className="text-xl font-bold mb-2">{bot.name}</h3>
-                            <div className="flex items-center gap-6 text-sm text-white/40">
-                                <span className="flex items-center gap-1.5"><MessageSquare size={14} /> {bot.conversations} chats</span>
-                                <span>Active {bot.lastActive}</span>
-                            </div>
-                            <div className="mt-8 flex gap-2">
-                                <Link href={`/dashboard/builder/${bot.id}`} className="flex-1 py-3 bg-white/5 rounded-xl text-center text-sm font-bold hover:bg-white/10 transition-colors">
-                                    Edit Bot
-                                </Link>
-                                <button
-                                    onClick={(e) => handleDeleteBot(bot.id, bot.name, e)}
-                                    className="p-3 bg-white/5 rounded-xl hover:bg-red-500/20 hover:text-red-500 transition-colors group-delete"
-                                    title="Delete Bot"
-                                >
-                                    <LogOut size={18} className="text-white/60 group-delete-hover:text-red-500 transition-colors" />
-                                </button>
+                                
+                                <h3 className="text-2xl font-bold mb-3 group-hover:text-blue-400 transition-colors duration-300 tracking-tight">{bot.name}</h3>
+                                
+                                <div className="flex items-center gap-6 text-xs text-white/30 font-medium">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500/40 animate-pulse" />
+                                        <span>{bot.conversations || 0} Interactions</span>
+                                    </div>
+                                    <span>Last used {bot.lastActive || "Recently"}</span>
+                                </div>
+
+                                <div className="mt-10 flex gap-3">
+                                    <Link 
+                                        href={`/dashboard/builder/${bot.id}`} 
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="flex-1 py-4 bg-white/5 rounded-2xl text-center text-xs font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all duration-300 border border-white/5 hover:border-blue-500/50 shadow-xl"
+                                    >
+                                        Edit Interface
+                                    </Link>
+                                    <button
+                                        onClick={(e) => handleDeleteBot(bot.id, bot.name, e)}
+                                        className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl hover:bg-red-500/10 hover:border-red-500/30 transition-all duration-300 text-white/20 hover:text-red-500"
+                                        title="Delete Bot"
+                                    >
+                                        <LogOut size={18} />
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     ))}

@@ -1,30 +1,23 @@
-FROM node:20-alpine AS builder
+FROM node:20-alpine
 
 WORKDIR /app
 
-# Install dependencies
-COPY package.json* dashboard/package.json* ./
-RUN if [ -f package.json ]; then npm install; \
-    elif [ -f dashboard/package.json ]; then cd dashboard && npm install; fi
+# Install all dependencies (including dev for build)
+COPY package.json ./
+RUN npm install
 
-# Copy app source and build
+# Copy app source
 COPY . .
 
-# Skip linting during build to avoid breaking on ESLint warnings
+# Build - skip linting to avoid breaking on warnings
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN if [ -d dashboard ]; then cd dashboard && npm run build -- --no-lint; \
-    else npm run build -- --no-lint; fi
+RUN npm run build -- --no-lint
 
-# Production runner
-FROM node:20-alpine AS runner
-WORKDIR /app
-
+# Production settings
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
-
-# Copy built output (handles both relative and absolute paths)
-COPY --from=builder /app/ .
-
 EXPOSE 3000
-CMD if [ -d dashboard ]; then cd dashboard && npm start; else npm start; fi
+
+# Start application using absolute path to next to bypass npm path issues
+CMD ["./node_modules/.bin/next", "start"]

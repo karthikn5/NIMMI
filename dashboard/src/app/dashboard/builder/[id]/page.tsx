@@ -4,7 +4,7 @@ import { useState, use, useEffect, useCallback, useRef, Suspense } from "react";
 import {
     Bot, Palette, Database, Brain, GitBranch,
     ChevronLeft, Save, Upload, Plus, MessageSquare,
-    Smartphone, Monitor, Send, Image, Settings as SettingsIcon,
+    Smartphone, Monitor, Send, Image as ImageIcon, Settings as SettingsIcon,
     Play, Check, Inbox, List, Search, ChevronDown, X, Globe, Video
 } from "lucide-react";
 import Link from "next/link";
@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Node, Edge } from "reactflow";
 import dynamic from "next/dynamic";
+import Image from "next/image";
 import ElementsSidebar from "./components/ElementsSidebar";
 import PropertiesPanel from "./components/PropertiesPanel";
 import ExportModal from "./components/ExportModal";
@@ -539,11 +540,13 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     // Default layout for other tabs
     return (
         <div className="flex h-screen bg-[#050505] text-white">
-            <link rel="stylesheet" href={GOOGLE_FONTS_BATCH_1} />
-            <link rel="stylesheet" href={GOOGLE_FONTS_BATCH_2} />
-            <link rel="stylesheet" href={GOOGLE_FONTS_BATCH_3} />
-            <link rel="stylesheet" href={GOOGLE_FONTS_BATCH_4} />
-            <link rel="stylesheet" href={GOOGLE_FONTS_BATCH_5} />
+            {/* Load only the selected font to save bandwidth */}
+            {fontFamily !== "sans-serif" && fontFamily !== "serif" && fontFamily !== "monospace" && (
+                <link 
+                    rel="stylesheet" 
+                    href={`https://fonts.googleapis.com/css2?family=${fontFamily.replace(/'/g, "").split(",")[0].replace(/ /g, "+")}:wght@400;700&display=swap`} 
+                />
+            )}
             {/* Sidebar / Left Config */}
             <aside className="w-[450px] border-r border-white/5 flex flex-col">
                 <header className="px-4 py-4 border-b border-white/5 flex items-center justify-between gap-3">
@@ -695,8 +698,14 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                 />
                                             </div>
                                             {botLogo && (
-                                                <div className="w-10 h-10 bg-white/5 rounded-xl border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
-                                                    <img src={botLogo} alt="Logo" className="w-full h-full object-cover" onError={(e) => (e.currentTarget.style.display = "none")} />
+                                                <div className="w-10 h-10 bg-white/5 rounded-xl border border-white/10 flex items-center justify-center overflow-hidden shrink-0 relative">
+                                                    <Image 
+                                                        src={botLogo} 
+                                                        alt="Logo Preview" 
+                                                        fill 
+                                                        className="object-cover" 
+                                                        unoptimized={botLogo.startsWith('data:')}
+                                                    />
                                                 </div>
                                             )}
                                         </div>
@@ -1025,7 +1034,8 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                             >
                                                 {aiProvider === "google" && (
                                                     <>
-                                                        <option value="gemini-2.0-flash-001" className="bg-[#111]">Gemini 2.0 Flash (Latest / Free)</option>
+                                                        <option value="gemini-3-flash-preview" className="bg-[#111]">Gemini 3 Flash Preview (Experimental)</option>
+                                                         <option value="gemini-2.0-flash-001" className="bg-[#111]">Gemini 2.0 Flash (Latest / Free)</option>
                                                         <option value="gemini-1.5-flash" className="bg-[#111]">Gemini 1.5 Flash (Free Tier)</option>
                                                         <option value="gemini-1.5-flash-8b" className="bg-[#111]">Gemini 1.5 Flash-8B (Fastest / Free)</option>
                                                         <option value="gemini-1.5-pro" className="bg-[#111]">Gemini 1.5 Pro</option>

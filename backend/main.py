@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Optional
@@ -31,18 +32,32 @@ app.include_router(payments_router)
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     origin = request.headers.get("origin")
-    logger.info(f"Incoming request: {request.method} {request.url} | Origin: {origin}")
+    query_params = dict(request.query_params)
+    logger.info(f"Incoming request: {request.method} {request.url} | Params: {query_params} | Origin: {origin}")
     response = await call_next(request)
     return response
 
 # CORS Configuration
+raw_origins = os.getenv("ALLOWED_ORIGINS", "")
+if raw_origins:
+    allowed_origins = raw_origins.split(",")
+else:
+    allowed_origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001"
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 
 # Static Files
 os.makedirs("static/uploads", exist_ok=True)
@@ -51,12 +66,16 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.on_event("startup")
 async def on_startup():
     from database import init_db
-    try:
-        await init_db()
-        logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Warning: Database initialization failed: {e}")
-        # The app will still run, allowing the frontend to connect and see errors
+    # Run database initialization in background to prevent hanging uvicorn startup
+    async def run_db_init():
+        try:
+            await init_db()
+            logger.info("Database initialized successfully")
+        except Exception as e:
+            logger.error(f"Warning: Database initialization failed: {e}")
+            
+    asyncio.create_task(run_db_init())
+    logger.info("Application starting up...")
 
 # Models
 class BotCreate(BaseModel):
@@ -163,16 +182,20 @@ async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
     if not user.password_hash:
         raise HTTPException(status_code=401, detail="Please sign up again to set a password")
     
-    # Verify password
-    if not verify_password(user_data.password, user.password_hash):
+    # Verify password (run in thread pool to avoid blocking async loop)
+    if not await asyncio.to_thread(verify_password, user_data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
     return {"message": "Login successful", "user_id": str(user.id), "name": user.name or ""}
 
 @app.get("/api/auth/profile")
 async def get_profile(user_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalars().first()
+    try:
+        user_uuid = uuid.UUID(user_id)
+        result = await db.execute(select(User).where(User.id == str(user_uuid)))
+        user = result.scalars().first()
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid User ID format")
     
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -187,8 +210,19 @@ async def get_profile(user_id: str, db: AsyncSession = Depends(get_db)):
 
 @app.patch("/api/auth/profile")
 async def update_profile(user_id: str, profile_data: ProfileUpdate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalars().first()
+    try:
+        try:
+            user_uuid = uuid.UUID(user_id)
+            result = await db.execute(select(User).where(User.id == str(user_uuid)))
+            user = result.scalars().first()
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid User ID format")
+    except Exception as e:
+        logger.error(f"Error in update_profile: {e}")
+        with open("backend_traceback.log", "a") as f:
+            f.write(f"Error in update_profile: {str(e)}\n")
+            traceback.print_exc(file=f)
+        raise HTTPException(status_code=500, detail=str(e))
     
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -207,21 +241,29 @@ async def update_profile(user_id: str, profile_data: ProfileUpdate, db: AsyncSes
 
 @app.post("/api/bots/create")
 async def create_bot(bot_data: BotCreate, db: AsyncSession = Depends(get_db)):
-    new_bot = Bot(
-        user_id=bot_data.user_id,
-        bot_name=bot_data.bot_name,
-        system_prompt=bot_data.system_prompt,
-        visual_config=bot_data.visual_config
-    )
-    db.add(new_bot)
-    await db.commit()
-    await db.refresh(new_bot)
-    return {"message": "Bot created", "bot_id": str(new_bot.bot_id)}
+    try:
+        user_uuid = uuid.UUID(bot_data.user_id)
+        new_bot = Bot(
+            user_id=str(user_uuid),
+            bot_name=bot_data.bot_name,
+            system_prompt=bot_data.system_prompt,
+            visual_config=bot_data.visual_config
+        )
+        db.add(new_bot)
+        await db.commit()
+        # await db.refresh(new_bot)  # Skip refresh to avoid potential pooler schema sync issues
+        return {"message": "Bot created", "bot_id": str(new_bot.bot_id)}
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid User ID format")
 
 @app.get("/api/bots")
 async def list_bots(user_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Bot).where(Bot.user_id == user_id))
-    bots = result.scalars().all()
+    try:
+        user_uuid = uuid.UUID(user_id)
+        result = await db.execute(select(Bot).where(Bot.user_id == str(user_uuid)))
+        bots = result.scalars().all()
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid User ID format")
     return [
         {
             "id": str(bot.bot_id),
@@ -238,7 +280,7 @@ async def get_bot_config(bot_id: str, db: AsyncSession = Depends(get_db)):
     try:
         try:
             bot_uuid = uuid.UUID(bot_id)
-            result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+            result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
         except (ValueError, AttributeError):
             raise HTTPException(status_code=400, detail="Invalid Bot ID format")
             
@@ -248,18 +290,18 @@ async def get_bot_config(bot_id: str, db: AsyncSession = Depends(get_db)):
         
         return {
             "bot_id": str(bot.bot_id),
-        "bot_name": bot.bot_name,
-        "system_prompt": bot.system_prompt,
-        "visual_config": bot.visual_config,
-        "flow_data": bot.flow_data,
-        "knowledge_base": bot.knowledge_base,
-        "ai_provider": bot.ai_provider,
-        "ai_model": bot.ai_model,
-        "ai_api_key": bot.ai_api_key,
-        "is_active": bot.is_active,
-        "export_unlocked": bot.export_unlocked,
-        "created_at": bot.created_at
-    }
+            "bot_name": bot.bot_name,
+            "system_prompt": bot.system_prompt,
+            "visual_config": bot.visual_config,
+            "flow_data": bot.flow_data,
+            "knowledge_base": bot.knowledge_base,
+            "ai_provider": bot.ai_provider,
+            "ai_model": bot.ai_model,
+            "ai_api_key": bot.ai_api_key,
+            "is_active": bot.is_active,
+            "export_unlocked": bot.export_unlocked,
+            "created_at": bot.created_at
+        }
     except Exception as e:
         with open("backend_traceback.log", "a") as f:
             f.write(f"Error in get_bot_config: {str(e)}\n")
@@ -269,7 +311,12 @@ async def get_bot_config(bot_id: str, db: AsyncSession = Depends(get_db)):
 @app.post("/api/bots/{bot_id}/config")
 async def update_bot_config(bot_id: str, config_data: dict, db: AsyncSession = Depends(get_db)):
     try:
-        result = await db.execute(select(Bot).where(Bot.bot_id == bot_id))
+        try:
+            bot_uuid = uuid.UUID(bot_id)
+            result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
+        except (ValueError, AttributeError):
+            raise HTTPException(status_code=400, detail="Invalid Bot ID format")
+            
         bot = result.scalars().first()
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
@@ -324,7 +371,7 @@ async def update_bot_config(bot_id: str, config_data: dict, db: AsyncSession = D
 async def update_bot(bot_id: str, bot_data: dict, db: AsyncSession = Depends(get_db)):
     try:
         bot_uuid = uuid.UUID(bot_id)
-        result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+        result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
     except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid Bot ID format")
         
@@ -356,7 +403,7 @@ async def update_bot(bot_id: str, bot_data: dict, db: AsyncSession = Depends(get
 async def delete_bot(bot_id: str, db: AsyncSession = Depends(get_db)):
     try:
         bot_uuid = uuid.UUID(bot_id)
-        result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+        result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
     except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid Bot ID format")
         
@@ -364,9 +411,17 @@ async def delete_bot(bot_id: str, db: AsyncSession = Depends(get_db)):
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
     
-    await db.delete(bot)
-    await db.commit()
-    return {"message": "Bot deleted successfully"}
+    try:
+        await db.delete(bot)
+        await db.commit()
+        return {"message": "Bot deleted successfully"}
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error deleting bot {bot_id}: {e}")
+        with open("backend_traceback.log", "a") as f:
+            f.write(f"Error deleting bot {bot_id}: {str(e)}\n")
+            traceback.print_exc(file=f)
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 from utils import extract_text_from_pdf, extract_text_from_txt, generate_ai_response
 
@@ -392,7 +447,12 @@ async def upload_logo(bot_id: str, file: UploadFile = File(...)):
 
 @app.post("/api/bots/{bot_id}/knowledge/upload")
 async def upload_knowledge(bot_id: str, file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Bot).where(Bot.bot_id == bot_id))
+    try:
+        bot_uuid = uuid.UUID(bot_id)
+        result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid Bot ID format")
+        
     bot = result.scalars().first()
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
@@ -421,7 +481,7 @@ async def upload_knowledge(bot_id: str, file: UploadFile = File(...), db: AsyncS
 async def chat_message(chat: ChatMessage, db: AsyncSession = Depends(get_db)):
     try:
         bot_uuid = uuid.UUID(chat.bot_id)
-        result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+        result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
     except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid Bot ID format")
         
@@ -443,7 +503,8 @@ async def chat_message(chat: ChatMessage, db: AsyncSession = Depends(get_db)):
             chat.message,
             provider=bot.ai_provider,
             model_name=bot.ai_model,
-            api_key=bot.ai_api_key
+            api_key=bot.ai_api_key,
+            is_system_use=False
         )
         return {
             "answer": answer,
@@ -465,7 +526,7 @@ async def capture_variables(data: VariableCapture, db: AsyncSession = Depends(ge
     # Find or create conversation
     result = await db.execute(
         select(Conversation).where(
-            Conversation.bot_id == uuid.UUID(data.bot_id),
+            Conversation.bot_id == data.bot_id,
             Conversation.visitor_session_id == data.visitor_session_id
         )
     )
@@ -473,7 +534,7 @@ async def capture_variables(data: VariableCapture, db: AsyncSession = Depends(ge
     
     if not conv:
         conv = Conversation(
-            bot_id=uuid.UUID(data.bot_id),
+            bot_id=data.bot_id,
             visitor_session_id=data.visitor_session_id,
             captured_data={}
         )
@@ -504,7 +565,8 @@ async def ai_custom_prompt(data: AIPromptRequest, db: AsyncSession = Depends(get
             data.prompt,
             provider=bot.ai_provider,
             model_name=bot.ai_model,
-            api_key=bot.ai_api_key
+            api_key=bot.ai_api_key,
+            is_system_use=False
         )
         return {"answer": answer}
     except Exception as e:
@@ -540,7 +602,7 @@ async def get_bot_leads(bot_id: str, db: AsyncSession = Depends(get_db)):
         bot_uuid = uuid.UUID(bot_id)
         result = await db.execute(
             select(Conversation).where(
-                Conversation.bot_id == bot_uuid
+                Conversation.bot_id == str(bot_uuid)
             ).order_by(Conversation.created_at.desc())
         )
         conversations = result.scalars().all()
@@ -607,7 +669,7 @@ async def crawl_website(data: KnowledgeCrawlRequest, db: AsyncSession = Depends(
             return {"error": text}
             
         bot_uuid = uuid.UUID(data.bot_id)
-        result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+        result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
         bot = result.scalars().first()
         if not bot:
             return {"error": "Bot not found"}
@@ -631,7 +693,7 @@ async def crawl_youtube(data: YouTubeCrawlRequest, db: AsyncSession = Depends(ge
             return {"error": text}
             
         bot_uuid = uuid.UUID(data.bot_id)
-        result = await db.execute(select(Bot).where(Bot.bot_id == bot_uuid))
+        result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
         bot = result.scalars().first()
         if not bot:
             return {"error": "Bot not found"}

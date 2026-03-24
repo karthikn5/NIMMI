@@ -153,27 +153,30 @@ export default function Dashboard() {
 
                 <nav className="flex-1 px-4 py-8 flex flex-col gap-1.5 overflow-y-auto">
                     {[
-                        { name: 'Dashboard', icon: LayoutDashboard, href: '/dashboard', active: true },
+                        { name: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
                         { name: 'Analytics', icon: BarChart2, href: '#' },
                         { name: 'Knowledge Base', icon: Database, href: '#' },
-                        { name: 'Settings', icon: Settings, href: '#' },
-                    ].map((item) => (
-                        <Link 
-                            key={item.name}
-                            href={item.href} 
-                            onClick={() => setIsSidebarOpen(false)}
-                            className={`
-                                flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200
-                                ${item.active 
-                                    ? 'bg-blue-600/10 text-blue-500 shadow-[inset_0_0_10px_rgba(37,99,235,0.05)]' 
-                                    : 'text-white/40 hover:text-white/80 hover:bg-white/[0.03]'}
-                            `}
-                        >
-                            <item.icon size={20} className={item.active ? 'text-blue-500' : 'opacity-70'} />
-                            <span className="font-semibold text-sm">{item.name}</span>
-                            {item.active && <div className="ml-auto w-1 h-4 bg-blue-500 rounded-full shadow-[0_0_8px_rgba(37,99,235,0.8)]" />}
-                        </Link>
-                    ))}
+                        { name: 'Profile Settings', icon: User, href: '/dashboard/profile' },
+                    ].map((item) => {
+                        const isActive = item.href === '/dashboard'; // Simple active state for now
+                        return (
+                            <Link 
+                                key={item.name}
+                                href={item.href} 
+                                onClick={() => setIsSidebarOpen(false)}
+                                className={`
+                                    flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200
+                                    ${isActive 
+                                        ? 'bg-blue-600/10 text-blue-500 shadow-[inset_0_0_10px_rgba(37,99,235,0.05)]' 
+                                        : 'text-white/40 hover:text-white/80 hover:bg-white/[0.03]'}
+                                `}
+                            >
+                                <item.icon size={20} className={isActive ? 'text-blue-500' : 'opacity-70'} />
+                                <span className="font-semibold text-sm">{item.name}</span>
+                                {isActive && <div className="ml-auto w-1 h-4 bg-blue-500 rounded-full shadow-[0_0_8px_rgba(37,99,235,0.8)]" />}
+                            </Link>
+                        );
+                    })}
                 </nav>
 
                 {/* User Profile Section */}
@@ -191,7 +194,17 @@ export default function Dashboard() {
                             <div className="font-bold text-sm truncate text-white/90 group-hover:text-white transition-colors">{userName || "User"}</div>
                             <div className="text-[10px] text-white/30 truncate group-hover:text-white/50 transition-colors uppercase font-black tracking-widest">{userEmail || "Starter Plan"}</div>
                         </div>
-                        <ChevronUp size={16} className={`text-white/20 transition-transform duration-300 group-hover:text-white/40 ${showProfileMenu ? '' : 'rotate-180'}`} />
+                        <div className="flex items-center gap-2">
+                            <Link 
+                                href="/dashboard/profile"
+                                onClick={(e) => e.stopPropagation()}
+                                className="p-1.5 hover:bg-white/10 rounded-lg transition-colors text-white/20 hover:text-white/60"
+                                title="Profile Settings"
+                            >
+                                <Settings size={16} />
+                            </Link>
+                            <ChevronUp size={16} className={`text-white/20 transition-transform duration-300 group-hover:text-white/40 ${showProfileMenu ? '' : 'rotate-180'}`} />
+                        </div>
                     </button>
 
                     {/* Dropdown Menu */}

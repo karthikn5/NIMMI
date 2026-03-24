@@ -16,6 +16,7 @@ export default function Dashboard() {
     useEffect(() => {
         const userId = localStorage.getItem("nimmi_user_id");
         const storedName = localStorage.getItem("nimmi_user_name");
+        const storedEmail = localStorage.getItem("nimmi_user_email");
 
         if (!userId) {
             router.push("/auth/signup");
@@ -23,6 +24,7 @@ export default function Dashboard() {
         }
 
         setUserName(storedName || "User");
+        if (storedEmail) setUserEmail(storedEmail);
 
         // Fetch user profile
         const fetchProfile = async () => {

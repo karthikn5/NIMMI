@@ -11,6 +11,7 @@ export default function Dashboard() {
     const [userName, setUserName] = useState("");
     const [userEmail, setUserEmail] = useState("");
     const [showProfileMenu, setShowProfileMenu] = useState(false);
+    const [creatingBot, setCreatingBot] = useState(false);
     const router = useRouter();
 
     useEffect(() => {
@@ -58,6 +59,9 @@ export default function Dashboard() {
 
     const handleCreateBot = async () => {
         const userId = localStorage.getItem("nimmi_user_id");
+        if (!userId) return;
+
+        setCreatingBot(true);
         try {
             const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bots/create`, {
                 method: "POST",
@@ -72,9 +76,14 @@ export default function Dashboard() {
             const data = await res.json();
             if (res.ok) {
                 router.push(`/dashboard/builder/${data.bot_id}`);
+            } else {
+                setCreatingBot(false);
+                alert("Failed to create bot: " + (data.detail || "Unknown error"));
             }
         } catch (err) {
             console.error("Failed to create bot:", err);
+            setCreatingBot(false);
+            alert("Error creating bot. Please try again.");
         }
     };
 
@@ -190,9 +199,19 @@ export default function Dashboard() {
                     </div>
                     <button
                         onClick={handleCreateBot}
-                        className="flex items-center gap-2 px-6 py-3 bg-blue-600 rounded-full font-bold hover:bg-blue-500 transition-colors"
+                        disabled={creatingBot}
+                        className={`flex items-center gap-2 px-6 py-3 bg-blue-600 rounded-full font-bold hover:bg-blue-500 transition-all ${creatingBot ? "opacity-70 cursor-not-allowed" : ""}`}
                     >
-                        <Plus size={20} /> Create New Bot
+                        {creatingBot ? (
+                            <>
+                                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                Creating...
+                            </>
+                        ) : (
+                            <>
+                                <Plus size={20} /> Create New Bot
+                            </>
+                        )}
                     </button>
                 </header>
 

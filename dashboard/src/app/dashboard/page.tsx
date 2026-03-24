@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Plus, Settings, BarChart2, LayoutDashboard, Database, User, MessageSquare, LogOut, ChevronUp, Crown } from "lucide-react";
+import { Bot, Plus, Settings, BarChart2, LayoutDashboard, Database, User, MessageSquare, LogOut, ChevronUp, Crown, CreditCard } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useState } from "react";
@@ -156,6 +156,7 @@ export default function Dashboard() {
                         { name: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
                         { name: 'Analytics', icon: BarChart2, href: '#' },
                         { name: 'Knowledge Base', icon: Database, href: '#' },
+                        { name: 'Billing', icon: CreditCard, href: '#' },
                         { name: 'Profile Settings', icon: User, href: '/dashboard/profile' },
                     ].map((item) => {
                         const isActive = item.href === '/dashboard'; // Simple active state for now

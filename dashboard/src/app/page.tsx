@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Bot, Zap, Shield, Wand2, ArrowRight, MessageSquare } from "lucide-react";
+import { Bot, Zap, Shield, Wand2, ArrowRight, MessageSquare, LayoutDashboard, Settings } from "lucide-react";
 import { motion } from "framer-motion";
 import Image from "next/image";
 import Script from "next/script";
@@ -137,33 +137,88 @@ export default function LandingPage() {
             <div className="absolute inset-0 bg-blue-400/10 blur-[120px] rounded-full mx-auto w-[60%] h-[60%]" />
             <div className="relative border border-white/40 rounded-3xl overflow-hidden shadow-2xl bg-white/30 backdrop-blur-xl aspect-[16/9] max-w-5xl mx-auto p-4 flex gap-4 ring-1 ring-white/20">
               {/* Dashboard Mockup */}
-              <div className="w-1/4 h-full bg-zinc-50 rounded-xl border border-zinc-100 p-4 flex flex-col gap-4">
-                {[1, 2, 3].map(i => <div key={i} className="h-8 w-full bg-zinc-200/50 rounded-lg" />)}
+              <div className="w-1/4 h-full bg-zinc-50 rounded-xl border border-zinc-100 p-4 flex flex-col gap-2 overflow-hidden">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center text-[10px] font-bold text-white shadow-sm">N</div>
+                  <div className="h-2 w-12 bg-zinc-200 rounded" />
+                </div>
+                {[
+                  { icon: LayoutDashboard, label: 'Dashboard', active: true },
+                  { icon: MessageSquare, label: 'Chats' },
+                  { icon: Zap, label: 'Analytics' },
+                  { icon: Settings, label: 'Settings' },
+                ].map((item, i) => (
+                  <div key={i} className={`flex items-center gap-2 p-2 rounded-lg ${item.active ? 'bg-blue-50 text-blue-600' : 'text-zinc-400'}`}>
+                    <item.icon size={12} />
+                    <div className={`h-1.5 w-12 rounded ${item.active ? 'bg-blue-200' : 'bg-zinc-200'}`} />
+                  </div>
+                ))}
               </div>
-              <div className="flex-1 h-full bg-zinc-50/50 rounded-xl border border-zinc-100 p-8 flex flex-col gap-6">
-                <div className="h-12 w-1/3 bg-zinc-200/50 rounded-xl" />
-                <div className="grid grid-cols-2 gap-4 flex-1">
-                  <div className="bg-white rounded-2xl border border-zinc-100 shadow-sm" />
-                  <div className="bg-white rounded-2xl border border-zinc-100 shadow-sm" />
+
+              <div className="flex-1 h-full bg-zinc-50/50 rounded-xl border border-zinc-100 p-6 flex flex-col gap-6 overflow-hidden">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="h-6 w-32 bg-zinc-800/10 rounded-lg" />
+                  <div className="h-8 w-24 bg-blue-600 rounded-full" />
+                </div>
+
+                {/* Stats Grid */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-white p-3 rounded-2xl border border-zinc-100 shadow-sm">
+                    <div className="h-1.5 w-12 bg-zinc-100 rounded mb-2" />
+                    <div className="h-4 w-16 bg-zinc-800/20 rounded-md" />
+                  </div>
+                  <div className="bg-white p-3 rounded-2xl border border-zinc-100 shadow-sm">
+                    <div className="h-1.5 w-12 bg-zinc-100 rounded mb-2" />
+                    <div className="h-4 w-20 bg-blue-500/20 rounded-md" />
+                  </div>
+                </div>
+
+                {/* Chart Area */}
+                <div className="flex-1 bg-white rounded-2xl border border-zinc-100 shadow-sm p-4 relative overflow-hidden">
+                  <div className="h-2 w-24 bg-zinc-100 rounded mb-4" />
+                  <div className="absolute bottom-0 left-0 right-0 h-2/3 flex items-end px-2 gap-1.5">
+                    {[40, 70, 45, 90, 65, 80, 50, 85, 60, 95].map((h, i) => (
+                      <div key={i} style={{ height: `${h}%` }} className="flex-1 bg-blue-500/10 rounded-t-sm group-hover:bg-blue-500/20 transition-colors" />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Bot List Preview */}
+                <div className="grid grid-cols-2 gap-3 h-20">
+                  <div className="bg-white rounded-xl border border-zinc-100 shadow-sm p-3 flex items-center gap-2">
+                    <div className="w-8 h-8 bg-zinc-100 rounded-lg shrink-0" />
+                    <div className="space-y-1.5">
+                      <div className="h-1.5 w-12 bg-zinc-200 rounded" />
+                      <div className="h-1 w-8 bg-green-500/20 rounded" />
+                    </div>
+                  </div>
+                  <div className="bg-white rounded-xl border border-zinc-100 shadow-sm p-3 flex items-center gap-2">
+                    <div className="w-8 h-8 bg-zinc-100 rounded-lg shrink-0" />
+                    <div className="space-y-1.5">
+                      <div className="h-1.5 w-12 bg-zinc-200 rounded" />
+                      <div className="h-1 w-8 bg-blue-500/20 rounded" />
+                    </div>
+                  </div>
                 </div>
               </div>
+
               {/* Widget Preview */}
-              <div className="absolute bottom-12 right-12 w-72 h-96 bg-white rounded-2xl shadow-2xl border border-zinc-100 flex flex-col overflow-hidden animate-bounce-slow">
-                <div className="bg-blue-600 p-4 font-bold flex justify-between text-white">
+              <div className="absolute bottom-8 right-8 w-64 h-80 bg-white rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] border border-zinc-100 flex flex-col overflow-hidden animate-bounce-slow z-20 scale-110 origin-bottom-right">
+                <div className="bg-blue-600 p-3 font-bold flex justify-between items-center text-white">
                   <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-white/20 overflow-hidden relative">
+                    <div className="w-5 h-5 rounded-full bg-white/20 overflow-hidden relative border border-white/10">
                       <Image src="/nimmi-logo.png" alt="Logo" fill className="object-contain p-0.5" />
                     </div>
-                    <span className="text-sm">AI Assistant</span>
+                    <span className="text-[10px] uppercase tracking-widest font-black">Nimmi Helper</span>
                   </div>
-                  <MessageSquare size={16} />
+                  <MessageSquare size={14} className="opacity-60" />
                 </div>
                 <div className="flex-1 p-4 flex flex-col gap-3">
-                  <div className="bg-zinc-100 p-3 rounded-2xl rounded-tl-none text-xs w-3/4 text-zinc-700">Hello! How can I help you today?</div>
-                  <div className="bg-blue-600 p-3 rounded-2xl rounded-tr-none text-xs w-2/3 self-end text-white">Can you explain the pricing?</div>
+                  <div className="bg-zinc-100 p-3 rounded-2xl rounded-tl-none text-[11px] w-4/5 text-zinc-700 leading-relaxed shadow-sm">Hey there! 👋 I've been trained on your documentation. Ask me anything!</div>
+                  <div className="bg-blue-600 p-3 rounded-2xl rounded-tr-none text-[11px] w-3/4 self-end text-white leading-relaxed shadow-lg shadow-blue-500/20">How do I integrate the bot into my site?</div>
                 </div>
-                <div className="p-3 border-t border-zinc-100">
-                  <div className="h-10 bg-zinc-50 rounded-xl border border-zinc-100 flex items-center px-3 text-[10px] text-zinc-400">Type a message...</div>
+                <div className="p-3 border-t border-zinc-50 bg-zinc-50/50">
+                  <div className="h-9 bg-white rounded-xl border border-zinc-100 flex items-center px-3 text-[10px] text-zinc-400">Type your question...</div>
                 </div>
               </div>
             </div>

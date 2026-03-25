@@ -32,33 +32,39 @@ def generate_ai_response(system_prompt, context, user_query, provider="google", 
     
     if provider == "google":
         current_api_key = api_key or GEMINI_DEFAULT_KEY
-        primary_model = (model_name or "gemini-2.0-flash").replace("models/", "")
-        
         # Map invalid/old model names to valid ones
         model_mapping = {
             "gemini-3-flash-preview": "gemini-2.0-flash",
             "gemini-2.0-flash-001": "gemini-2.0-flash",
+            "gemini-1.5-pro": "gemini-1.5-pro", # Standard names
+            "gemini-1.5-flash": "gemini-1.5-flash",
         }
-        primary_model = model_mapping.get(primary_model, primary_model)
+        requested_model = (model_name or "gemini-2.0-flash").replace("models/", "")
+        primary_model = model_mapping.get(requested_model, requested_model)
         
         # Build fallback chain with free-tier models only
         models_to_try = [primary_model]
-        fallbacks = ["gemini-2.0-flash", "gemini-1.5-flash"]
-        for fb in fallbacks:
-            if fb not in models_to_try:
-                models_to_try.append(fb)
+        if primary_model != "gemini-1.5-flash":
+            models_to_try.append("gemini-1.5-flash")
             
         last_err = ""
         for m_name in models_to_try:
-            try:
-                print(f"DEBUG: Attempting Gemini call with model='{m_name}' (transport=rest)")
-                genai.configure(api_key=current_api_key, transport='rest')
-                model = genai.GenerativeModel(m_name)
-                response = model.generate_content(prompt)
-                return response.text
-            except Exception as e:
-                last_err = str(e)
-                print(f"DEBUG: Gemini Model '{m_name}' failed for key {current_api_key[:8]}...: {last_err}")
+            # Try both with and without models/ prefix as some environments/versions differ
+            possible_names = [m_name, f"models/{m_name}"]
+            for full_name in possible_names:
+                try:
+                    print(f"DEBUG: Attempting Gemini call with model='{full_name}' (transport=rest)")
+                    genai.configure(api_key=current_api_key, transport='rest')
+                    model = genai.GenerativeModel(full_name)
+                    response = model.generate_content(prompt)
+                    return response.text
+                except Exception as e:
+                    last_err = str(e)
+                    print(f"DEBUG: Gemini Model '{full_name}' failed: {last_err}")
+                    # If it's a 404, we want to try the next name or model
+                    if "404" not in last_err and "not found" not in last_err.lower():
+                        # If it's a quota or auth error, don't just loop names
+                        break 
                 
         # If all failed for bot key, try system key as a last resort
         if current_api_key != GEMINI_DEFAULT_KEY:

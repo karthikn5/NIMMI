@@ -195,7 +195,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                 setSystemPrompt(data.system_prompt || "");
                 setKnowledgeBase(data.knowledge_base || "");
                 setAiProvider(data.ai_provider || "google");
-                setAiModel(data.ai_model || "gemini-1.5-flash");
+                setAiModel(data.ai_model || "gemini-2.0-flash");
                 setAiApiKey(data.ai_api_key || "");
                 if (data.flow_data) {
                     setFlowNodes(data.flow_data.nodes || []);
@@ -231,7 +231,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                     nodes: data.flow_data?.nodes || [],
                     edges: data.flow_data?.edges || [],
                     aiProvider: data.ai_provider || "google",
-                    aiModel: data.ai_model || "gemini-1.5-flash",
+                    aiModel: data.ai_model || "gemini-2.0-flash",
                     aiApiKey: data.ai_api_key || ""
                 });
             }
@@ -246,7 +246,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
         fetchConfig();
     }, [id, fetchConfig]);
 
-    const handleSave = async (updatedNodes?: Node[], updatedEdges?: Edge[], overrideLogo?: string) => {
+    const handleSave = useCallback(async (updatedNodes?: Node[], updatedEdges?: Edge[], overrideLogo?: string) => {
         try {
             const currentState = JSON.stringify({
                 botName, systemPrompt, knowledgeBase, color, botLogo, position, fontFamily, textColor, inputBgColor, inputTextColor, userBubbleBg, userBubbleText, assistantBubbleBg, assistantBubbleText, chatBgColor, headerHeight, borderRadius, launcherShape, showTail, showLauncherBg, logoSize, rightPadding, bottomPadding, backgroundImage, backgroundOpacity,
@@ -310,7 +310,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
         } finally {
             setSaving(false);
         }
-    };
+    }, [id, botName, systemPrompt, knowledgeBase, aiProvider, aiModel, aiApiKey, color, botLogo, position, fontFamily, textColor, inputBgColor, inputTextColor, userBubbleBg, userBubbleText, assistantBubbleBg, assistantBubbleText, chatBgColor, headerHeight, borderRadius, launcherShape, showTail, showLauncherBg, logoSize, rightPadding, bottomPadding, backgroundImage, backgroundOpacity, flowNodes, flowEdges]);
 
     useEffect(() => {
         if (!loading) {
@@ -319,7 +319,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
             }, 1000);
             return () => clearTimeout(timer);
         }
-    }, [botName, systemPrompt, knowledgeBase, aiProvider, aiModel, aiApiKey, color, botLogo, position, fontFamily, textColor, inputBgColor, inputTextColor, userBubbleBg, userBubbleText, assistantBubbleBg, assistantBubbleText, chatBgColor, headerHeight, borderRadius, launcherShape, showTail, showLauncherBg, logoSize, rightPadding, bottomPadding, backgroundImage, backgroundOpacity, loading]);
+    }, [handleSave, loading]);
 
     const handleFlowSave = useCallback((nodes: Node[], edges: Edge[]) => {
         setFlowNodes(nodes);

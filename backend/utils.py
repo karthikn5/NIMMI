@@ -32,14 +32,21 @@ def generate_ai_response(system_prompt, context, user_query, provider="google", 
     
     if provider == "google":
         current_api_key = api_key or GEMINI_DEFAULT_KEY
-        primary_model = (model_name or "gemini-1.5-flash").replace("models/", "")
+        primary_model = (model_name or "gemini-2.0-flash").replace("models/", "")
+        
+        # Map invalid/old model names to valid ones
+        model_mapping = {
+            "gemini-3-flash-preview": "gemini-2.0-flash",
+            "gemini-2.0-flash-001": "gemini-2.0-flash",
+        }
+        primary_model = model_mapping.get(primary_model, primary_model)
+        
+        # Build fallback chain with free-tier models only
         models_to_try = [primary_model]
-        if "3" in primary_model:
-            models_to_try.extend(["gemini-2.0-flash", "gemini-1.5-flash"])
-        elif "flash" in primary_model:
-            models_to_try.append("gemini-1.5-pro")
-        elif "2.0" in primary_model:
-            models_to_try.append("gemini-1.5-flash")
+        fallbacks = ["gemini-2.0-flash", "gemini-1.5-flash"]
+        for fb in fallbacks:
+            if fb not in models_to_try:
+                models_to_try.append(fb)
             
         last_err = ""
         for m_name in models_to_try:

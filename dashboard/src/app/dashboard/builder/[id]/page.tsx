@@ -101,7 +101,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     const [logoLoading, setLogoLoading] = useState(false);
     const [systemPrompt, setSystemPrompt] = useState("");
     const [aiProvider, setAiProvider] = useState("google");
-    const [aiModel, setAiModel] = useState("gemini-1.5-flash");
+    const [aiModel, setAiModel] = useState("gemini-2.0-flash");
     const [aiApiKey, setAiApiKey] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
     const knowledgeInputRef = useRef<HTMLInputElement>(null);
@@ -1013,7 +1013,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                 onChange={(e) => {
                                                     const p = e.target.value;
                                                     setAiProvider(p);
-                                                    if (p === "google") setAiModel("gemini-1.5-flash");
+                                                    if (p === "google") setAiModel("gemini-2.0-flash");
                                                     if (p === "openai") setAiModel("gpt-4o-mini");
                                                     if (p === "groq") setAiModel("llama3-8b-8192");
                                                 }}
@@ -1034,11 +1034,11 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                             >
                                                 {aiProvider === "google" && (
                                                     <>
-                                                        <option value="gemini-3-flash-preview" className="bg-[#111]">Gemini 3 Flash Preview (Experimental)</option>
-                                                         <option value="gemini-2.0-flash-001" className="bg-[#111]">Gemini 2.0 Flash (Latest / Free)</option>
+                                                        <option value="gemini-2.0-flash" className="bg-[#111]">Gemini 2.0 Flash (Latest / Free)</option>
+                                                        <option value="gemini-2.0-flash-lite" className="bg-[#111]">Gemini 2.0 Flash Lite (Fastest / Free)</option>
                                                         <option value="gemini-1.5-flash" className="bg-[#111]">Gemini 1.5 Flash (Free Tier)</option>
-                                                        <option value="gemini-1.5-flash-8b" className="bg-[#111]">Gemini 1.5 Flash-8B (Fastest / Free)</option>
-                                                        <option value="gemini-1.5-pro" className="bg-[#111]">Gemini 1.5 Pro</option>
+                                                        <option value="gemini-1.5-flash-8b" className="bg-[#111]">Gemini 1.5 Flash-8B (Fast / Free)</option>
+                                                        <option value="gemini-1.5-pro" className="bg-[#111]">Gemini 1.5 Pro (Advanced)</option>
                                                     </>
                                                 )}
                                                 {aiProvider === "openai" && (

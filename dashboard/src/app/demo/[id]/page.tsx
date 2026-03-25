@@ -26,6 +26,7 @@ export default function DemoPage({ params }: { params: Promise<{ id: string }> }
         const script = document.createElement("script");
         script.src = "/widget.js";
         script.setAttribute("data-bot-id", id);
+        script.setAttribute("data-api-url", process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
         script.async = true;
         document.body.appendChild(script);
 

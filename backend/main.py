@@ -447,11 +447,45 @@ async def upload_logo(bot_id: str, file: UploadFile = File(...)):
     
     file_extension = os.path.splitext(file.filename)[1]
     unique_filename = f"{uuid.uuid4()}{file_extension}"
+    
+    # Read file content
+    file_content = await file.read()
+    
+    # Try Supabase Storage first (persistent across Railway deploys)
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    
+    if supabase_url and supabase_key:
+        try:
+            bucket_name = "logos"
+            upload_url = f"{supabase_url}/storage/v1/object/{bucket_name}/{unique_filename}"
+            
+            async with httpx.AsyncClient() as client:
+                # Try to upload to the bucket
+                resp = await client.post(
+                    upload_url,
+                    headers={
+                        "Authorization": f"Bearer {supabase_key}",
+                        "apikey": supabase_key,
+                        "Content-Type": file.content_type,
+                    },
+                    content=file_content,
+                )
+                
+                if resp.status_code in (200, 201):
+                    logo_url = f"{supabase_url}/storage/v1/object/public/{bucket_name}/{unique_filename}"
+                    return {"logo_url": logo_url}
+                else:
+                    logger.warning(f"Supabase upload failed ({resp.status_code}): {resp.text}. Falling back to local storage.")
+        except Exception as e:
+            logger.warning(f"Supabase upload error: {e}. Falling back to local storage.")
+    
+    # Fallback: save to local filesystem
     file_path = os.path.join("static/uploads", unique_filename)
     
-    async def save_logo():
+    def save_logo():
         with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            buffer.write(file_content)
             
     await asyncio.to_thread(save_logo)
     

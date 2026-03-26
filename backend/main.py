@@ -384,34 +384,43 @@ async def update_bot_config(bot_id: str, config_data: dict, db: AsyncSession = D
 @app.patch("/api/bots/{bot_id}")
 async def update_bot(bot_id: str, bot_data: dict, db: AsyncSession = Depends(get_db)):
     try:
-        bot_uuid = uuid.UUID(bot_id)
-        result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
-    except (ValueError, AttributeError):
-        raise HTTPException(status_code=400, detail="Invalid Bot ID format")
+        try:
+            bot_uuid = uuid.UUID(bot_id)
+            result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
+        except (ValueError, AttributeError):
+            raise HTTPException(status_code=400, detail="Invalid Bot ID format")
+            
+        bot = result.scalars().first()
+        if not bot:
+            raise HTTPException(status_code=404, detail="Bot not found")
         
-    bot = result.scalars().first()
-    if not bot:
-        raise HTTPException(status_code=404, detail="Bot not found")
-    
-    if "bot_name" in bot_data:
-        bot.bot_name = bot_data["bot_name"]
-    if "system_prompt" in bot_data:
-        bot.system_prompt = bot_data["system_prompt"]
-    if "visual_config" in bot_data:
-        bot.visual_config = bot_data["visual_config"]
-    if "flow_data" in bot_data:
-        bot.flow_data = bot_data["flow_data"]
-    if "knowledge_base" in bot_data:
-        bot.knowledge_base = bot_data["knowledge_base"]
-    if "ai_provider" in bot_data:
-        bot.ai_provider = bot_data["ai_provider"]
-    if "ai_model" in bot_data:
-        bot.ai_model = bot_data["ai_model"]
-    if "ai_api_key" in bot_data:
-        bot.ai_api_key = bot_data["ai_api_key"]
-    
-    await db.commit()
-    return {"message": "Bot updated"}
+        if "bot_name" in bot_data:
+            bot.bot_name = bot_data["bot_name"]
+        if "system_prompt" in bot_data:
+            bot.system_prompt = bot_data["system_prompt"]
+        if "visual_config" in bot_data:
+            bot.visual_config = bot_data["visual_config"]
+        if "flow_data" in bot_data:
+            bot.flow_data = bot_data["flow_data"]
+        if "knowledge_base" in bot_data:
+            bot.knowledge_base = bot_data["knowledge_base"]
+        if "ai_provider" in bot_data:
+            bot.ai_provider = bot_data["ai_provider"]
+        if "ai_model" in bot_data:
+            bot.ai_model = bot_data["ai_model"]
+        if "ai_api_key" in bot_data:
+            bot.ai_api_key = bot_data["ai_api_key"]
+        
+        await db.commit()
+        return {"message": "Bot updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in update_bot: {e}")
+        with open("backend_traceback.log", "a") as f:
+            f.write(f"Error in update_bot (PATCH): {str(e)}\n")
+            traceback.print_exc(file=f)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/bots/{bot_id}")
 async def delete_bot(bot_id: str, db: AsyncSession = Depends(get_db)):

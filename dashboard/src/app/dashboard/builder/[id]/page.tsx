@@ -539,7 +539,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
 
     // Default layout for other tabs
     return (
-        <div className="flex h-screen bg-[#050505] text-white">
+        <div className="flex flex-col lg:flex-row h-screen bg-[#050505] text-white">
             {/* Load only the selected font to save bandwidth */}
             {fontFamily !== "sans-serif" && fontFamily !== "serif" && fontFamily !== "monospace" && (
                 <link 
@@ -548,7 +548,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                 />
             )}
             {/* Sidebar / Left Config */}
-            <aside className="w-[450px] border-r border-white/5 flex flex-col">
+            <aside className="w-full lg:w-[450px] lg:h-screen h-[45vh] border-b lg:border-b-0 lg:border-r border-white/5 flex flex-col shrink-0 overflow-hidden">
                 <header className="px-4 py-4 border-b border-white/5 flex items-center justify-between gap-3">
                     <Link href="/dashboard" className="p-1.5 hover:bg-white/5 rounded-lg transition-colors shrink-0">
                         <ChevronLeft size={20} />
@@ -582,7 +582,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                 </header>
 
                 {/* Tab Switcher */}
-                <div className="flex p-2 gap-1 bg-white/5 mx-6 mt-6 rounded-xl">
+                <div className="flex p-2 gap-1 bg-white/5 mx-4 lg:mx-6 mt-4 lg:mt-6 rounded-xl overflow-x-auto no-scrollbar">
                     {tabs.map(tab => (
                         <button
                             key={tab.id}
@@ -597,7 +597,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                 </div>
 
                 {/* Tab Content */}
-                <div className="flex-1 overflow-y-auto p-8">
+                <div className="flex-1 overflow-y-auto p-4 lg:p-8">
                     <AnimatePresence mode="wait">
                         {activeTab === "design" && (
                             <motion.div
@@ -1034,6 +1034,8 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                             >
                                                 {aiProvider === "google" && (
                                                     <>
+                                                        <option value="gemini-3-flash-preview" className="bg-[#111]">Gemini 3 Flash (Preview)</option>
+                                                        <option value="gemini-2.5-flash" className="bg-[#111]">Gemini 2.5 Flash (SOTA)</option>
                                                         <option value="gemini-2.0-flash" className="bg-[#111]">Gemini 2.0 Flash (Latest / Free)</option>
                                                         <option value="gemini-2.0-flash-lite" className="bg-[#111]">Gemini 2.0 Flash Lite (Fastest / Free)</option>
                                                         <option value="gemini-1.5-flash" className="bg-[#111]">Gemini 1.5 Flash (Free Tier)</option>
@@ -1298,7 +1300,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
             </aside >
 
             {/* Main Preview Area */}
-            <main className="flex-1 bg-[#0a0a0a] relative flex items-center justify-center p-12 overflow-hidden">
+            <main className="flex-1 bg-[#0a0a0a] relative flex items-center justify-center p-4 sm:p-8 lg:p-12 overflow-hidden">
                 {/* Abstract Background for Preview */}
                 <div className="absolute inset-0 z-0">
                     <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-blue-600/10 blur-[150px] rounded-full" />
@@ -1317,7 +1319,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
 
                     {/* Widget Mockup */}
                     <div
-                        className="w-[380px] h-[600px] bg-zinc-900 border-[8px] border-zinc-800 shadow-2xl flex flex-col overflow-hidden"
+                        className="w-full max-w-[380px] aspect-[9/16] max-h-[70vh] lg:max-h-[600px] bg-zinc-900 border-[8px] border-zinc-800 shadow-2xl flex flex-col overflow-hidden"
                         style={{ fontFamily: fontFamily, borderRadius: `${borderRadius * 1.5}px` }}
                     >
                         <div

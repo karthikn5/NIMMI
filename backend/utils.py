@@ -34,7 +34,6 @@ def generate_ai_response(system_prompt, context, user_query, provider="google", 
         current_api_key = api_key or GEMINI_DEFAULT_KEY
         # Map invalid/old model names to valid ones
         model_mapping = {
-            "gemini-3-flash-preview": "gemini-2.0-flash",
             "gemini-2.0-flash-001": "gemini-2.0-flash",
             "gemini-1.5-pro": "gemini-1.5-pro", # Standard names
             "gemini-1.5-flash": "gemini-1.5-flash",

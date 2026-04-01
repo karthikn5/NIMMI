@@ -15,6 +15,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Nimmi AI | Custom AI Chatbot Platform",
   description: "Train, customize, and embed your own AI assistants in minutes. Powered by Gemini 1.5 Pro.",
+  icons: {
+    icon: "/favicon.png",
+  },
 };
 
 export default function RootLayout({

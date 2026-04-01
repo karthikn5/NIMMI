@@ -10,7 +10,7 @@ import {
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Node, Edge } from "reactflow";
+import { Node, Edge, useNodesState, useEdgesState, addEdge, Connection, MarkerType, NodeChange, EdgeChange } from "reactflow";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import ElementsSidebar from "./components/ElementsSidebar";
@@ -113,8 +113,8 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     const router = useRouter();
 
     // Flow state
-    const [flowNodes, setFlowNodes] = useState<Node[]>([]);
-    const [flowEdges, setFlowEdges] = useState<Edge[]>([]);
+    const [flowNodes, setFlowNodes, onNodesChange] = useNodesState<any>([]);
+    const [flowEdges, setFlowEdges, onEdgesChange] = useEdgesState<any>([]);
     const [selectedNode, setSelectedNode] = useState<Node | null>(null);
     const [showExport, setShowExport] = useState(false);
     const lastSavedState = useRef<string>("");
@@ -197,9 +197,17 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                 setAiProvider(data.ai_provider || "google");
                 setAiModel(data.ai_model || "gemini-2.0-flash");
                 setAiApiKey(data.ai_api_key || "");
-                if (data.flow_data) {
-                    setFlowNodes(data.flow_data.nodes || []);
+                if (data.flow_data && data.flow_data.nodes && data.flow_data.nodes.length > 0) {
+                    setFlowNodes(data.flow_data.nodes);
                     setFlowEdges(data.flow_data.edges || []);
+                } else {
+                    setFlowNodes([{
+                        id: "start-1",
+                        type: "start",
+                        position: { x: 250, y: 50 },
+                        data: { label: "Start" },
+                    }]);
+                    setFlowEdges([]);
                 }
 
                 lastSavedState.current = JSON.stringify({
@@ -245,6 +253,26 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     useEffect(() => {
         fetchConfig();
     }, [id, fetchConfig]);
+
+    const onConnect = useCallback(
+        (params: Connection) => {
+            setFlowEdges((eds) =>
+                addEdge(
+                    {
+                        ...params,
+                        type: "animated",
+                        style: { stroke: "#3b82f6", strokeWidth: 2 },
+                        markerEnd: {
+                            type: MarkerType.ArrowClosed,
+                            color: "#3b82f6",
+                        },
+                    },
+                    eds
+                )
+            );
+        },
+        [setFlowEdges]
+    );
 
     const handleSave = useCallback(async (updatedNodes?: Node[], updatedEdges?: Edge[], overrideLogo?: string) => {
         try {
@@ -431,9 +459,9 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
 
     const handleNodeUpdate = useCallback((nodeId: string, data: any) => {
         setFlowNodes((nodes) =>
-            nodes.map((n) => (n.id === nodeId ? { ...n, data } : n))
+            nodes.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...data } } : n))
         );
-    }, []);
+    }, [setFlowNodes]);
 
     const handleNodeDelete = useCallback((nodeId: string) => {
         setFlowNodes((nodes) => nodes.filter((n) => n.id !== nodeId));
@@ -441,7 +469,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
             edges.filter((e) => e.source !== nodeId && e.target !== nodeId)
         );
         setSelectedNode(null);
-    }, []);
+    }, [setFlowNodes, setFlowEdges]);
 
     const tabs = [
         { id: "design", label: "Design", icon: Palette },
@@ -506,8 +534,11 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                     <div className="flex-1 p-4">
                         <FlowBuilder
                             botId={id}
-                            initialNodes={flowNodes}
-                            initialEdges={flowEdges}
+                            nodes={flowNodes}
+                            edges={flowEdges}
+                            onNodesChange={onNodesChange}
+                            onEdgesChange={onEdgesChange}
+                            onConnect={onConnect}
                             onSave={handleFlowSave}
                             onNodeSelect={handleNodeSelect}
                         />

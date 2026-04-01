@@ -13,6 +13,8 @@ import ReactFlow, {
     ConnectionMode,
     Panel,
     MarkerType,
+    NodeChange,
+    EdgeChange,
     ReactFlowProvider,
     useReactFlow,
     MiniMap,
@@ -49,16 +51,22 @@ import AnimatedEdge from "./edges/AnimatedEdge";
 
 interface FlowBuilderProps {
     botId: string;
-    initialNodes?: Node[];
-    initialEdges?: Edge[];
+    nodes: Node[];
+    edges: Edge[];
+    onNodesChange: (changes: NodeChange[]) => void;
+    onEdgesChange: (changes: EdgeChange[]) => void;
+    onConnect: (params: Connection) => void;
     onSave: (nodes: Node[], edges: Edge[]) => void;
     onNodeSelect: (node: Node | null) => void;
 }
 
 function FlowBuilderInner({
     botId,
-    initialNodes = [],
-    initialEdges = [],
+    nodes,
+    edges,
+    onNodesChange,
+    onEdgesChange,
+    onConnect,
     onSave,
     onNodeSelect,
 }: FlowBuilderProps) {
@@ -99,38 +107,10 @@ function FlowBuilderInner({
         []
     );
 
-    const defaultNodes: Node[] = initialNodes.length > 0 ? initialNodes : [
-        {
-            id: "start-1",
-            type: "start",
-            position: { x: 250, y: 50 },
-            data: { label: "Start" },
-        },
-    ];
-
-    const [nodes, setNodes, onNodesChange] = useNodesState(defaultNodes);
-    const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
     const [selectedNode, setSelectedNode] = useState<Node | null>(null);
 
-    const onConnect = useCallback(
-        (params: Connection) => {
-            setEdges((eds) =>
-                addEdge(
-                    {
-                        ...params,
-                        type: "animated",
-                        style: { stroke: "#3b82f6", strokeWidth: 2 },
-                        markerEnd: {
-                            type: MarkerType.ArrowClosed,
-                            color: "#3b82f6",
-                        },
-                    },
-                    eds
-                )
-            );
-        },
-        [setEdges]
-    );
+    // Filter out start node for deletion logic if needed
+    // const canDelete = selectedNode && selectedNode.type !== "start";
 
     const onNodeClick = useCallback(
         (_: React.MouseEvent, node: Node) => {
@@ -170,9 +150,10 @@ function FlowBuilderInner({
                 data: getDefaultNodeData(type),
             };
 
-            setNodes((nds) => nds.concat(newNode));
+            // Notify parent to add node
+            onNodesChange([{ type: 'add', item: newNode }]);
         },
-        [screenToFlowPosition, setNodes]
+        [screenToFlowPosition, onNodesChange]
     );
 
     const handleSave = () => {
@@ -181,12 +162,7 @@ function FlowBuilderInner({
 
     const handleDeleteSelected = () => {
         if (selectedNode) {
-            setNodes((nds) => nds.filter((n) => n.id !== selectedNode.id));
-            setEdges((eds) =>
-                eds.filter(
-                    (e) => e.source !== selectedNode.id && e.target !== selectedNode.id
-                )
-            );
+            onNodesChange([{ type: 'remove', id: selectedNode.id }]);
             setSelectedNode(null);
             onNodeSelect(null);
         }

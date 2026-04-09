@@ -3,25 +3,39 @@
 import { Handle, Position } from "reactflow";
 import { Star } from "lucide-react";
 
-export default function RatingNode({ data }: { data: any }) {
-    return (
-        <div className="w-64 bg-[#1a1a1a] border-2 border-amber-500/50 rounded-2xl p-4 shadow-2xl">
-            <div className="flex items-center gap-3 mb-3 pb-3 border-b border-white/5">
-                <div className="w-8 h-8 bg-amber-500/10 rounded-lg flex items-center justify-center">
-                    <Star size={14} className="text-amber-400" />
-                </div>
-                <span className="text-xs font-bold text-white/70 uppercase tracking-widest">{data.label || "Rating"}</span>
-            </div>
+interface RatingNodeProps {
+    data: {
+        label: string;
+        required?: boolean;
+    };
+    selected?: boolean;
+}
 
-            <div className="flex justify-center gap-2">
-                {[1, 2, 3, 4, 5].map(i => (
-                    <Star key={i} size={16} className="text-amber-400/30" />
+export default function RatingNode({ data, selected }: RatingNodeProps) {
+    return (
+        <div
+            className={`w-64 rounded-[24px] bg-white border border-slate-200 overflow-hidden shadow-xl transition-all ${selected ? "ring-4 ring-yellow-500/20 border-yellow-500 scale-105" : ""
+                }`}
+        >
+            <Handle
+                type="target"
+                position={Position.Top}
+                className="!w-4 !h-4 !bg-yellow-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+            />
+            <div className="px-4 py-3 bg-yellow-50 border-b border-yellow-100/50 flex items-center gap-2">
+                <Star size={14} className="text-yellow-600 font-bold" />
+                <span className="text-[10px] font-black text-yellow-700 uppercase tracking-widest">{data.label} {data.required && <span className="text-red-500">*</span>}</span>
+            </div>
+            <div className="p-5 flex justify-center gap-2">
+                {[1, 2, 3, 4, 5].map((i) => (
+                    <Star key={i} size={18} className="text-yellow-400 fill-yellow-200/50" />
                 ))}
             </div>
-            <p className="text-[10px] text-white/30 text-center mt-3 uppercase font-bold tracking-widest">Scale: 1-5</p>
-
-            <Handle type="target" position={Position.Top} className="!bg-amber-500 !w-3 !h-3 !border-4 !border-[#1a1a1a]" />
-            <Handle type="source" position={Position.Bottom} className="!bg-amber-500 !w-3 !h-3 !border-4 !border-[#1a1a1a]" />
+            <Handle
+                type="source"
+                position={Position.Bottom}
+                className="!w-4 !h-4 !bg-yellow-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+            />
         </div>
     );
 }

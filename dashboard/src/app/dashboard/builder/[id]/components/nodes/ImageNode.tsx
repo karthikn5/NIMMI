@@ -3,26 +3,46 @@
 import { Handle, Position } from "reactflow";
 import { Image as ImageIcon } from "lucide-react";
 
-export default function ImageNode({ data }: { data: any }) {
+interface ImageNodeProps {
+    data: {
+        label: string;
+        url?: string;
+    };
+    selected?: boolean;
+}
+
+export default function ImageNode({ data, selected }: ImageNodeProps) {
     return (
-        <div className="w-64 bg-[#1a1a1a] border-2 border-pink-500/50 rounded-2xl p-4 shadow-2xl">
-            <div className="flex items-center gap-3 mb-3 pb-3 border-b border-white/5">
-                <div className="w-8 h-8 bg-pink-500/10 rounded-lg flex items-center justify-center">
-                    <ImageIcon size={14} className="text-pink-400" />
+        <div
+            className={`w-64 rounded-[24px] bg-white border border-slate-200 overflow-hidden shadow-xl transition-all ${selected ? "ring-4 ring-pink-500/20 border-pink-500 scale-105" : ""
+                }`}
+        >
+            <Handle
+                type="target"
+                position={Position.Top}
+                className="!w-4 !h-4 !bg-pink-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+            />
+            <div className="px-4 py-3 bg-pink-50 border-b border-pink-100/50 flex items-center gap-2">
+                <ImageIcon size={14} className="text-pink-600" />
+                <span className="text-[10px] font-black text-pink-700 uppercase tracking-widest">{data.label || "Display Image"}</span>
+            </div>
+            <div className="p-3">
+                <div className="aspect-video bg-slate-100 rounded-xl overflow-hidden flex items-center justify-center border border-slate-200">
+                    {data.url ? (
+                        <img src={data.url} alt={data.label} className="w-full h-full object-cover" />
+                    ) : (
+                        <div className="flex flex-col items-center gap-2 text-slate-300">
+                             <ImageIcon size={24} />
+                             <span className="text-[10px] font-black uppercase tracking-tighter">No Media</span>
+                        </div>
+                    )}
                 </div>
-                <span className="text-xs font-bold text-white/70 uppercase tracking-widest">{data.label || "Display Image"}</span>
             </div>
-
-            <div className="aspect-video bg-white/5 rounded-lg border border-white/10 flex items-center justify-center overflow-hidden">
-                {data.imageUrl ? (
-                    <img src={data.imageUrl} className="w-full h-full object-cover" alt="Preview" />
-                ) : (
-                    <ImageIcon size={24} className="text-white/10" />
-                )}
-            </div>
-
-            <Handle type="target" position={Position.Top} className="!bg-pink-500 !w-3 !h-3 !border-4 !border-[#1a1a1a]" />
-            <Handle type="source" position={Position.Bottom} className="!bg-pink-500 !w-3 !h-3 !border-4 !border-[#1a1a1a]" />
+            <Handle
+                type="source"
+                position={Position.Bottom}
+                className="!w-4 !h-4 !bg-pink-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+            />
         </div>
     );
 }

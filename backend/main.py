@@ -48,6 +48,10 @@ else:
         "http://127.0.0.1:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
+        "http://localhost:3003",
+        "http://127.0.0.1:3003",
     ]
 
 # Auto-add Railway dashboard URL if set
@@ -65,7 +69,7 @@ allowed_origins.extend([
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -119,6 +123,11 @@ class UserSignup(BaseModel):
 class UserLogin(BaseModel):
     email: str
     password: str
+
+class SocialLogin(BaseModel):
+    email: str
+    name: Optional[str] = None
+    provider: Optional[str] = "google"
 
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
@@ -201,6 +210,31 @@ async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
     return {"message": "Login successful", "user_id": str(user.id), "name": user.name or ""}
+
+@app.post("/api/auth/social")
+async def social_login(user_data: SocialLogin, db: AsyncSession = Depends(get_db)):
+    # Find user by email
+    result = await db.execute(select(User).where(User.email == user_data.email))
+    user = result.scalars().first()
+    
+    if not user:
+        # Create new user for social login (no password)
+        user = User(
+            email=user_data.email,
+            name=user_data.name,
+            password_hash=None # No password for social login
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        logger.info(f"New social user created: {user_data.email}")
+    else:
+        # Update name if it wasn't set
+        if user_data.name and not user.name:
+            user.name = user_data.name
+            await db.commit()
+            
+    return {"message": "Success", "user_id": str(user.id), "name": user.name or ""}
 
 @app.get("/api/auth/profile")
 async def get_profile(user_id: str, db: AsyncSession = Depends(get_db)):
@@ -501,6 +535,57 @@ async def upload_logo(bot_id: str, file: UploadFile = File(...)):
     # Return the URL for the logo
     logo_url = f"{os.getenv('BACKEND_URL', 'http://localhost:8000')}/static/uploads/{unique_filename}"
     return {"logo_url": logo_url}
+
+@app.post("/api/bots/{bot_id}/background")
+async def upload_background(bot_id: str, file: UploadFile = File(...)):
+    # Validate file type
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+    
+    file_extension = os.path.splitext(file.filename)[1]
+    unique_filename = f"bg_{uuid.uuid4()}{file_extension}"
+    
+    # Read file content
+    file_content = await file.read()
+    
+    # Try Supabase Storage first
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    
+    if supabase_url and supabase_key:
+        try:
+            bucket_name = "logos" # Reuse the same bucket
+            upload_url = f"{supabase_url}/storage/v1/object/{bucket_name}/{unique_filename}"
+            
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    upload_url,
+                    headers={
+                        "Authorization": f"Bearer {supabase_key}",
+                        "apikey": supabase_key,
+                        "Content-Type": file.content_type,
+                    },
+                    content=file_content,
+                )
+                
+                if resp.status_code in (200, 201):
+                    bg_url = f"{supabase_url}/storage/v1/object/public/{bucket_name}/{unique_filename}"
+                    return {"bg_url": bg_url}
+        except Exception as e:
+            logger.warning(f"Supabase upload error for bg: {e}")
+    
+    # Fallback to local
+    file_path = os.path.join("static/uploads", unique_filename)
+    
+    def save_bg():
+        with open(file_path, "wb") as buffer:
+            buffer.write(file_content)
+            
+    await asyncio.to_thread(save_bg)
+    
+    # Return the URL
+    bg_url = f"{os.getenv('BACKEND_URL', 'http://localhost:8000')}/static/uploads/{unique_filename}"
+    return {"bg_url": bg_url}
 
 @app.post("/api/bots/{bot_id}/knowledge/upload")
 async def upload_knowledge(bot_id: str, file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):

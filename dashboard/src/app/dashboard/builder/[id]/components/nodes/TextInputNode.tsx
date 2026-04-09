@@ -11,30 +11,27 @@ interface TextInputNodeProps {
 export default function TextInputNode({ data, selected }: TextInputNodeProps) {
     return (
         <div
-            className={`w-64 rounded-xl bg-zinc-800 border border-white/10 overflow-hidden shadow-lg transition-all ${selected ? "ring-2 ring-purple-500 ring-offset-2 ring-offset-[#0a0a0a]" : ""
+            className={`w-64 rounded-[24px] bg-white border border-slate-200 overflow-hidden shadow-xl transition-all ${selected ? "ring-4 ring-purple-500/20 border-purple-500 scale-105" : ""
                 }`}
         >
             <Handle
                 type="target"
                 position={Position.Top}
-                className="!w-3 !h-3 !bg-purple-500 !border-2 !border-zinc-800"
+                className="!w-4 !h-4 !bg-purple-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
             />
-            <div className="px-4 py-2 bg-purple-500/20 border-b border-white/10 flex items-center gap-2">
-                <Type size={14} className="text-purple-400" />
-                <span className="text-xs font-bold text-purple-400">{data.label}</span>
-                {data.required && (
-                    <span className="ml-auto text-[10px] bg-purple-500/30 text-purple-300 px-1.5 py-0.5 rounded">Required</span>
-                )}
+            <div className="px-4 py-3 bg-purple-50 border-b border-purple-100/50 flex items-center gap-2">
+                <Type size={14} className="text-purple-600" />
+                <span className="text-[10px] font-black text-purple-700 uppercase tracking-widest">{data.label} {data.required && <span className="text-red-500">*</span>}</span>
             </div>
-            <div className="p-4">
-                <div className="bg-white/5 rounded-lg px-3 py-2 text-sm text-white/30 border border-white/10">
-                    {data.placeholder}
+            <div className="p-5">
+                <div className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-xs text-slate-400 font-bold italic shadow-inner">
+                    {data.placeholder || "Enter text here..."}
                 </div>
             </div>
             <Handle
                 type="source"
                 position={Position.Bottom}
-                className="!w-3 !h-3 !bg-purple-500 !border-2 !border-zinc-800"
+                className="!w-4 !h-4 !bg-purple-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
             />
         </div>
     );

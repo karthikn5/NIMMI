@@ -5,7 +5,8 @@ import {
     Bot, Palette, Database, Brain, GitBranch,
     ChevronLeft, Save, Upload, Plus, MessageSquare,
     Smartphone, Monitor, Send, Image as ImageIcon, Settings as SettingsIcon,
-    Play, Check, Inbox, List, Search, ChevronDown, X, Globe, Video
+    Play, Check, Inbox, List, Search, ChevronDown, X, Globe, Video,
+    Target, Square, Layers, AlignLeft, AlignRight, Anchor, Layout
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -65,6 +66,108 @@ const FONT_OPTIONS = [
     { label: "Casta", value: "'Casta', serif" }, { label: "Delius", value: "'Delius', cursive" }, { label: "Neucha", value: "'Neucha', cursive" }
 ];
 
+function ChatbotWidgetContent({
+    botName, botLogo, color, textColor, headerHeight, chatBgColor,
+    backgroundImage, backgroundOpacity, assistantBubbleBg, assistantBubbleText,
+    userBubbleBg, userBubbleText, borderRadius, inputBgColor, inputTextColor
+}: any) {
+    return (
+        <>
+            <div
+                className="p-6 font-bold flex items-center justify-between shrink-0 shadow-lg relative z-10"
+                style={{ backgroundColor: color, color: textColor, height: `${headerHeight}px` }}
+            >
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center overflow-hidden backdrop-blur-md border border-white/10">
+                        {botLogo ? (
+                            <img src={botLogo} alt="Bot" className="w-full h-full object-cover" />
+                        ) : (
+                            <Bot size={20} />
+                        )}
+                    </div>
+                    <span className="drop-shadow-sm">{botName}</span>
+                </div>
+            </div>
+            <div className="flex-1 relative overflow-hidden" style={{ backgroundColor: chatBgColor }}>
+                {backgroundImage && (
+                    <div
+                        className="absolute inset-0 z-0 pointer-events-none"
+                        style={{
+                            backgroundImage: `url(${backgroundImage})`,
+                            backgroundSize: 'cover',
+                            backgroundPosition: 'center',
+                            opacity: backgroundOpacity
+                        }}
+                    />
+                )}
+                <div className="absolute inset-0 overflow-y-auto p-6 z-10">
+                    <div className="space-y-4 flex flex-col">
+                        <div
+                            className="p-4 rounded-tl-none text-xs leading-relaxed max-w-[85%] shadow-sm border border-slate-100"
+                            style={{ backgroundColor: assistantBubbleBg, color: assistantBubbleText, borderRadius: `${borderRadius}px` }}
+                        >
+                            Hello! I'm trained on your company data. How can I help you today?
+                        </div>
+                        <div
+                            className="p-4 rounded-tr-none text-xs leading-relaxed max-w-[80%] self-end shadow-md transition-transform hover:scale-[1.02]"
+                            style={{ backgroundColor: userBubbleBg, color: userBubbleText, borderRadius: `${borderRadius}px` }}
+                        >
+                            What's the return policy?
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div className="p-4 bg-zinc-900/80 border-t border-white/5 flex gap-2 backdrop-blur-md">
+                <div
+                    className="flex-1 rounded-xl border border-white/5 h-12 flex items-center px-4 text-sm shadow-inner"
+                    style={{ backgroundColor: inputBgColor, color: inputTextColor }}
+                >
+                    Type your message...
+                </div>
+                <button
+                    className="w-12 h-12 rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all"
+                    style={{ backgroundColor: color, color: textColor }}
+                >
+                    <Send size={18} />
+                </button>
+            </div>
+        </>
+    );
+}
+
+function LauncherPreview({ color, showLauncherBg, launcherShape, botLogo, logoSize, showTail }: any) {
+    return (
+        <div
+            className="w-16 h-16 shadow-[0_20px_50px_rgba(0,0,0,0.2)] flex items-center justify-center transition-all duration-500 relative ring-1 ring-white/10 group-hover:scale-110"
+            style={{
+                backgroundColor: (showLauncherBg && launcherShape !== 'none') ? color : 'transparent',
+                borderRadius: launcherShape === 'square' ? '0' :
+                    launcherShape === 'rounded' ? '12px' :
+                        launcherShape === 'oval' ? '40px' : '50%',
+                width: launcherShape === 'oval' ? '80px' : '64px',
+            }}
+        >
+            {botLogo ? (
+                <img src={botLogo} alt="Launcher" style={{ width: `${logoSize}px`, height: `${logoSize}px`, objectFit: 'contain' }} />
+            ) : (
+                <MessageSquare size={30} className="text-white drop-shadow-md" />
+            )}
+            {showTail && (
+                <div
+                    className="absolute -bottom-2 rotate-[-15deg] drop-shadow-sm"
+                    style={{
+                        width: 0, height: 0,
+                        borderLeft: '10px solid transparent',
+                        borderRight: '10px solid transparent',
+                        borderTop: `12px solid ${showLauncherBg ? color : 'transparent'}`,
+                        right: launcherShape === 'oval' ? '20px' : '10px'
+                    }}
+                />
+            )}
+        </div>
+    );
+}
+
 function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params);
     const [activeTab, setActiveTab] = useState("design");
@@ -104,12 +207,15 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     const [aiModel, setAiModel] = useState("gemini-2.0-flash");
     const [aiApiKey, setAiApiKey] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const backgroundInputRef = useRef<HTMLInputElement>(null);
     const knowledgeInputRef = useRef<HTMLInputElement>(null);
     const [knowledgeLoading, setKnowledgeLoading] = useState(false);
+    const [backgroundLoading, setBackgroundLoading] = useState(false);
     const [crawlUrl, setCrawlUrl] = useState("");
     const [youtubeUrl, setYoutubeUrl] = useState("");
     const [liveSearchEnabled, setLiveSearchEnabled] = useState(false);
     const [crawling, setCrawling] = useState(false);
+    const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('mobile');
     const router = useRouter();
 
     // Flow state
@@ -453,6 +559,30 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
         }
     };
 
+    const handleBackgroundUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setBackgroundLoading(true);
+        const formData = new FormData();
+        formData.append("file", file);
+
+        try {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bots/${id}/background`, {
+                method: "POST",
+                body: formData,
+            });
+            const data = await res.json();
+            if (res.ok && data.bg_url) {
+                setBackgroundImage(data.bg_url);
+            }
+        } catch (err) {
+            console.error("Failed to upload background:", err);
+        } finally {
+            setBackgroundLoading(false);
+        }
+    };
+
     const handleNodeSelect = useCallback((node: Node | null) => {
         setSelectedNode(node);
     }, []);
@@ -482,19 +612,19 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     // Flow tab has a different layout
     if (activeTab === "flow") {
         return (
-            <div className="flex h-screen bg-[#050505] text-white">
+            <div className="flex h-screen bg-[#fcfcfd] text-slate-900">
                 {/* Left Sidebar - Elements */}
-                <aside className="w-72 border-r border-white/5 flex flex-col">
-                    <header className="p-4 border-b border-white/5 flex items-center justify-between">
-                        <Link href="/dashboard" className="p-2 hover:bg-white/5 rounded-lg transition-colors">
+                <aside className="w-72 border-r border-slate-200 flex flex-col bg-white">
+                    <header className="p-4 border-b border-slate-100 flex items-center justify-between">
+                        <Link href="/dashboard" className="p-2 hover:bg-slate-50 rounded-lg transition-colors text-slate-400 hover:text-slate-900">
                             <ChevronLeft size={20} />
                         </Link>
-                        <span className="text-xs font-bold text-white/50 uppercase tracking-widest">Flow Builder</span>
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Flow Builder</span>
                         <div className="flex items-center gap-2">
                             <Link
                                 href={`/demo/${id}`}
                                 target="_blank"
-                                className="flex items-center gap-1 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs font-bold hover:bg-white/10 transition-colors"
+                                className="flex items-center gap-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold hover:bg-slate-100 transition-colors text-slate-600"
                             >
                                 <Play size={12} fill="currentColor" /> Run
                             </Link>
@@ -510,12 +640,12 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                     </header>
 
                     {/* Tab Switcher */}
-                    <div className="flex p-2 gap-1 bg-white/5 mx-4 mt-4 rounded-xl">
+                    <div className="flex p-2 gap-1 bg-slate-50 mx-4 mt-4 rounded-xl border border-slate-100">
                         {tabs.map(tab => (
                             <button
                                 key={tab.id}
                                 onClick={() => setActiveTab(tab.id)}
-                                className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-lg text-[10px] font-bold transition-all ${activeTab === tab.id ? "bg-white/10 text-white" : "text-white/40 hover:text-white/60"}`}
+                                className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-lg text-[10px] font-bold transition-all ${activeTab === tab.id ? "bg-white text-blue-600 shadow-sm" : "text-slate-400 hover:text-slate-600"}`}
                             >
                                 <tab.icon size={14} />
                                 {tab.label}
@@ -546,8 +676,8 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                 </main>
 
                 {/* Right Sidebar - Properties */}
-                <aside className="w-80 border-l border-white/5 p-4 overflow-y-auto">
-                    <h3 className="text-xs font-bold text-white/50 uppercase tracking-widest mb-4">
+                <aside className="w-80 border-l border-slate-200 p-4 overflow-y-auto bg-slate-50/20 backdrop-blur-sm">
+                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6 px-1">
                         {selectedNode ? "Element Properties" : "Select an Element"}
                     </h3>
                     {selectedNode ? (
@@ -558,9 +688,16 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                             onClose={() => setSelectedNode(null)}
                         />
                     ) : (
-                        <div className="text-center py-12 text-white/20">
-                            <GitBranch size={48} className="mx-auto mb-4 opacity-50" />
-                            <p className="text-sm">Click on an element in the canvas to edit its properties</p>
+                        <div className="text-center py-16 px-6 border-2 border-dashed border-slate-200 rounded-[32px] bg-slate-50/50">
+                            <motion.div
+                                animate={{ y: [0, -4, 0] }}
+                                transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                            >
+                                <GitBranch size={40} className="mx-auto mb-4 text-slate-200" strokeWidth={2.5} />
+                            </motion.div>
+                            <p className="text-[11px] font-bold text-slate-400 leading-relaxed uppercase tracking-tighter">
+                                Click on an element in the canvas to edit its properties
+                            </p>
                         </div>
                     )}
                 </aside>
@@ -570,42 +707,42 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
 
     // Default layout for other tabs
     return (
-        <div className="flex flex-col lg:flex-row h-screen bg-[#050505] text-white">
+        <div className="flex flex-col lg:flex-row h-screen bg-[#fcfcfd] text-slate-900">
             {/* Load only the selected font to save bandwidth */}
             {fontFamily !== "sans-serif" && fontFamily !== "serif" && fontFamily !== "monospace" && (
-                <link 
-                    rel="stylesheet" 
-                    href={`https://fonts.googleapis.com/css2?family=${fontFamily.replace(/'/g, "").split(",")[0].replace(/ /g, "+")}:wght@400;700&display=swap`} 
+                <link
+                    rel="stylesheet"
+                    href={`https://fonts.googleapis.com/css2?family=${fontFamily.replace(/'/g, "").split(",")[0].replace(/ /g, "+")}:wght@400;700&display=swap`}
                 />
             )}
             {/* Sidebar / Left Config */}
-            <aside className="w-full lg:w-[450px] lg:h-screen h-[45vh] border-b lg:border-b-0 lg:border-r border-white/5 flex flex-col shrink-0 overflow-hidden">
-                <header className="px-4 py-4 border-b border-white/5 flex items-center justify-between gap-3">
-                    <Link href="/dashboard" className="p-1.5 hover:bg-white/5 rounded-lg transition-colors shrink-0">
+            <aside className="w-full lg:w-[450px] lg:h-screen h-[45vh] border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col shrink-0 overflow-hidden bg-white">
+                <header className="px-4 py-4 border-b border-slate-100 flex items-center justify-between gap-3 bg-white">
+                    <Link href="/dashboard" className="p-1.5 hover:bg-slate-50 rounded-lg transition-colors shrink-0 text-slate-400 hover:text-slate-900">
                         <ChevronLeft size={20} />
                     </Link>
-                    <div className="flex items-center gap-1.5 font-bold uppercase text-[10px] tracking-widest text-white/50 truncate">
-                        Bot Builder <span className="text-white">#{id.slice(0, 8)}</span>
+                    <div className="flex items-center gap-1.5 font-bold uppercase text-[10px] tracking-widest text-slate-400 truncate">
+                        Bot Builder <span className="text-slate-900 font-black">#{id.slice(0, 8)}</span>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                         <Link
                             href={`/demo/${id}`}
                             target="_blank"
-                            className="flex items-center gap-1.5 px-2.5 py-2 bg-white/5 border border-white/10 rounded-lg text-xs font-bold hover:bg-white/10 transition-colors"
+                            className="flex items-center gap-1.5 px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold hover:bg-slate-100 transition-colors text-slate-600"
                         >
                             <Play size={14} fill="currentColor" /> Run
                         </Link>
                         <button
                             onClick={() => handleSave()}
                             disabled={saving}
-                            className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-bold transition-all ${saved ? "bg-green-600 shadow-[0_0_20px_rgba(22,163,74,0.4)]" : "bg-blue-600 hover:bg-blue-500"} disabled:opacity-50`}
+                            className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-bold transition-all shadow-sm ${saved ? "bg-green-600 shadow-[0_0_20px_rgba(22,163,74,0.2)] text-white" : "bg-blue-600 hover:bg-blue-700 text-white"} disabled:opacity-50`}
                         >
                             {saved ? <Check size={14} /> : <Save size={14} />}
                             {saving ? "..." : saved ? "Done!" : "Save"}
                         </button>
                         <button
                             onClick={() => setShowExport(true)}
-                            className="flex items-center gap-1.5 px-2.5 py-2 bg-white/10 border border-white/10 rounded-lg text-xs font-bold hover:bg-white/20 transition-colors"
+                            className="flex items-center gap-1.5 px-2.5 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold hover:bg-slate-50 transition-colors text-slate-600 shadow-sm"
                         >
                             <Upload size={14} /> Export
                         </button>
@@ -613,15 +750,17 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                 </header>
 
                 {/* Tab Switcher */}
-                <div className="flex p-2 gap-1 bg-white/5 mx-4 lg:mx-6 mt-4 lg:mt-6 rounded-xl overflow-x-auto no-scrollbar">
+                <div className="flex p-1.5 gap-1 bg-slate-50 mx-4 lg:mx-6 mt-4 lg:mt-6 rounded-2xl overflow-x-auto no-scrollbar border border-slate-200 shadow-inner">
                     {tabs.map(tab => (
                         <button
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
-                            className={`flex-1 flex flex-col items-center gap-1.5 py-3 rounded-lg text-xs font-bold transition-all ${activeTab === tab.id ? "bg-white/10 text-white shadow-lg" : "text-white/40 hover:text-white/60"
+                            className={`flex-1 flex flex-col items-center gap-2 py-4 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all ${activeTab === tab.id
+                                ? "bg-white text-blue-600 shadow-[0_4px_12px_rgba(0,0,0,0.05)] border border-slate-200"
+                                : "text-slate-400 hover:text-slate-600 hover:bg-slate-100/50"
                                 }`}
                         >
-                            <tab.icon size={18} />
+                            <tab.icon size={22} strokeWidth={2.5} />
                             {tab.label}
                         </button>
                     ))}
@@ -636,386 +775,348 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                 initial={{ opacity: 0, x: -10 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 exit={{ opacity: 0, x: 10 }}
-                                className="space-y-8"
+                                className="space-y-4"
                             >
-                                <div className="grid grid-cols-2 gap-6">
-                                    <div className="col-span-2">
-                                        <label className="block text-[10px] font-bold text-white/50 mb-2 uppercase tracking-widest">Bot Name</label>
-                                        <input
-                                            type="text"
-                                            value={botName}
-                                            onChange={(e) => setBotName(e.target.value)}
-                                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-blue-500 transition-colors"
-                                        />
-                                    </div>
-
-                                    <div className="col-span-2 space-y-4">
-                                        <div className="flex items-center justify-between">
-                                            <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest">Launcher Background</label>
-                                            <button
-                                                onClick={() => setShowLauncherBg(!showLauncherBg)}
-                                                className={`w-10 h-5 rounded-full transition-colors relative ${showLauncherBg ? 'bg-blue-600' : 'bg-white/10'}`}
-                                            >
-                                                <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${showLauncherBg ? 'right-1' : 'left-1'}`} />
-                                            </button>
+                                {/* Identity & Branding Section */}
+                                <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative overflow-hidden group">
+                                    <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-500/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                    <div className="flex items-center gap-4 mb-6">
+                                        <div className="w-12 h-12 bg-blue-600 rounded-[20px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),8px_8px_20px_rgba(37,99,235,0.25)] text-white">
+                                            <Target size={24} strokeWidth={2.5} />
                                         </div>
-
-                                        <div className="space-y-2">
-                                            <div className="flex justify-between">
-                                                <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest">Logo Size</label>
-                                                <span className="text-[10px] text-white/30">{logoSize}px</span>
-                                            </div>
-                                            <input
-                                                type="range" min="20" max="60" value={logoSize}
-                                                onChange={(e) => setLogoSize(parseInt(e.target.value))}
-                                                className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                            />
-                                        </div>
-
-                                        <div className="space-y-2">
-                                            <div className="flex justify-between">
-                                                <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest">Side Padding</label>
-                                                <span className="text-[10px] text-white/30">{rightPadding}px</span>
-                                            </div>
-                                            <input
-                                                type="range" min="0" max="100" value={rightPadding}
-                                                onChange={(e) => setRightPadding(parseInt(e.target.value))}
-                                                className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                            />
-                                        </div>
-
-                                        <div className="space-y-2">
-                                            <div className="flex justify-between">
-                                                <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest">Bottom Padding</label>
-                                                <span className="text-[10px] text-white/30">{bottomPadding}px</span>
-                                            </div>
-                                            <input
-                                                type="range" min="0" max="100" value={bottomPadding}
-                                                onChange={(e) => setBottomPadding(parseInt(e.target.value))}
-                                                className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                            />
+                                        <div>
+                                            <h3 className="text-base font-black text-slate-900 uppercase tracking-widest">Identity</h3>
+                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1 opacity-80">Brand personality settings</p>
                                         </div>
                                     </div>
 
-                                    <div className="col-span-2">
-                                        <label className="block text-[10px] font-bold text-white/50 mb-2 uppercase tracking-widest">Bot Logo</label>
-                                        <div className="flex gap-3">
-                                            <div className="flex-1 relative group">
-                                                <input
-                                                    type="text"
-                                                    placeholder="https://example.com/logo.png"
-                                                    value={botLogo}
-                                                    onChange={(e) => setBotLogo(e.target.value)}
-                                                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-blue-500 transition-colors pr-12"
-                                                />
-                                                <button
-                                                    onClick={() => fileInputRef.current?.click()}
-                                                    disabled={logoLoading}
-                                                    className="absolute right-2 top-1.5 p-1.5 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500 hover:text-white transition-all disabled:opacity-50"
-                                                    title="Upload Logo"
-                                                >
-                                                    {logoLoading ? (
-                                                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                                    ) : (
-                                                        <Upload size={16} />
-                                                    )}
-                                                </button>
-                                                <input
-                                                    type="file"
-                                                    ref={fileInputRef}
-                                                    onChange={handleLogoUpload}
-                                                    className="hidden"
-                                                    accept="image/*"
-                                                />
-                                            </div>
-                                            {botLogo && (
-                                                <div className="w-10 h-10 bg-white/5 rounded-xl border border-white/10 flex items-center justify-center overflow-hidden shrink-0 relative">
-                                                    <Image 
-                                                        src={botLogo} 
-                                                        alt="Logo Preview" 
-                                                        fill 
-                                                        className="object-cover" 
-                                                        unoptimized={botLogo.startsWith('data:')}
+                                    <div className="grid grid-cols-1 gap-6">
+                                        <div className="space-y-3">
+                                            <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] pl-1">
+                                                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />
+                                                Bot Name
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={botName}
+                                                onChange={(e) => setBotName(e.target.value)}
+                                                placeholder="Enter bot name..."
+                                                className="w-full bg-slate-50 border-2 border-white/80 rounded-[20px] px-5 py-4 text-sm font-black outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/30 transition-all text-slate-900 placeholder:text-slate-300 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]"
+                                            />
+                                        </div>
+
+                                        <div className="space-y-3">
+                                            <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] pl-1">
+                                                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />
+                                                Bot Logo
+                                            </label>
+                                            <div className="flex gap-4">
+                                                <div className="flex-1 relative">
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Paste URL or upload image..."
+                                                        value={botLogo}
+                                                        onChange={(e) => setBotLogo(e.target.value)}
+                                                        className="w-full bg-slate-50 border-2 border-white/80 rounded-[20px] px-5 py-4 text-sm font-black outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/30 transition-all text-slate-900 pr-12 placeholder:text-slate-300 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]"
                                                     />
+                                                    <button
+                                                        onClick={() => fileInputRef.current?.click()}
+                                                        disabled={logoLoading}
+                                                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-white text-slate-400 rounded-xl hover:bg-blue-600 hover:text-white transition-all disabled:opacity-50 shadow-[2px_2px_4px_#d1d9e6,-2px_-2px_4px_#ffffff] border border-white"
+                                                    >
+                                                        <Upload size={18} strokeWidth={2.5} />
+                                                    </button>
+                                                    <input type="file" ref={fileInputRef} onChange={handleLogoUpload} className="hidden" accept="image/*" />
                                                 </div>
-                                            )}
+                                                {botLogo && (
+                                                    <div className="w-12 h-12 bg-white rounded-[16px] shadow-[4px_4px_10px_#d1d9e6,-4px_-4px_10px_#ffffff] border-4 border-white flex items-center justify-center p-2 shrink-0">
+                                                        <img src={botLogo} alt="Logo" className="object-contain max-w-full max-h-full" />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Appearance Vertical Grid */}
+                                <div className="flex flex-col gap-6">
+                                    {/* Visual Theme Card */}
+                                    <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative overflow-hidden group">
+                                        <div className="absolute top-0 left-0 w-1.5 h-full bg-purple-500/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                        <div className="flex items-center gap-4 mb-6">
+                                            <div className="w-12 h-12 bg-purple-600 rounded-[20px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),8px_8px_20px_rgba(147,51,234,0.25)] text-white">
+                                                <Palette size={24} strokeWidth={2.5} />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-base font-black text-slate-900 uppercase tracking-widest">Theme</h3>
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1 opacity-80">Accent & Position</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-6">
+                                            <div className="space-y-3 text-center">
+                                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] block">Primary</label>
+                                                <div className="relative w-full h-14 rounded-[20px] border-4 border-white overflow-hidden cursor-pointer hover:scale-[1.05] transition-all shadow-[4px_4px_10px_#d1d9e6,-4px_-4px_10px_#ffffff] active:scale-[0.98]">
+                                                    <input type="color" value={color} className="absolute inset-0 w-[200%] h-[200%] -top-1/2 -left-1/2 cursor-pointer" onChange={(e) => setColor(e.target.value)} />
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-3">
+                                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] block text-center">Position</label>
+                                                <div className="flex bg-slate-100/50 p-1.5 rounded-[20px] shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff] border border-white/50">
+                                                    {['left', 'right'].map(p => (
+                                                        <button
+                                                            key={p} onClick={() => setPosition(p as any)}
+                                                            className={`flex-1 py-3 rounded-[16px] text-[10px] font-black uppercase tracking-widest transition-all ${position === p ? 'bg-white text-blue-600 shadow-[2px_2px_6px_rgba(0,0,0,0.05)] border border-white' : 'text-slate-400 hover:text-slate-600'}`}
+                                                        >
+                                                            {p === 'left' ? <AlignLeft size={18} className="mx-auto" /> : <AlignRight size={18} className="mx-auto" />}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
 
-                                    <div>
-                                        <label className="block text-[10px] font-bold text-white/50 mb-3 uppercase tracking-widest">Accent & Font</label>
-                                        <div className="flex items-center gap-4">
-                                            <div className="relative w-10 h-10 rounded-full border border-white/20 overflow-hidden cursor-pointer hover:scale-110 transition-transform flex-shrink-0 shadow-lg ring-2 ring-white/5">
-                                                <input type="color" value={color} className="absolute inset-0 w-[200%] h-[200%] -top-1/2 -left-1/2 cursor-pointer" onChange={(e) => setColor(e.target.value)} />
+                                    {/* Typography Settings */}
+                                    <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative overflow-hidden group">
+                                        <div className="absolute top-0 left-0 w-1.5 h-full bg-emerald-500/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                        <div className="flex items-center gap-4 mb-6">
+                                            <div className="w-12 h-12 bg-emerald-600 rounded-[20px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),8px_8px_20px_rgba(5,150,105,0.25)] text-white">
+                                                <Layers size={24} strokeWidth={2.5} />
                                             </div>
-                                            <div className="flex-1 relative" ref={fontDropdownRef}>
+                                            <div>
+                                                <h3 className="text-base font-black text-slate-900 uppercase tracking-widest">Typography</h3>
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1 opacity-80">Font & Accents</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-4 pt-1">
+                                            <div className="space-y-3" ref={fontDropdownRef}>
+                                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] pl-1">Font Family</label>
                                                 <button
                                                     onClick={() => setShowFontDropdown(!showFontDropdown)}
-                                                    className="w-full bg-[#111] border border-white/10 rounded-xl px-3 py-2 text-xs flex items-center justify-between hover:border-blue-500 transition-colors text-white"
+                                                    className="w-full bg-slate-50 border-2 border-white/80 rounded-[20px] px-5 py-4 text-sm font-black flex items-center justify-between hover:border-blue-500/30 transition-all text-slate-900 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]"
                                                 >
-                                                    <span className="truncate">
-                                                        {FONT_OPTIONS.find(f => f.value === fontFamily)?.label || "Select Font"}
-                                                    </span>
-                                                    <ChevronDown size={14} className={`transition-transform grow-0 shrink-0 ${showFontDropdown ? 'rotate-180' : ''}`} />
+                                                    <span className="truncate">{FONT_OPTIONS.find(f => f.value === fontFamily)?.label}</span>
+                                                    <ChevronDown size={20} className={`transition-transform shrink-0 ${showFontDropdown ? 'rotate-180' : ''}`} />
                                                 </button>
-
                                                 <AnimatePresence>
                                                     {showFontDropdown && (
-                                                        <motion.div
-                                                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                                                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                                                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                                            className="absolute bottom-full mb-2 left-0 w-64 bg-[#111] border border-white/10 rounded-2xl shadow-2xl z-[100] overflow-hidden flex flex-col"
-                                                        >
-                                                            <div className="p-2 border-b border-white/5">
-                                                                <div className="relative">
-                                                                    <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
-                                                                    <input
-                                                                        autoFocus
-                                                                        type="text"
-                                                                        placeholder="Search fonts..."
-                                                                        value={fontSearch}
-                                                                        onChange={(e) => setFontSearch(e.target.value)}
-                                                                        className="w-full bg-white/5 border border-white/5 rounded-lg pl-8 pr-8 py-1.5 text-[11px] outline-none focus:border-blue-500/50 transition-colors"
-                                                                    />
-                                                                    {fontSearch && (
-                                                                        <button
-                                                                            onClick={() => setFontSearch("")}
-                                                                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 hover:bg-white/10 rounded"
-                                                                        >
-                                                                            <X size={10} className="text-white/40" />
-                                                                        </button>
-                                                                    )}
-                                                                </div>
+                                                        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute bottom-full mb-4 left-0 w-full bg-slate-50 border border-white rounded-[28px] shadow-[0_20px_50px_rgba(0,0,0,0.15)] z-[100] overflow-hidden p-3 ring-1 ring-black/5">
+                                                            <div className="px-2 pb-4 relative">
+                                                                <Search size={18} className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                                <input type="text" placeholder="Search fonts..." value={fontSearch} onChange={(e) => setFontSearch(e.target.value)} className="w-full bg-white/80 border border-slate-100 rounded-[16px] pl-12 pr-4 py-3.5 text-sm outline-none focus:border-blue-500/50 transition-all font-black" />
                                                             </div>
-                                                            <div className="max-h-60 overflow-y-auto p-1 custom-scrollbar">
-                                                                {FONT_OPTIONS.filter(f => f.label.toLowerCase().includes(fontSearch.toLowerCase())).map((font) => (
-                                                                    <button
-                                                                        key={font.value}
-                                                                        onClick={() => {
-                                                                            setFontFamily(font.value);
-                                                                            setShowFontDropdown(false);
-                                                                            setFontSearch("");
-                                                                        }}
-                                                                        className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex items-center justify-between group ${fontFamily === font.value ? 'bg-blue-600 text-white' : 'hover:bg-white/5 text-white/70 hover:text-white'}`}
-                                                                        style={{ fontFamily: font.value.includes("'") ? font.value : font.value }}
-                                                                    >
-                                                                        <span>{font.label}</span>
-                                                                        {fontFamily === font.value && <Check size={12} />}
-                                                                    </button>
+                                                            <div className="max-h-56 overflow-y-auto custom-scrollbar p-1">
+                                                                {FONT_OPTIONS.filter(f => f.label.toLowerCase().includes(fontSearch.toLowerCase())).map(f => (
+                                                                    <button key={f.value} onClick={() => { setFontFamily(f.value); setShowFontDropdown(false); }} className={`w-full text-left px-5 py-4 rounded-[16px] text-sm font-black transition-all mb-1 ${fontFamily === f.value ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-white text-slate-600'}`} style={{ fontFamily: f.value }}>{f.label}</button>
                                                                 ))}
-                                                                {FONT_OPTIONS.filter(f => f.label.toLowerCase().includes(fontSearch.toLowerCase())).length === 0 && (
-                                                                    <div className="px-3 py-4 text-center text-white/20 text-[10px] uppercase font-bold tracking-widest">
-                                                                        No fonts found
-                                                                    </div>
-                                                                )}
                                                             </div>
                                                         </motion.div>
                                                     )}
                                                 </AnimatePresence>
                                             </div>
-                                        </div>
-                                    </div>
 
-                                    <div>
-                                        <label className="block text-[10px] font-bold text-white/50 mb-3 uppercase tracking-widest">Position</label>
-                                        <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
-                                            <button
-                                                onClick={() => setPosition("right")}
-                                                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${position === "right" ? "bg-white/10 text-white shadow-sm" : "text-white/40 hover:text-white/60"}`}
-                                            >
-                                                Right
-                                            </button>
-                                            <button
-                                                onClick={() => setPosition("left")}
-                                                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${position === "left" ? "bg-white/10 text-white shadow-sm" : "text-white/40 hover:text-white/60"}`}
-                                            >
-                                                Left
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    <div className="col-span-2 grid grid-cols-2 gap-6">
-                                        <div>
-                                            <div className="flex justify-between items-center mb-2">
-                                                <label className="block text-[10px] font-bold text-white/50 uppercase tracking-widest">Accent Height</label>
-                                                <span className="text-[10px] text-blue-400 font-mono">{headerHeight}px</span>
-                                            </div>
-                                            <input
-                                                type="range"
-                                                min="60"
-                                                max="120"
-                                                value={headerHeight}
-                                                onChange={(e) => setHeaderHeight(parseInt(e.target.value))}
-                                                className="w-full accent-blue-500 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer"
-                                            />
-                                        </div>
-                                        <div>
-                                            <div className="flex justify-between items-center mb-2">
-                                                <label className="block text-[10px] font-bold text-white/50 uppercase tracking-widest">Radius</label>
-                                                <span className="text-[10px] text-blue-400 font-mono">{borderRadius}px</span>
-                                            </div>
-                                            <input
-                                                type="range"
-                                                min="0"
-                                                max="40"
-                                                value={borderRadius}
-                                                onChange={(e) => setBorderRadius(parseInt(e.target.value))}
-                                                className="w-full accent-blue-500 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer"
-                                            />
-                                        </div>
-                                        <div className="col-span-2 space-y-4 pt-4 border-t border-white/5">
-                                            <label className="block text-[10px] font-bold text-white/50 uppercase tracking-widest">Launcher Shape</label>
-                                            <div className="grid grid-cols-4 gap-3">
-                                                {[
-                                                    { id: "circle", label: "Circle", radius: "50%" },
-                                                    { id: "square", label: "Square", radius: "0" },
-                                                    { id: "rounded", label: "Rounded", radius: "12px" },
-                                                    { id: "oval", label: "Oval", radius: "20px / 12px", width: "w-10", height: "h-6" },
-                                                    { id: "none", label: "None", radius: "0" }
-                                                ].map((s) => (
-                                                    <button
-                                                        key={s.id}
-                                                        onClick={() => setLauncherShape(s.id)}
-                                                        className={`flex flex-col items-center gap-2 p-2 rounded-xl transition-all ${launcherShape === s.id ? "bg-blue-500/20 ring-1 ring-blue-500" : "bg-white/5 hover:bg-white/10"}`}
-                                                    >
-                                                        <div
-                                                            className={`${s.width || "w-8"} ${s.height || "h-8"} ${s.id === 'none' ? 'bg-transparent border border-dashed border-white/20' : 'bg-blue-500 shadow-lg'}`}
-                                                            style={{ borderRadius: s.radius }}
-                                                        />
-                                                        <span className="text-[9px] font-bold uppercase tracking-tighter opacity-50">{s.label}</span>
-                                                    </button>
-                                                ))}
-                                            </div>
-
-                                            <div className="flex items-center justify-between pt-2">
-                                                <label className="block text-[10px] font-bold text-white/50 uppercase tracking-widest">Bubble Tail</label>
+                                            <div className="grid grid-cols-2 gap-4">
                                                 <button
                                                     onClick={() => setShowTail(!showTail)}
-                                                    className={`w-10 h-5 rounded-full transition-colors relative ${showTail ? "bg-blue-500" : "bg-white/10"}`}
+                                                    className={`flex items-center justify-between px-4 py-4 rounded-[20px] border-2 transition-all ${showTail ? 'bg-blue-50/50 border-blue-200 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]' : 'bg-slate-50 border-white/80 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff] opacity-70'}`}
                                                 >
-                                                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${showTail ? "left-6" : "left-1"}`} />
+                                                    <span className={`text-[10px] font-black uppercase tracking-[0.1em] ${showTail ? 'text-blue-700' : 'text-slate-500'}`}>Chat Tail</span>
+                                                    <div className={`w-10 h-5.5 rounded-full transition-all relative shadow-inner ${showTail ? 'bg-blue-600' : 'bg-slate-300'}`}>
+                                                        <div className={`absolute top-[3px] w-4 h-4 bg-white rounded-full transition-all shadow-sm ${showTail ? 'right-[3px] translate-x-0' : 'left-[3px] translate-x-0'}`} />
+                                                    </div>
+                                                </button>
+                                                <button
+                                                    onClick={() => setShowLauncherBg(!showLauncherBg)}
+                                                    className={`flex items-center justify-between px-4 py-4 rounded-[20px] border-2 transition-all ${showLauncherBg ? 'bg-blue-50/50 border-blue-200 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]' : 'bg-slate-50 border-white/80 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff] opacity-70'}`}
+                                                >
+                                                    <span className={`text-[10px] font-black uppercase tracking-[0.1em] ${showLauncherBg ? 'text-blue-700' : 'text-slate-500'}`}>Launcher BG</span>
+                                                    <div className={`w-10 h-5.5 rounded-full transition-all relative shadow-inner ${showLauncherBg ? 'bg-blue-600' : 'bg-slate-300'}`}>
+                                                        <div className={`absolute top-[3px] w-4 h-4 bg-white rounded-full transition-all shadow-sm ${showLauncherBg ? 'right-[3px] translate-x-0' : 'left-[3px] translate-x-0'}`} />
+                                                    </div>
                                                 </button>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
 
-                                <div className="p-4 bg-white/5 rounded-2xl border border-white/10 space-y-6">
-                                    <div className="space-y-4">
-                                        <div>
-                                            <label className="block text-[10px] font-bold text-white/50 mb-3 uppercase tracking-widest">Chat Background Image</label>
-                                            <div className="flex gap-2">
-                                                <div className="relative flex-1">
-                                                    <input
-                                                        type="text"
-                                                        placeholder="https://example.com/bg.png"
-                                                        value={backgroundImage}
-                                                        onChange={(e) => setBackgroundImage(e.target.value)}
-                                                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs outline-none focus:border-blue-500 transition-colors"
-                                                    />
-                                                </div>
-                                                <button
-                                                    onClick={() => {
-                                                        const input = document.createElement('input');
-                                                        input.type = 'file';
-                                                        input.accept = 'image/*';
-                                                        input.onchange = async (e: any) => {
-                                                            const file = e.target.files?.[0];
-                                                            if (file) {
-                                                                setLogoLoading(true);
-                                                                const formData = new FormData();
-                                                                formData.append("file", file);
-                                                                try {
-                                                                    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bots/${id}/logo`, {
-                                                                        method: "POST",
-                                                                        body: formData,
-                                                                    });
-                                                                    const data = await res.json();
-                                                                    if (res.ok && data.logo_url) setBackgroundImage(data.logo_url);
-                                                                } catch (err) {
-                                                                    console.error("Upload failed", err);
-                                                                } finally {
-                                                                    setLogoLoading(false);
-                                                                }
-                                                            }
-                                                        };
-                                                        input.click();
-                                                    }}
-                                                    className="p-2 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-colors"
-                                                    title="Upload Background"
-                                                >
-                                                    <Upload size={14} />
-                                                </button>
+                                {/* Geometry Studio Section */}
+                                <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative overflow-hidden group">
+                                    <div className="absolute top-0 left-0 w-1.5 h-full bg-orange-500/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                    <div className="flex items-center justify-between mb-6">
+                                        <div className="flex items-center gap-4">
+                                            <div className="w-12 h-12 bg-orange-500 rounded-[20px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),8px_8px_20px_rgba(249,115,22,0.25)] text-white">
+                                                <Square size={24} strokeWidth={2.5} />
                                             </div>
-                                        </div>
-                                        <div>
-                                            <div className="flex justify-between items-center mb-2">
-                                                <label className="block text-[10px] font-bold text-white/50 uppercase tracking-widest">Background Opacity</label>
-                                                <span className="text-[10px] text-blue-400 font-mono">{Math.round(backgroundOpacity * 100)}%</span>
+                                            <div>
+                                                <h3 className="text-base font-black text-slate-900 uppercase tracking-widest">Geometry</h3>
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1 opacity-80">Dimensions & Shape</p>
                                             </div>
-                                            <input
-                                                type="range"
-                                                min="0"
-                                                max="1"
-                                                step="0.01"
-                                                value={backgroundOpacity}
-                                                onChange={(e) => setBackgroundOpacity(parseFloat(e.target.value))}
-                                                className="w-full accent-blue-500 h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer"
-                                            />
                                         </div>
                                     </div>
 
-                                    <div className="pt-4 border-t border-white/5 grid grid-cols-4 gap-4">
+                                    <div className="grid grid-cols-2 gap-5">
                                         {[
-                                            { label: "Header", value: textColor, setter: setTextColor },
-                                            { label: "Chat BG", value: chatBgColor, setter: setChatBgColor },
-                                            { label: "Input BG", value: inputBgColor, setter: setInputBgColor },
-                                            { label: "Input Txt", value: inputTextColor, setter: setInputTextColor }
-                                        ].map((item, idx) => (
-                                            <div key={idx} className="flex flex-col items-center gap-2">
-                                                <span className="text-[9px] font-bold text-white/30 uppercase tracking-tighter whitespace-nowrap">{item.label}</span>
-                                                <div className="relative w-8 h-8 rounded-full border border-white/20 overflow-hidden cursor-pointer hover:scale-110 transition-transform shadow-sm">
-                                                    <input type="color" value={item.value} className="absolute inset-0 w-[200%] h-[200%] -top-1/2 -left-1/2 cursor-pointer" onChange={(e) => item.setter(e.target.value)} />
+                                            { label: "Logo", v: logoSize, s: setLogoSize, icon: Target },
+                                            { label: "Side", v: rightPadding, s: setRightPadding, icon: AlignRight },
+                                            { label: "Bottom", v: bottomPadding, s: setBottomPadding, icon: Anchor },
+                                            { label: "Header", v: headerHeight, s: setHeaderHeight, icon: Layers },
+                                            { label: "Radius", v: borderRadius, s: setBorderRadius, icon: Square }
+                                        ].map((item, i) => (
+                                            <div key={i} className="space-y-2.5">
+                                                <div className="flex items-center gap-2 mb-1 pl-1">
+                                                    <item.icon size={13} className="text-slate-400" />
+                                                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">{item.label}</label>
+                                                </div>
+                                                <div className="relative group/input">
+                                                    <input
+                                                        type="number"
+                                                        value={item.v}
+                                                        onChange={(e) => item.s(parseInt(e.target.value) || 0)}
+                                                        className="w-full bg-slate-50 border-2 border-white/80 rounded-[18px] pl-3 pr-7 py-3 text-sm font-black text-slate-900 outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/30 transition-all text-center shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                                    />
+                                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] text-slate-300 font-extrabold uppercase tracking-tighter">px</span>
+                                                </div>
+                                            </div>
+                                        ))}
+
+                                        <div className="col-span-2 pt-6 mt-2 border-t border-white/50">
+                                            <div className="flex items-center justify-between mb-4">
+                                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] pl-1">Launcher Shape</label>
+                                            </div>
+                                            <div className="grid grid-cols-4 gap-4">
+                                                {[
+                                                    { id: "circle", r: "50%" }, { id: "rounded", r: "14px" },
+                                                    { id: "square", r: "2px" }, { id: "oval", r: "20px / 14px" }
+                                                ].map(s => (
+                                                    <button
+                                                        key={s.id} onClick={() => setLauncherShape(s.id)}
+                                                        className={`h-16 flex flex-col items-center justify-center gap-2.5 rounded-[20px] border-2 transition-all ${launcherShape === s.id ? 'bg-white border-blue-400 shadow-[6px_6px_12px_#d1d9e6,-6px_-6px_12px_#ffffff] scale-[1.05]' : 'bg-slate-50/50 border-white shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff] hover:scale-[1.02]'}`}
+                                                    >
+                                                        <div className="w-6 h-6 bg-blue-600 shadow-[inset_2px_2px_4px_rgba(255,255,255,0.3),inset_-2px_-2px_4px_rgba(0,0,0,0.1),4px_4px_8px_rgba(37,99,235,0.2)] transition-all duration-500" style={{ borderRadius: s.r }} />
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+
+                                {/* Interface Skin Card */}
+                                <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative overflow-hidden group">
+                                    <div className="absolute top-0 left-0 w-1.5 h-full bg-emerald-500/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                    <div className="flex items-center gap-4 mb-6">
+                                        <div className="w-12 h-12 bg-emerald-600 rounded-[20px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),8px_8px_20px_rgba(16,185,129,0.25)] text-white">
+                                            <Palette size={24} strokeWidth={2.5} />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-base font-black text-slate-900 uppercase tracking-widest">Interface Skin</h3>
+                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1 opacity-80">Global UI Palette</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-6">
+                                        {[
+                                            { l: "Header Text", v: textColor, s: setTextColor },
+                                            { l: "Chat BG", v: chatBgColor, s: setChatBgColor },
+                                            { l: "Input Bar", v: inputBgColor, s: setInputBgColor },
+                                            { l: "Input Text", v: inputTextColor, s: setInputTextColor }
+                                        ].map((item, i) => (
+                                            <div key={i} className="flex flex-col gap-3 group/swatch">
+                                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">{item.l}</span>
+                                                <div className="relative w-full h-14 rounded-[20px] border-4 border-white overflow-hidden shadow-[4px_4px_10px_#d1d9e6,-4px_-4px_10px_#ffffff] hover:scale-[1.05] transition-all cursor-pointer active:scale-[0.98]">
+                                                    <input type="color" value={item.v} className="absolute inset-0 w-[200%] h-[200%] -top-1/2 -left-1/2 cursor-pointer" onChange={(e) => item.s(e.target.value)} />
+                                                    <div className="absolute inset-x-0 bottom-0 py-1.5 bg-black/10 backdrop-blur-md opacity-0 group-hover/swatch:opacity-100 transition-opacity flex justify-center">
+                                                        <span className="text-[9px] font-black text-white uppercase tracking-tighter">{item.v}</span>
+                                                    </div>
                                                 </div>
                                             </div>
                                         ))}
                                     </div>
 
-                                    <div className="space-y-4 pt-4 border-t border-white/5">
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">User Bubble</span>
-                                            <div className="flex gap-4">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[9px] text-white/30 uppercase">BG</span>
-                                                    <div className="relative w-6 h-6 rounded-full border border-white/20 overflow-hidden cursor-pointer hover:scale-110 transition-transform">
+                                    <div className="grid grid-cols-1 gap-8 mt-8 pt-6 border-t border-white/50">
+                                        <div className="space-y-4">
+                                            <div className="flex items-center gap-3 mb-2 pl-1">
+                                                <div className="w-2.5 h-2.5 bg-blue-600 rounded-full shadow-[0_0_8px_rgba(37,99,235,0.4)]" />
+                                                <span className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em]">User Bubble</span>
+                                            </div>
+                                            <div className="flex gap-4 p-5 bg-slate-100/30 rounded-[28px] border border-white/50 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]">
+                                                <div className="flex-1 space-y-3">
+                                                    <span className="text-[9px] font-black text-slate-400 uppercase block pl-1 tracking-widest">Fill</span>
+                                                    <div className="relative h-12 rounded-[16px] border-4 border-white shadow-[2px_2px_6px_rgba(0,0,0,0.05)] overflow-hidden">
                                                         <input type="color" value={userBubbleBg} className="absolute inset-0 w-[200%] h-[200%] -top-1/2 -left-1/2 cursor-pointer" onChange={(e) => setUserBubbleBg(e.target.value)} />
                                                     </div>
                                                 </div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[9px] text-white/30 uppercase">Txt</span>
-                                                    <div className="relative w-6 h-6 rounded-full border border-white/20 overflow-hidden cursor-pointer hover:scale-110 transition-transform">
+                                                <div className="flex-1 space-y-3">
+                                                    <span className="text-[9px] font-black text-slate-400 uppercase block pl-1 tracking-widest">Text</span>
+                                                    <div className="relative h-12 rounded-[16px] border-4 border-white shadow-[2px_2px_6px_rgba(0,0,0,0.05)] overflow-hidden">
                                                         <input type="color" value={userBubbleText} className="absolute inset-0 w-[200%] h-[200%] -top-1/2 -left-1/2 cursor-pointer" onChange={(e) => setUserBubbleText(e.target.value)} />
                                                     </div>
                                                 </div>
                                             </div>
                                         </div>
-
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">Bot Bubble</span>
-                                            <div className="flex gap-4">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[9px] text-white/30 uppercase">BG</span>
-                                                    <div className="relative w-6 h-6 rounded-full border border-white/20 overflow-hidden cursor-pointer hover:scale-110 transition-transform">
+                                        <div className="space-y-4">
+                                            <div className="flex items-center gap-3 mb-2 pl-1">
+                                                <div className="w-2.5 h-2.5 bg-slate-400 rounded-full shadow-[0_0_8px_rgba(148,163,184,0.4)]" />
+                                                <span className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em]">Bot Bubble</span>
+                                            </div>
+                                            <div className="flex gap-4 p-5 bg-slate-100/30 rounded-[28px] border border-white/50 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]">
+                                                <div className="flex-1 space-y-3">
+                                                    <span className="text-[9px] font-black text-slate-400 uppercase block pl-1 tracking-widest">Fill</span>
+                                                    <div className="relative h-12 rounded-[16px] border-4 border-white shadow-[2px_2px_6px_rgba(0,0,0,0.05)] overflow-hidden">
                                                         <input type="color" value={assistantBubbleBg} className="absolute inset-0 w-[200%] h-[200%] -top-1/2 -left-1/2 cursor-pointer" onChange={(e) => setAssistantBubbleBg(e.target.value)} />
                                                     </div>
                                                 </div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[9px] text-white/30 uppercase">Txt</span>
-                                                    <div className="relative w-6 h-6 rounded-full border border-white/20 overflow-hidden cursor-pointer hover:scale-110 transition-transform">
+                                                <div className="flex-1 space-y-3">
+                                                    <span className="text-[9px] font-black text-slate-400 uppercase block pl-1 tracking-widest">Text</span>
+                                                    <div className="relative h-12 rounded-[16px] border-4 border-white shadow-[2px_2px_6px_rgba(0,0,0,0.05)] overflow-hidden">
                                                         <input type="color" value={assistantBubbleText} className="absolute inset-0 w-[200%] h-[200%] -top-1/2 -left-1/2 cursor-pointer" onChange={(e) => setAssistantBubbleText(e.target.value)} />
                                                     </div>
                                                 </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-8 pt-6 border-t border-white/50 space-y-6">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-10 h-10 bg-blue-600 rounded-[16px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),6px_6px_16px_rgba(37,99,235,0.25)] text-white">
+                                                    <Layout size={20} />
+                                                </div>
+                                                <div>
+                                                    <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Chat Backdrop</h3>
+                                                </div>
+                                            </div>
+                                            <span className="px-4 py-1.5 bg-blue-50/50 text-blue-600 rounded-xl text-[10px] font-black uppercase tracking-widest border border-white shadow-sm">{Math.round(backgroundOpacity * 100)}% Visibility</span>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 gap-6">
+                                            <div className="relative group">
+                                                <input
+                                                    type="text"
+                                                    value={backgroundImage}
+                                                    onChange={(e) => setBackgroundImage(e.target.value)}
+                                                    placeholder="Paste backdrop URL or upload image..."
+                                                    className="w-full bg-slate-50 border-2 border-white/80 rounded-[20px] px-5 py-4 text-sm font-black outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/30 transition-all text-slate-900 placeholder:text-slate-300 pr-16 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]"
+                                                />
+                                                <button
+                                                    onClick={() => backgroundInputRef.current?.click()}
+                                                    disabled={backgroundLoading}
+                                                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-white text-slate-400 rounded-[14px] hover:bg-blue-600 hover:text-white transition-all disabled:opacity-50 border border-white shadow-[2px_2px_4px_#d1d9e6,-2px_-2px_4px_#ffffff]"
+                                                >
+                                                    <Upload size={18} className={backgroundLoading ? "animate-spin" : ""} strokeWidth={2.5} />
+                                                </button>
+                                                <input type="file" ref={backgroundInputRef} onChange={handleBackgroundUpload} className="hidden" accept="image/*" />
+                                            </div>
+                                            <div className="px-6 py-6 bg-slate-100/30 rounded-[28px] border border-white/50 shadow-[inset_6px_6px_12px_#d1d9e6,inset_-6px_-6px_12px_#ffffff] flex items-center gap-6">
+                                                <div className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] shrink-0 transform -rotate-90">Opacity</div>
+                                                <input
+                                                    type="range" min="0" max="1" step="0.01"
+                                                    value={backgroundOpacity}
+                                                    onChange={(e) => setBackgroundOpacity(parseFloat(e.target.value))}
+                                                    className="flex-1 h-2 bg-slate-200/50 rounded-full appearance-none transition-all accent-blue-600 cursor-pointer shadow-inner"
+                                                />
                                             </div>
                                         </div>
                                     </div>
@@ -1025,20 +1126,20 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
 
                         {activeTab === "knowledge" && (
                             <motion.div key="knowledge" className="space-y-6">
-                                <div className="p-6 bg-white/5 border border-white/10 rounded-3xl space-y-6">
-                                    <div className="flex items-center gap-3 mb-2">
-                                        <div className="p-2 bg-blue-500/10 rounded-lg">
-                                            <Brain size={20} className="text-blue-400" />
+                                <div className="p-6 bg-slate-50 border border-slate-200 rounded-3xl space-y-6 shadow-sm">
+                                    <div className="flex items-center gap-4 mb-2">
+                                        <div className="p-3 bg-blue-600 shadow-[0_4px_12px_rgba(37,99,235,0.2)] rounded-2xl">
+                                            <Brain size={24} className="text-white" />
                                         </div>
                                         <div>
-                                            <h3 className="text-sm font-bold">AI Model & Provider</h3>
-                                            <p className="text-[10px] text-white/40 uppercase tracking-widest font-bold">Configure your brain</p>
+                                            <h3 className="text-base font-black text-slate-900">AI Model & Provider</h3>
+                                            <p className="text-[10px] text-slate-400 uppercase tracking-[0.2em] font-black">Configure the brain</p>
                                         </div>
                                     </div>
 
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="space-y-2">
-                                            <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest">Provider</label>
+                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Provider</label>
                                             <select
                                                 value={aiProvider}
                                                 onChange={(e) => {
@@ -1048,46 +1149,31 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                     if (p === "openai") setAiModel("gpt-4o-mini");
                                                     if (p === "groq") setAiModel("llama3-8b-8192");
                                                 }}
-                                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500 transition-colors"
+                                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-900 shadow-sm appearance-none cursor-pointer"
                                             >
-                                                <option value="google" className="bg-[#111]">Google (Gemini)</option>
-                                                <option value="openai" className="bg-[#111]">OpenAI (ChatGPT)</option>
-                                                <option value="groq" className="bg-[#111]">Llama 3 (via Groq)</option>
+                                                <option value="google">Google Gemini</option>
+                                                <option value="openai">OpenAI ChatGPT</option>
+                                                <option value="groq">Llama 3 (via Groq)</option>
                                             </select>
                                         </div>
 
                                         <div className="space-y-2">
-                                            <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest">Model</label>
+                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Model</label>
                                             <select
                                                 value={aiModel}
                                                 onChange={(e) => setAiModel(e.target.value)}
-                                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500 transition-colors"
+                                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-900 shadow-sm appearance-none cursor-pointer"
                                             >
                                                 {aiProvider === "google" && (
                                                     <>
-                                                        <option value="gemini-3-flash-preview" className="bg-[#111]">Gemini 3 Flash (Preview)</option>
-                                                        <option value="gemini-2.5-flash" className="bg-[#111]">Gemini 2.5 Flash (SOTA)</option>
-                                                        <option value="gemini-2.0-flash" className="bg-[#111]">Gemini 2.0 Flash (Latest / Free)</option>
-                                                        <option value="gemini-2.0-flash-lite" className="bg-[#111]">Gemini 2.0 Flash Lite (Fastest / Free)</option>
-                                                        <option value="gemini-1.5-flash" className="bg-[#111]">Gemini 1.5 Flash (Free Tier)</option>
-                                                        <option value="gemini-1.5-flash-8b" className="bg-[#111]">Gemini 1.5 Flash-8B (Fast / Free)</option>
-                                                        <option value="gemini-1.5-pro" className="bg-[#111]">Gemini 1.5 Pro (Advanced)</option>
+                                                        <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                                                        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
                                                     </>
                                                 )}
                                                 {aiProvider === "openai" && (
                                                     <>
-                                                        <option value="gpt-4o-mini" className="bg-[#111]">GPT-4o Mini (Best Value / "Free")</option>
-                                                        <option value="gpt-4o" className="bg-[#111]">GPT-4o (SOTA)</option>
-                                                        <option value="gpt-4-turbo" className="bg-[#111]">GPT-4 Turbo</option>
-                                                        <option value="gpt-3.5-turbo" className="bg-[#111]">GPT-3.5 Turbo</option>
-                                                    </>
-                                                )}
-                                                {aiProvider === "groq" && (
-                                                    <>
-                                                        <option value="llama-3.3-70b-versatile" className="bg-[#111]">Llama 3.3 70B (Latest)</option>
-                                                        <option value="llama-3.1-8b-instant" className="bg-[#111]">Llama 3.1 8B (Fast / Free Beta)</option>
-                                                        <option value="llama-3.2-11b-vision-preview" className="bg-[#111]">Llama 3.2 11B (Vision / Free Beta)</option>
-                                                        <option value="mixtral-8x7b-32768" className="bg-[#111]">Mixtral 8x7B</option>
+                                                        <option value="gpt-4o">GPT-4o</option>
+                                                        <option value="gpt-4o-mini">GPT-4o Mini</option>
                                                     </>
                                                 )}
                                             </select>
@@ -1095,102 +1181,106 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
 
                                         <div className="col-span-2 space-y-2">
                                             <div className="flex justify-between items-center">
-                                                <label className="text-[10px] font-bold text-white/50 uppercase tracking-widest">API Key (Leave blank to use system default)</label>
-                                                {aiApiKey && <Check size={12} className="text-green-500" />}
+                                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">API Key (Leave blank to use system default)</label>
+                                                {aiApiKey && <Check size={14} className="text-green-600" />}
                                             </div>
                                             <input
                                                 type="password"
                                                 value={aiApiKey}
                                                 onChange={(e) => setAiApiKey(e.target.value)}
                                                 placeholder={`Enter your ${aiProvider.toUpperCase()} API Key`}
-                                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500 transition-colors"
+                                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-900 shadow-sm"
                                             />
                                         </div>
                                     </div>
                                 </div>
 
                                 <div className="space-y-4">
-                                    <div className="p-5 bg-white/5 border border-white/10 rounded-3xl space-y-4">
-                                        <div className="flex items-center gap-2">
-                                            <Globe size={16} className="text-blue-400" />
-                                            <h4 className="text-xs font-bold uppercase tracking-widest text-white/70">Website Crawler</h4>
+                                    <div className="p-5 bg-white border border-slate-200 rounded-3xl space-y-4 shadow-sm">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 bg-blue-50 text-blue-600 rounded-xl border border-blue-100">
+                                                <Globe size={20} />
+                                            </div>
+                                            <h4 className="text-[11px] font-black uppercase tracking-[0.15em] text-slate-800">Website Crawler</h4>
                                         </div>
-                                        <div className="space-y-2">
+                                        <div className="space-y-3">
                                             <input
                                                 type="text"
                                                 placeholder="https://example.com"
                                                 value={crawlUrl}
                                                 onChange={(e) => setCrawlUrl(e.target.value)}
-                                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500"
+                                                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-inner"
                                             />
                                             <button
                                                 onClick={handleCrawl}
                                                 disabled={crawling}
-                                                className="w-full py-2.5 bg-blue-600 rounded-xl text-xs font-bold hover:bg-blue-500 disabled:opacity-50 transition-all"
+                                                className="w-full py-3 bg-blue-600 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-blue-700 disabled:opacity-50 transition-all shadow-[0_4px_12px_rgba(37,99,235,0.2)] active:scale-[0.98]"
                                             >
                                                 {crawling ? "Crawling..." : "Start Crawling"}
                                             </button>
                                         </div>
-                                        <p className="text-[10px] text-white/30 leading-relaxed">Enter a URL to ingest its text content into the knowledge base.</p>
                                     </div>
 
-                                    <div className="p-5 bg-white/5 border border-white/10 rounded-3xl space-y-4">
-                                        <div className="flex items-center gap-2">
-                                            <Video size={16} className="text-red-400" />
-                                            <h4 className="text-xs font-bold uppercase tracking-widest text-white/70">YouTube Extract</h4>
+                                    <div className="p-5 bg-white border border-slate-200 rounded-3xl space-y-4 shadow-sm">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 bg-red-50 text-red-600 rounded-xl border border-red-100">
+                                                <Video size={20} />
+                                            </div>
+                                            <h4 className="text-[11px] font-black uppercase tracking-[0.15em] text-slate-800">YouTube Extract</h4>
                                         </div>
-                                        <div className="space-y-2">
+                                        <div className="space-y-3">
                                             <input
                                                 type="text"
                                                 placeholder="YouTube Video URL"
                                                 value={youtubeUrl}
                                                 onChange={(e) => setYoutubeUrl(e.target.value)}
-                                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-red-500"
+                                                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 shadow-inner"
                                             />
                                             <button
                                                 onClick={handleYouTubeExtract}
                                                 disabled={crawling}
-                                                className="w-full py-2.5 bg-red-600 rounded-xl text-xs font-bold hover:bg-red-500 disabled:opacity-50 transition-all"
+                                                className="w-full py-3 bg-red-600 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-red-700 disabled:opacity-50 transition-all shadow-[0_4px_12px_rgba(220,38,38,0.2)] active:scale-[0.98]"
                                             >
                                                 {crawling ? "Extracting..." : "Extract Transcript"}
                                             </button>
                                         </div>
-                                        <p className="text-[10px] text-white/30 leading-relaxed">Extract transcripts from videos to teach your bot.</p>
                                     </div>
                                 </div>
 
-                                <div className="flex items-center justify-between p-5 bg-gradient-to-r from-blue-600/10 to-purple-600/10 border border-white/10 rounded-3xl">
+                                <div className="flex items-center justify-between p-6 bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-100 rounded-3xl shadow-sm">
                                     <div className="flex items-center gap-4">
-                                        <div className="w-10 h-10 bg-white/5 rounded-2xl flex items-center justify-center">
-                                            <Search size={20} className="text-blue-400" />
+                                        <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-md border border-white">
+                                            <Search size={22} className="text-blue-600" />
                                         </div>
                                         <div>
-                                            <h4 className="font-bold text-sm">Live Web Search (RAG)</h4>
-                                            <p className="text-xs text-white/40">Real-time search via Tavily & Perplexity</p>
+                                            <h4 className="font-black text-sm text-slate-900">Live Web Search (RAG)</h4>
+                                            <p className="text-[11px] text-slate-500 font-bold uppercase tracking-widest">Real-time web access</p>
                                         </div>
                                     </div>
                                     <button
                                         onClick={() => setLiveSearchEnabled(!liveSearchEnabled)}
-                                        className={`w-12 h-6 rounded-full transition-all relative ${liveSearchEnabled ? 'bg-blue-600' : 'bg-white/10'}`}
+                                        className={`w-12 h-6 rounded-full transition-all relative ${liveSearchEnabled ? 'bg-blue-600 shadow-[0_4px_12px_rgba(37,99,235,0.2)]' : 'bg-slate-200'}`}
                                     >
-                                        <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${liveSearchEnabled ? 'right-1' : 'left-1'}`} />
+                                        <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${liveSearchEnabled ? 'right-1' : 'left-1'}`} />
                                     </button>
                                 </div>
 
                                 <div
                                     onClick={() => !knowledgeLoading && knowledgeInputRef.current?.click()}
-                                    className={`border-2 border-dashed rounded-3xl p-8 text-center transition-all cursor-pointer group ${knowledgeLoading ? 'border-blue-500 bg-blue-500/5' : 'border-white/10 hover:border-blue-500/50 hover:bg-blue-500/5'}`}
+                                    className={`border-2 border-dashed rounded-[32px] p-10 text-center transition-all cursor-pointer group shadow-sm bg-white ${knowledgeLoading ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-blue-400 hover:bg-slate-50'}`}
                                 >
                                     {knowledgeLoading ? (
                                         <div className="flex flex-col items-center">
-                                            <div className="w-12 h-12 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-4" />
-                                            <p className="font-bold text-lg text-blue-400">Processing Knowledge...</p>
+                                            <div className="w-14 h-14 border-4 border-blue-500/10 border-t-blue-600 rounded-full animate-spin mb-4" />
+                                            <p className="font-black text-lg text-blue-600 uppercase tracking-widest">Processing Data...</p>
                                         </div>
                                     ) : (
                                         <>
-                                            <Upload className="mx-auto mb-4 text-white/20 group-hover:text-blue-500 transition-colors" size={48} />
-                                            <p className="font-bold text-lg mb-1">Upload PDF or TXT</p>
-                                            <p className="text-white/40 text-sm">Bot will learn from the content of these files</p>
+                                            <div className="w-20 h-20 bg-slate-50 rounded-3xl flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform">
+                                                <Upload className="text-slate-300 group-hover:text-blue-500 transition-colors" size={40} />
+                                            </div>
+                                            <p className="font-black text-xl mb-1 text-slate-800">Upload Data Source</p>
+                                            <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-2">Support: PDF, TXT, CSV, DOCX</p>
                                         </>
                                     )}
                                     <input
@@ -1202,48 +1292,45 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                     />
                                 </div>
 
-                                <div className="space-y-3">
-                                    <h4 className="text-xs font-bold text-white/40 uppercase tracking-widest flex justify-between">
+                                <div className="space-y-4">
+                                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex justify-between px-2">
                                         Manual Knowledge Base
-                                        <span className="text-[10px] text-blue-400 font-mono">{knowledgeBase.length} chars</span>
+                                        <span className="text-blue-600 font-mono font-black">{knowledgeBase.length} chars</span>
                                     </h4>
                                     <textarea
                                         rows={10}
                                         value={knowledgeBase}
                                         onChange={(e) => setKnowledgeBase(e.target.value)}
-                                        placeholder="Type custom information here (e.g. company details, pricing, FAQs)..."
-                                        className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-4 outline-none focus:border-blue-500 transition-all resize-none text-sm leading-relaxed"
+                                        placeholder="Enter product details, company info, FAQs..."
+                                        className="w-full bg-white border border-slate-200 rounded-3xl px-6 py-6 outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-400 shadow-sm transition-all resize-none text-sm leading-relaxed text-slate-800"
                                     />
-                                    <p className="text-[10px] text-white/30 italic">
-                                        The bot will prioritize this information when answering user questions.
-                                    </p>
                                 </div>
                             </motion.div>
                         )}
 
                         {activeTab === "personality" && (
-                            <motion.div key="personality" className="space-y-6">
-                                <div>
-                                    <label className="block text-sm font-bold text-white/50 mb-3 uppercase tracking-wider">System Instruction</label>
+                            <motion.div key="personality" className="space-y-8">
+                                <div className="space-y-4">
+                                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] pl-1">System Instructions</label>
                                     <textarea
-                                        rows={6}
+                                        rows={8}
                                         value={systemPrompt}
                                         onChange={(e) => setSystemPrompt(e.target.value)}
-                                        placeholder="e.g. You are a sassy assistant who loves puns..."
-                                        className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-4 outline-none focus:border-blue-500 transition-all resize-none"
+                                        placeholder="e.g. You are a professional sales assistant for a tech company..."
+                                        className="w-full bg-white border border-slate-200 rounded-3xl px-6 py-6 outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-400 shadow-sm transition-all resize-none text-sm leading-relaxed text-slate-800"
                                     />
-                                    <p className="text-[11px] text-white/30 mt-3 leading-relaxed">
-                                        This defines how the AI behaves. Be specific about tone, level of detail, and constraints.
+                                    <p className="text-[11px] text-slate-400 font-bold leading-relaxed px-1">
+                                        Define your bot's behavior, personality traits, and specific constraints.
                                     </p>
                                 </div>
-                                <div className="p-5 bg-white/5 rounded-2xl border border-white/5">
-                                    <h5 className="font-bold text-sm mb-2">Preset Moods</h5>
+                                <div className="p-6 bg-slate-50 rounded-[32px] border border-slate-200 shadow-inner">
+                                    <h5 className="font-black text-[10px] text-slate-400 uppercase tracking-widest mb-4">Personality Presets</h5>
                                     <div className="flex flex-wrap gap-2">
-                                        {["Professional", "Friendly", "Concise", "Sassy", "Expert"].map(m => (
+                                        {["Professional", "Friendly", "Concise", "Sassy", "Helpful", "Sales-driven"].map(m => (
                                             <button
                                                 key={m}
-                                                onClick={() => setSystemPrompt(`You are a ${m.toLowerCase()} assistant.`)}
-                                                className="px-3 py-1.5 bg-white/5 rounded-full text-xs hover:bg-white/10"
+                                                onClick={() => setSystemPrompt(`You are a ${m.toLowerCase()} AI assistant. Focus on being helpful and accurate.`)}
+                                                className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-600 hover:border-blue-400 hover:text-blue-600 transition-all shadow-sm active:scale-95"
                                             >
                                                 {m}
                                             </button>
@@ -1255,66 +1342,66 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
 
                         {activeTab === "storage" && (
                             <motion.div key="storage" className="space-y-6">
-                                <div className="flex justify-between items-center bg-white/5 p-6 rounded-3xl border border-white/10">
+                                <div className="flex justify-between items-center bg-slate-50 p-6 rounded-3xl border border-slate-200 shadow-sm">
                                     <div>
-                                        <h3 className="font-bold text-lg">Lead Storage</h3>
-                                        <p className="text-white/40 text-xs">Capture data from your chatbot flows</p>
+                                        <h3 className="font-bold text-lg text-slate-900">Lead Storage</h3>
+                                        <p className="text-slate-500 text-xs font-medium uppercase tracking-widest">Captured from flows</p>
                                     </div>
-                                    <div className="bg-blue-600/20 text-blue-400 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2">
+                                    <div className="bg-blue-600 shadow-lg shadow-blue-500/20 text-white px-4 py-2 rounded-xl text-sm font-black flex items-center gap-2">
                                         <Inbox size={16} /> {leads.length} Leads
                                     </div>
                                 </div>
 
-                                <div className="bg-white/5 border border-white/10 rounded-3xl overflow-hidden min-h-[400px]">
+                                <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden min-h-[400px] shadow-sm">
                                     {leadsLoading ? (
                                         <div className="flex flex-col items-center justify-center h-[400px]">
-                                            <div className="w-8 h-8 border-2 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-4" />
-                                            <p className="text-white/40 text-xs uppercase font-bold tracking-widest">Loading Leads...</p>
+                                            <div className="w-10 h-10 border-4 border-blue-500/10 border-t-blue-500 rounded-full animate-spin mb-4" />
+                                            <p className="text-slate-400 text-[10px] uppercase font-black tracking-[0.2em]">Syncing Records...</p>
                                         </div>
                                     ) : leads.length === 0 ? (
                                         <div className="flex flex-col items-center justify-center h-[400px] text-center p-8">
-                                            <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mb-4">
-                                                <List size={32} className="text-white/20" />
+                                            <div className="w-20 h-20 bg-slate-50 rounded-[32px] flex items-center justify-center mb-6 shadow-inner ring-1 ring-slate-100">
+                                                <List size={32} className="text-slate-200" />
                                             </div>
-                                            <h4 className="font-bold mb-2">No Leads Yet</h4>
-                                            <p className="text-white/30 text-xs max-w-[250px] leading-relaxed">
+                                            <h4 className="font-black text-slate-800 mb-2 uppercase tracking-tight">No Leads Yet</h4>
+                                            <p className="text-slate-400 text-[11px] font-medium max-w-[250px] leading-relaxed">
                                                 When users complete forms in your bot flow, their data will appear here.
                                             </p>
                                         </div>
                                     ) : (
                                         <div className="overflow-x-auto">
-                                            <table className="w-full text-left border-collapse">
+                                            <table className="w-full text-left">
                                                 <thead>
-                                                    <tr className="border-b border-white/10 bg-white/5">
-                                                        <th className="px-6 py-4 text-[10px] font-bold text-white/40 uppercase tracking-widest">Date</th>
-                                                        <th className="px-6 py-4 text-[10px] font-bold text-white/40 uppercase tracking-widest">Captured Data</th>
-                                                        <th className="px-6 py-4 text-[10px] font-bold text-white/40 uppercase tracking-widest text-right">Session</th>
+                                                    <tr className="bg-slate-50 border-b border-slate-200">
+                                                        <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Time</th>
+                                                        <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Data Captured</th>
+                                                        <th className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">Session</th>
                                                     </tr>
                                                 </thead>
-                                                <tbody className="divide-y divide-white/5">
-                                                    {leads.map((lead) => (
-                                                        <tr key={lead.id} className="hover:bg-white/5 transition-colors group">
-                                                            <td className="px-6 py-4">
-                                                                <p className="text-[10px] text-white/40 font-mono">
-                                                                    {new Date(lead.created_at).toLocaleDateString()}
-                                                                </p>
-                                                                <p className="text-xs font-bold text-white/80">
+                                                <tbody className="divide-y divide-slate-100">
+                                                    {leads.map((lead: any) => (
+                                                        <tr key={lead.id} className="hover:bg-slate-50/50 transition-colors group">
+                                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                                <p className="text-[11px] font-black text-slate-900">
                                                                     {new Date(lead.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                                </p>
+                                                                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">
+                                                                    {new Date(lead.created_at).toLocaleDateString()}
                                                                 </p>
                                                             </td>
                                                             <td className="px-6 py-4">
                                                                 <div className="flex flex-wrap gap-2">
                                                                     {Object.entries(lead.data).map(([key, value]: [string, any]) => (
-                                                                        <div key={key} className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 flex items-center gap-2">
-                                                                            <span className="text-[9px] font-bold text-blue-400 uppercase">{key}:</span>
-                                                                            <span className="text-xs text-white/70">{value}</span>
+                                                                        <div key={key} className="bg-white border border-slate-200 rounded-xl px-2.5 py-1 flex items-center gap-2 shadow-sm transition-transform hover:scale-105">
+                                                                            <span className="text-[9px] font-black text-blue-600 uppercase tracking-tighter">{key}:</span>
+                                                                            <span className="text-[10px] text-slate-700 font-bold">{value}</span>
                                                                         </div>
                                                                     ))}
                                                                 </div>
                                                             </td>
                                                             <td className="px-6 py-4 text-right">
-                                                                <span className="text-[10px] font-mono text-white/20 group-hover:text-white/40 transition-colors">
-                                                                    {lead.session_id.slice(0, 8)}...
+                                                                <span className="text-[9px] font-mono text-slate-300 group-hover:text-slate-500 transition-colors bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-100">
+                                                                    {lead.session_id.slice(0, 8)}
                                                                 </span>
                                                             </td>
                                                         </tr>
@@ -1327,132 +1414,157 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                             </motion.div>
                         )}
                     </AnimatePresence>
-                </div >
-            </aside >
+                </div>
+            </aside>
 
             {/* Main Preview Area */}
-            <main className="flex-1 bg-[#0a0a0a] relative flex items-center justify-center p-4 sm:p-8 lg:p-12 overflow-hidden">
+            <main className="flex-1 bg-slate-50 relative flex items-center justify-center p-4 sm:p-8 lg:p-12 overflow-hidden shadow-inner">
                 {/* Abstract Background for Preview */}
                 <div className="absolute inset-0 z-0">
-                    <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-blue-600/10 blur-[150px] rounded-full" />
+                    <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:16px_16px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-30" />
+                    <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-blue-600/5 blur-[150px] rounded-full" />
                     <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-purple-600/5 blur-[120px] rounded-full" />
                 </div>
 
                 <div className="relative z-10 w-full h-full flex flex-col items-center justify-center">
-                    <div className="flex bg-white/5 p-1 rounded-full mb-8 border border-white/10">
-                        <button className="px-4 py-1.5 bg-white/10 rounded-full text-xs font-bold flex items-center gap-2">
-                            <Monitor size={14} /> Desktop
+                    <div className="flex bg-slate-200/50 p-1 rounded-full mb-8 border border-slate-300 shadow-sm backdrop-blur-sm relative z-20">
+                        <button
+                            onClick={() => setPreviewMode('desktop')}
+                            className={`px-4 py-1.5 shadow-sm rounded-full text-xs font-bold flex items-center gap-2 transition-all ${previewMode === 'desktop' ? 'bg-white text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}>
+                            <Monitor size={14} className={previewMode === 'desktop' ? "text-blue-600" : ""} /> Desktop
                         </button>
-                        <button className="px-4 py-1.5 text-white/30 text-xs font-bold flex items-center gap-2">
-                            <Smartphone size={14} /> Mobile
+                        <button
+                            onClick={() => setPreviewMode('mobile')}
+                            className={`px-4 py-1.5 shadow-sm rounded-full text-xs font-bold flex items-center gap-2 transition-all ${previewMode === 'mobile' ? 'bg-white text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}>
+                            <Smartphone size={14} className={previewMode === 'mobile' ? "text-blue-600" : ""} /> Mobile
                         </button>
                     </div>
 
-                    {/* Widget Mockup */}
-                    <div
-                        className="w-full max-w-[380px] aspect-[9/16] max-h-[70vh] lg:max-h-[600px] bg-zinc-900 border-[8px] border-zinc-800 shadow-2xl flex flex-col overflow-hidden"
-                        style={{ fontFamily: fontFamily, borderRadius: `${borderRadius * 1.5}px` }}
-                    >
-                        <div
-                            className="p-6 font-bold flex items-center justify-between shrink-0"
-                            style={{ backgroundColor: color, color: textColor, height: `${headerHeight}px` }}
-                        >
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center overflow-hidden">
-                                    {botLogo ? (
-                                        <img src={botLogo} alt="Bot" className="w-full h-full object-cover" />
-                                    ) : (
-                                        <Bot size={20} />
-                                    )}
+                    {previewMode === 'desktop' ? (
+                        <div className="w-full max-w-[1200px] aspect-video bg-white rounded-2xl overflow-hidden shadow-2xl border border-slate-200 relative flex flex-col transition-all duration-500 animate-in fade-in zoom-in-95">
+                            <div className="h-10 bg-slate-100 border-b border-slate-200 flex items-center px-4 gap-2 shrink-0">
+                                <div className="w-3 h-3 rounded-full bg-red-400" />
+                                <div className="w-3 h-3 rounded-full bg-amber-400" />
+                                <div className="w-3 h-3 rounded-full bg-green-400" />
+                                <div className="flex-1 ml-4 mr-10 bg-white border border-slate-200 h-6 rounded-md shadow-inner flex items-center px-3">
+                                    <div className="w-24 h-2 bg-slate-200 rounded-full" />
                                 </div>
-                                <span>{botName}</span>
                             </div>
-                        </div>
-                        <div className="flex-1 p-6 space-y-4 overflow-y-auto relative" style={{ backgroundColor: chatBgColor }}>
-                            {backgroundImage && (
+                            <div className="flex-1 bg-slate-50 relative p-8">
+                                <div className="max-w-md space-y-6">
+                                    <div className="w-48 h-8 bg-slate-200 rounded-xl" />
+                                    <div className="space-y-3">
+                                        <div className="w-full h-4 bg-slate-200 rounded-md" />
+                                        <div className="w-5/6 h-4 bg-slate-200 rounded-md" />
+                                        <div className="w-4/6 h-4 bg-slate-200 rounded-md" />
+                                    </div>
+                                    <div className="w-32 h-10 bg-blue-100 rounded-xl mt-8" />
+                                </div>
+                                <div className="absolute right-8 top-8 w-64 h-48 bg-slate-200 rounded-2xl" />
+
                                 <div
-                                    className="absolute inset-0 z-0 pointer-events-none"
+                                    className="absolute flex flex-col overflow-hidden shadow-[0_24px_48px_-12px_rgba(0,0,0,0.15)] ring-1 ring-slate-900/5 transition-all duration-300"
                                     style={{
-                                        backgroundImage: `url(${backgroundImage})`,
-                                        backgroundSize: 'cover',
-                                        backgroundPosition: 'center',
-                                        opacity: backgroundOpacity
+                                        fontFamily: fontFamily,
+                                        borderRadius: `${borderRadius}px`,
+                                        width: '350px',
+                                        height: '500px',
+                                        bottom: `${bottomPadding + 80}px`,
+                                        right: position === 'right' ? `${rightPadding}px` : 'auto',
+                                        left: position === 'left' ? `${rightPadding}px` : 'auto',
+                                        zIndex: 30
                                     }}
-                                />
-                            )}
-                            <div className="relative z-10 space-y-4 flex flex-col">
-                                <div
-                                    className="p-4 rounded-tl-none text-xs leading-relaxed max-w-[85%]"
-                                    style={{ backgroundColor: assistantBubbleBg, color: assistantBubbleText, borderRadius: `${borderRadius}px` }}
                                 >
-                                    Hello! I'm trained on your company data. How can I help you today?
+                                    <ChatbotWidgetContent
+                                        botName={botName}
+                                        botLogo={botLogo}
+                                        color={color}
+                                        textColor={textColor}
+                                        headerHeight={headerHeight}
+                                        chatBgColor={chatBgColor}
+                                        backgroundImage={backgroundImage}
+                                        backgroundOpacity={backgroundOpacity}
+                                        assistantBubbleBg={assistantBubbleBg}
+                                        assistantBubbleText={assistantBubbleText}
+                                        userBubbleBg={userBubbleBg}
+                                        userBubbleText={userBubbleText}
+                                        borderRadius={borderRadius}
+                                        inputBgColor={inputBgColor}
+                                        inputTextColor={inputTextColor}
+                                    />
                                 </div>
-                                <div
-                                    className="p-4 rounded-tr-none text-xs leading-relaxed max-w-[80%] self-end"
-                                    style={{ backgroundColor: userBubbleBg, color: userBubbleText, borderRadius: `${borderRadius}px` }}
-                                >
-                                    What's the return policy?
-                                </div>
-                            </div>
-                        </div>
-                        <div className="p-4 bg-zinc-800/50 border-t border-white/5 flex gap-2">
-                            <div
-                                className="flex-1 rounded-xl border border-white/10 h-12 flex items-center px-4 text-sm"
-                                style={{ backgroundColor: inputBgColor, color: inputTextColor }}
-                            >
-                                Type your message...
-                            </div>
-                            <button
-                                className="w-12 h-12 rounded-xl flex items-center justify-center"
-                                style={{ backgroundColor: color, color: textColor }}
-                            >
-                                <Send size={18} />
-                            </button>
-                        </div>
-                    </div>
 
-                    <div
-                        className="fixed flex flex-col items-center justify-center pointer-events-none"
-                        style={{
-                            bottom: `${bottomPadding + 20}px`,
-                            right: position === 'right' ? `${rightPadding + 20}px` : 'auto',
-                            left: position === 'left' ? `${rightPadding + 20}px` : 'auto',
-                            zIndex: 50
-                        }}
-                    >
+                                <div
+                                    className="absolute flex items-center justify-center pointer-events-auto"
+                                    style={{
+                                        bottom: `${bottomPadding}px`,
+                                        right: position === 'right' ? `${rightPadding}px` : 'auto',
+                                        left: position === 'left' ? `${rightPadding}px` : 'auto',
+                                        zIndex: 40
+                                    }}
+                                >
+                                    <LauncherPreview
+                                        color={color}
+                                        showLauncherBg={showLauncherBg}
+                                        launcherShape={launcherShape}
+                                        botLogo={botLogo}
+                                        logoSize={logoSize}
+                                        showTail={showTail}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
                         <div
-                            className="w-16 h-16 shadow-2xl flex items-center justify-center transition-all duration-300 relative"
+                            className="w-full max-w-[360px] aspect-[9/16] max-h-[70vh] lg:max-h-[650px] bg-zinc-950 border-[10px] border-zinc-900 shadow-[0_32px_64px_-12px_rgba(0,0,0,0.3)] flex flex-col overflow-hidden ring-1 ring-white/10 transition-all duration-500 animate-in fade-in slide-in-from-bottom-8 relative z-20"
+                            style={{ fontFamily: fontFamily, borderRadius: `${borderRadius * 1.5}px` }}
+                        >
+                            <div className="absolute top-0 inset-x-0 h-6 bg-transparent flex justify-center z-50 pointer-events-none">
+                                <div className="w-32 h-6 bg-zinc-900 rounded-b-2xl" />
+                            </div>
+                            <ChatbotWidgetContent
+                                botName={botName}
+                                botLogo={botLogo}
+                                color={color}
+                                textColor={textColor}
+                                headerHeight={headerHeight}
+                                chatBgColor={chatBgColor}
+                                backgroundImage={backgroundImage}
+                                backgroundOpacity={backgroundOpacity}
+                                assistantBubbleBg={assistantBubbleBg}
+                                assistantBubbleText={assistantBubbleText}
+                                userBubbleBg={userBubbleBg}
+                                userBubbleText={userBubbleText}
+                                borderRadius={borderRadius}
+                                inputBgColor={inputBgColor}
+                                inputTextColor={inputTextColor}
+                            />
+                        </div>
+                    )}
+
+                    {previewMode === 'mobile' && (
+                        <div
+                            className="fixed flex flex-col items-center justify-center pointer-events-none transition-all duration-300"
                             style={{
-                                backgroundColor: (showLauncherBg && launcherShape !== 'none') ? color : 'transparent',
-                                borderRadius: launcherShape === 'square' ? '0' :
-                                    launcherShape === 'rounded' ? '12px' :
-                                        launcherShape === 'oval' ? '40px' : '50%',
-                                width: launcherShape === 'oval' ? '80px' : '64px',
-                                boxShadow: (showLauncherBg && launcherShape !== 'none') ? '0 4px 12px rgba(0,0,0,0.15)' : 'none'
+                                bottom: `${bottomPadding}px`,
+                                right: position === 'right' ? `${rightPadding}px` : 'auto',
+                                left: position === 'left' ? `${rightPadding}px` : 'auto',
+                                zIndex: 50
                             }}
                         >
-                            {botLogo ? (
-                                <img src={botLogo} alt="Launcher" style={{ width: `${logoSize}px`, height: `${logoSize}px`, objectFit: 'contain' }} />
-                            ) : (
-                                <MessageSquare size={30} className="text-white" />
-                            )}
-                            {showTail && (
-                                <div
-                                    className="absolute -bottom-2 rotate-[-15deg]"
-                                    style={{
-                                        width: 0, height: 0,
-                                        borderLeft: '10px solid transparent',
-                                        borderRight: '10px solid transparent',
-                                        borderTop: `12px solid ${showLauncherBg ? color : 'transparent'}`,
-                                        right: launcherShape === 'oval' ? '20px' : '10px'
-                                    }}
-                                />
-                            )}
+                            <LauncherPreview
+                                color={color}
+                                showLauncherBg={showLauncherBg}
+                                launcherShape={launcherShape}
+                                botLogo={botLogo}
+                                logoSize={logoSize}
+                                showTail={showTail}
+                            />
+                            <p className="mt-8 text-slate-400 text-[10px] uppercase tracking-[0.3em] font-black drop-shadow-sm">Launcher Position</p>
                         </div>
-                        <p className="mt-8 text-white/20 text-[10px] uppercase tracking-[0.2em]">Launcher Preview</p>
-                    </div>
+                    )}
 
-                    <p className="mt-8 text-white/20 text-xs uppercase tracking-[0.2em]">Real-time Component Preview</p>
+                    <p className="mt-8 text-slate-300 text-xs uppercase tracking-[0.3em] font-black z-10">Real-time Component Preview</p>
                 </div>
             </main>
 
@@ -1468,7 +1580,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                     </motion.div>
                 )}
             </AnimatePresence>
-        </div >
+        </div>
     );
 }
 

@@ -120,9 +120,9 @@ export default function Dashboard() {
     };
 
     return (
-        <div className="flex min-h-screen bg-[#050505] text-white">
+        <div className="flex min-h-screen bg-[#fcfcfd] text-slate-900">
             {/* Mobile Header */}
-            <header className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-black/80 backdrop-blur-xl border-b border-white/5 flex items-center justify-between px-6 z-50">
+            <header className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-white/80 backdrop-blur-xl border-b border-slate-200 flex items-center justify-between px-6 z-50">
                 <div className="flex items-center gap-2 font-bold text-xl tracking-tight">
                     <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center shadow-[0_0_15px_rgba(37,99,235,0.2)]">
                         <Image src="/nimmi-logo.png" alt="Nimmi AI" width={32} height={32} className="object-cover" />
@@ -131,7 +131,7 @@ export default function Dashboard() {
                 </div>
                 <button 
                     onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                    className="p-2 hover:bg-white/5 rounded-lg transition-colors"
+                    className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
                 >
                     <Plus className={`transition-transform duration-300 ${isSidebarOpen ? 'rotate-45' : ''}`} />
                 </button>
@@ -139,7 +139,7 @@ export default function Dashboard() {
 
             {/* Sidebar */}
             <aside className={`
-                fixed inset-y-0 left-0 z-40 w-72 bg-[#0a0a0a] border-r border-white/5 flex flex-col transition-transform duration-300 ease-in-out lg:static lg:translate-x-0
+                fixed inset-y-0 left-0 z-40 w-72 bg-white border-r border-slate-200 flex flex-col transition-transform duration-300 ease-in-out lg:static lg:translate-x-0
                 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
             `}>
                 <div className="p-8 pb-4">
@@ -147,7 +147,7 @@ export default function Dashboard() {
                         <div className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center shadow-[0_0_20px_rgba(37,99,235,0.3)] group-hover:scale-105 transition-transform duration-300">
                             <Image src="/nimmi-logo.png" alt="Nimmi AI" width={40} height={40} className="object-cover" />
                         </div>
-                        <span className="bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">Nimmi AI</span>
+                        <span className="bg-gradient-to-r from-slate-900 to-slate-900/60 bg-clip-text text-transparent">Nimmi AI</span>
                     </div>
                 </div>
 
@@ -168,8 +168,8 @@ export default function Dashboard() {
                                 className={`
                                     flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200
                                     ${isActive 
-                                        ? 'bg-blue-600/10 text-blue-500 shadow-[inset_0_0_10px_rgba(37,99,235,0.05)]' 
-                                        : 'text-white/40 hover:text-white/80 hover:bg-white/[0.03]'}
+                                        ? 'bg-blue-600/10 text-blue-600 shadow-[inset_0_0_10px_rgba(37,99,235,0.05)]' 
+                                        : 'text-slate-400 hover:text-slate-900 hover:bg-slate-50'}
                                 `}
                             >
                                 <item.icon size={20} className={isActive ? 'text-blue-500' : 'opacity-70'} />
@@ -181,7 +181,7 @@ export default function Dashboard() {
                 </nav>
 
                 {/* User Profile Section */}
-                <div className="relative mt-auto p-4 mx-2 mb-2 rounded-2xl bg-white/[0.02] border border-white/5 shadow-2xl overflow-hidden group">
+                <div className="relative mt-auto p-4 mx-2 mb-2 rounded-2xl bg-slate-50 border border-slate-200 shadow-sm overflow-hidden group">
                     <div className="absolute inset-0 bg-blue-600/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                     
                     <button
@@ -192,14 +192,14 @@ export default function Dashboard() {
                             {userName ? userName[0].toUpperCase() : "U"}
                         </div>
                         <div className="flex-1 text-left min-w-0">
-                            <div className="font-bold text-sm truncate text-white/90 group-hover:text-white transition-colors">{userName || "User"}</div>
-                            <div className="text-[10px] text-white/30 truncate group-hover:text-white/50 transition-colors uppercase font-black tracking-widest">{userEmail || "Starter Plan"}</div>
+                            <div className="font-bold text-sm truncate text-slate-900 transition-colors">{userName || "User"}</div>
+                            <div className="text-[10px] text-slate-400 truncate group-hover:text-slate-500 transition-colors uppercase font-black tracking-widest">{userEmail || "Starter Plan"}</div>
                         </div>
                         <div className="flex items-center gap-2">
                             <Link 
                                 href="/dashboard/profile"
                                 onClick={(e) => e.stopPropagation()}
-                                className="p-1.5 hover:bg-white/10 rounded-lg transition-colors text-white/20 hover:text-white/60"
+                                className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-400 hover:text-slate-600"
                                 title="Profile Settings"
                             >
                                 <Settings size={16} />
@@ -215,9 +215,9 @@ export default function Dashboard() {
                                 initial={{ opacity: 0, y: 10, scale: 0.95 }}
                                 animate={{ opacity: 1, y: 0, scale: 1 }}
                                 exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                className="absolute bottom-full left-0 right-0 mb-4 bg-[#111] border border-white/10 rounded-2xl overflow-hidden shadow-2xl z-50"
+                                className="absolute bottom-full left-0 right-0 mb-4 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xl z-50"
                             >
-                                <div className="p-4 bg-white/[0.02] border-b border-white/5">
+                                <div className="p-4 bg-slate-50 border-b border-slate-100">
                                     <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-yellow-500/80">
                                         <Crown size={12} className="text-yellow-500" />
                                         Starter Plan
@@ -225,10 +225,10 @@ export default function Dashboard() {
                                 </div>
                                 <Link
                                     href="/dashboard/profile"
-                                    className="flex items-center gap-3 px-4 py-3.5 text-sm font-medium hover:bg-white/5 transition-colors group/item"
+                                    className="flex items-center gap-3 px-4 py-3.5 text-sm font-medium hover:bg-slate-50 transition-colors group/item"
                                     onClick={() => setShowProfileMenu(false)}
                                 >
-                                    <User size={18} className="text-white/40 group-hover/item:text-blue-400 transition-colors" />
+                                    <User size={18} className="text-slate-400 group-hover/item:text-blue-600 transition-colors" />
                                     Profile Settings
                                 </Link>
                                 <button
@@ -256,8 +256,8 @@ export default function Dashboard() {
             <main className="flex-1 p-6 lg:p-12 mt-16 lg:mt-0">
                 <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
                     <div>
-                        <h2 className="text-3xl lg:text-4xl font-black bg-gradient-to-r from-white to-white/40 bg-clip-text text-transparent italic">Your Bots</h2>
-                        <p className="text-white/40 mt-2 font-medium">Manage and monitor your specialized AI assistants</p>
+                        <h2 className="text-3xl lg:text-4xl font-black bg-gradient-to-r from-slate-900 to-slate-900/40 bg-clip-text text-transparent italic">Your Bots</h2>
+                        <p className="text-slate-500 mt-2 font-medium">Manage and monitor your specialized AI assistants</p>
                     </div>
                     <button
                         onClick={handleCreateBot}
@@ -280,13 +280,13 @@ export default function Dashboard() {
                 <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {loading ? (
                         <div className="col-span-full flex flex-col items-center justify-center py-32 space-y-4">
-                            <div className="w-12 h-12 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin" />
-                            <p className="text-white/40 font-medium animate-pulse">Synchronizing your bots...</p>
+                            <div className="w-12 h-12 border-4 border-blue-600/10 border-t-blue-600 rounded-full animate-spin" />
+                            <p className="text-slate-500 font-medium animate-pulse">Synchronizing your bots...</p>
                         </div>
                     ) : bots.length === 0 ? (
-                        <div className="col-span-full text-center py-32 bg-white/[0.02] rounded-[3rem] border border-dashed border-white/10 mx-4">
+                        <div className="col-span-full text-center py-32 bg-slate-50 rounded-[3rem] border border-dashed border-slate-200 mx-4">
                             <div className="w-20 h-20 bg-white/5 rounded-3xl flex items-center justify-center mx-auto mb-6">
-                                <Plus size={32} className="text-white/20" />
+                                <Plus size={32} className="text-slate-300" />
                             </div>
                             <h3 className="text-2xl font-bold mb-2">No bots found</h3>
                             <p className="text-white/40 mb-8 max-w-xs mx-auto text-sm">Create your first AI assistant to start automating your conversations.</p>
@@ -301,15 +301,15 @@ export default function Dashboard() {
                         <div 
                             key={bot.id} 
                             onClick={() => router.push(`/dashboard/builder/${bot.id}`)}
-                            className="group relative p-8 rounded-[2.5rem] bg-[#0c0c0c] border border-white/5 hover:border-blue-500/30 transition-all duration-500 cursor-pointer overflow-hidden shadow-2xl"
+                            className="group relative p-8 rounded-[2.5rem] bg-white border border-slate-200 hover:border-blue-500/30 transition-all duration-500 cursor-pointer overflow-hidden shadow-sm hover:shadow-xl"
                         >
                             {/* Card Background Glow */}
                             <div className="absolute -inset-2 bg-gradient-to-br from-blue-600/10 to-purple-600/10 opacity-0 group-hover:opacity-100 blur-2xl transition-opacity duration-500" />
                             
                             <div className="relative z-10">
                                 <div className="flex items-center justify-between mb-8">
-                                    <div className="w-14 h-14 bg-gradient-to-br from-white/10 to-white/[0.02] rounded-2xl flex items-center justify-center group-hover:scale-110 group-hover:bg-blue-600/10 transition-all duration-500 border border-white/5 group-hover:border-blue-500/20">
-                                        <Bot size={28} className="text-white/60 group-hover:text-blue-500 transition-colors" />
+                                    <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center group-hover:scale-110 group-hover:bg-blue-600/10 transition-all duration-500 border border-slate-100 group-hover:border-blue-500/20">
+                                        <Bot size={28} className="text-slate-400 group-hover:text-blue-600 transition-colors" />
                                     </div>
                                     <div className="flex flex-col items-end gap-1.5">
                                         <span className="px-3 py-1 bg-green-500/10 text-green-400 text-[10px] font-black uppercase tracking-widest rounded-full border border-green-500/20">
@@ -318,11 +318,11 @@ export default function Dashboard() {
                                     </div>
                                 </div>
                                 
-                                <h3 className="text-2xl font-bold mb-3 group-hover:text-blue-400 transition-colors duration-300 tracking-tight">{bot.name}</h3>
+                                <h3 className="text-2xl font-bold mb-3 group-hover:text-blue-600 transition-colors duration-300 tracking-tight text-slate-900">{bot.name}</h3>
                                 
-                                <div className="flex items-center gap-6 text-xs text-white/30 font-medium">
+                                <div className="flex items-center gap-6 text-xs text-slate-400 font-medium">
                                     <div className="flex items-center gap-2">
-                                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500/40 animate-pulse" />
+                                        <div className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse" />
                                         <span>{bot.conversations || 0} Interactions</span>
                                     </div>
                                     <span>Last used {bot.lastActive || "Recently"}</span>
@@ -332,13 +332,13 @@ export default function Dashboard() {
                                     <Link 
                                         href={`/dashboard/builder/${bot.id}`} 
                                         onClick={(e) => e.stopPropagation()}
-                                        className="flex-1 py-4 bg-white/5 rounded-2xl text-center text-xs font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all duration-300 border border-white/5 hover:border-blue-500/50 shadow-xl"
+                                        className="flex-1 py-4 bg-slate-50 rounded-2xl text-center text-xs font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all duration-300 border border-slate-200 hover:border-blue-500/50 shadow-sm"
                                     >
                                         Edit Interface
                                     </Link>
                                     <button
                                         onClick={(e) => handleDeleteBot(bot.id, bot.name, e)}
-                                        className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl hover:bg-red-500/10 hover:border-red-500/30 transition-all duration-300 text-white/20 hover:text-red-500"
+                                        className="p-4 bg-slate-50 border border-slate-200 rounded-2xl hover:bg-red-50 hover:border-red-500/30 transition-all duration-300 text-slate-400 hover:text-red-600"
                                         title="Delete Bot"
                                     >
                                         <LogOut size={18} />

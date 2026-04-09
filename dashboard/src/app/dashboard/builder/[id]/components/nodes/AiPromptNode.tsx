@@ -3,27 +3,39 @@
 import { Handle, Position } from "reactflow";
 import { Sparkles } from "lucide-react";
 
-export default function AiPromptNode({ data }: { data: any }) {
+interface AiPromptNodeProps {
+    data: {
+        label?: string;
+        prompt?: string;
+    };
+    selected?: boolean;
+}
+
+export default function AiPromptNode({ data, selected }: AiPromptNodeProps) {
     return (
-        <div className="w-64 bg-[#050505] border-2 border-cyan-500/50 rounded-2xl p-4 shadow-2xl relative overflow-hidden group">
-            <div className="absolute inset-0 bg-cyan-500/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-
-            <div className="flex items-center gap-3 mb-3 pb-3 border-b border-white/10 relative">
-                <div className="w-8 h-8 bg-cyan-500/10 rounded-lg flex items-center justify-center">
-                    <Sparkles size={14} className="text-cyan-400" />
-                </div>
-                <span className="text-xs font-bold text-white uppercase tracking-widest">{data.label || "AI Logic Step"}</span>
+        <div
+            className={`w-64 rounded-[24px] bg-white border border-slate-200 overflow-hidden shadow-xl transition-all ${selected ? "ring-4 ring-cyan-500/20 border-cyan-500 scale-105" : ""
+                }`}
+        >
+            <Handle
+                type="target"
+                position={Position.Top}
+                className="!w-4 !h-4 !bg-cyan-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+            />
+            <div className="px-4 py-3 bg-cyan-50 border-b border-cyan-100/50 flex items-center gap-2">
+                <Sparkles size={14} className="text-cyan-600" />
+                <span className="text-[10px] font-black text-cyan-700 uppercase tracking-widest">{data.label || "AI Logic Step"}</span>
             </div>
-
-            <div className="space-y-2 relative">
-                <p className="text-[10px] font-bold text-cyan-400/50 uppercase tracking-widest">System Instruction</p>
-                <div className="bg-black/40 border border-white/10 rounded-xl p-3 text-[10px] text-white/60 line-clamp-3 leading-relaxed">
-                    {data.prompt || "Analyze the last user message and determine if they want to speak to a human representative..."}
+            <div className="p-5">
+                <div className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-xs text-slate-400 font-bold italic line-clamp-3 shadow-inner">
+                    {data.prompt || "No AI instructions set..."}
                 </div>
             </div>
-
-            <Handle type="target" position={Position.Top} className="!bg-cyan-500 !w-3 !h-3 !border-4 !border-[#050505]" />
-            <Handle type="source" position={Position.Bottom} className="!bg-cyan-500 !w-3 !h-3 !border-4 !border-[#050505]" />
+            <Handle
+                type="source"
+                position={Position.Bottom}
+                className="!w-4 !h-4 !bg-cyan-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+            />
         </div>
     );
 }

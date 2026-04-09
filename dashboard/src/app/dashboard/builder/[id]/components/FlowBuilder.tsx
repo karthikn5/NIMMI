@@ -169,7 +169,7 @@ function FlowBuilderInner({
     };
 
     return (
-        <div ref={reactFlowWrapper} className="w-full h-full bg-[#0a0a0a] rounded-2xl overflow-hidden border border-white/10 group relative">
+        <div ref={reactFlowWrapper} className="w-full h-full bg-white rounded-[32px] overflow-hidden border border-slate-200 group relative shadow-inner">
             <ReactFlow
                 nodes={nodes}
                 edges={edges}
@@ -185,18 +185,19 @@ function FlowBuilderInner({
                 connectionMode={ConnectionMode.Loose}
                 fitView
                 fitViewOptions={{ padding: 0.2 }}
-                className="bg-[#0a0a0a]"
+                className="bg-slate-50"
             >
-                <Background color="#ffffff05" gap={20} variant={BackgroundVariant.Lines} />
+                <Background color="#cbd5e1" gap={20} variant={BackgroundVariant.Dots} size={1} />
                 <MiniMap
                     position="bottom-right"
                     style={{
-                        background: '#111',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        borderRadius: '12px',
+                        background: '#ffffff',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '20px',
                         overflow: 'hidden',
                         width: 150,
-                        height: 100
+                        height: 100,
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
                     }}
                     nodeColor={(n) => {
                         if (n.type === 'start') return '#22c55e';
@@ -204,33 +205,33 @@ function FlowBuilderInner({
                         if (n.type === 'condition') return '#a855f7';
                         return '#3b82f6';
                     }}
-                    maskColor="rgba(0, 0, 0, 0.6)"
+                    maskColor="rgba(241, 245, 249, 0.6)"
                 />
                 <Controls
-                    className="!bg-zinc-900 !border-white/10 !rounded-xl overflow-hidden shadow-2xl"
+                    className="!bg-white !border-slate-200 !rounded-2xl overflow-hidden shadow-xl !flex !flex-col !gap-1 !p-1"
                     showInteractive={false}
                 />
                 <Panel position="top-right" className="flex gap-2">
                     <button
                         onClick={() => fitView()}
-                        className="p-2 bg-white/5 border border-white/10 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+                        className="p-2.5 bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-slate-900 hover:bg-slate-50 transition-all shadow-sm active:scale-95"
                         title="Fit View"
                     >
-                        <Maximize2 size={16} />
+                        <Maximize2 size={18} strokeWidth={2.5} />
                     </button>
                     {selectedNode && selectedNode.type !== "start" && (
                         <button
                             onClick={handleDeleteSelected}
-                            className="flex items-center gap-2 px-4 py-2 bg-red-500/20 text-red-400 rounded-lg text-sm font-bold hover:bg-red-500/30 transition-colors"
+                            className="flex items-center gap-2 px-5 py-2.5 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-red-600 hover:text-white transition-all shadow-sm active:scale-95"
                         >
-                            <Trash2 size={16} /> Delete
+                            <Trash2 size={16} strokeWidth={2.5} /> Delete
                         </button>
                     )}
                     <button
                         onClick={handleSave}
-                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 rounded-lg text-sm font-bold hover:bg-blue-500 transition-colors shadow-lg shadow-blue-600/20"
+                        className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-blue-700 transition-all shadow-[0_4px_12px_rgba(37,99,235,0.2)] active:scale-95 border border-blue-500"
                     >
-                        <Save size={16} /> Save Flow
+                        <Save size={16} strokeWidth={2.5} /> Save Flow
                     </button>
                 </Panel>
             </ReactFlow>

@@ -2,13 +2,14 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowRight, MessageSquare, ChevronDown, Check, Star, Mail, User, Send, Sparkles, Palette, Smartphone, ShoppingBag, Globe, Zap, Shield, Users, BarChart2 } from "lucide-react";
+import { ArrowRight, MessageSquare, ChevronDown, Check, Star, Mail, User, Send, Sparkles, Palette, Smartphone, ShoppingBag, Globe, Zap, Shield, Users, BarChart2, Menu, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
 
 export default function LandingPage() {
   const [mounted, setMounted] = useState(false);
   const [activeFaq, setActiveFaq] = useState<number | null>(0);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -27,33 +28,92 @@ export default function LandingPage() {
         }}
       />
       {/* Navigation */}
-      <nav className="fixed top-8 left-1/2 -translate-x-1/2 w-[90%] max-w-6xl z-50">
-        <div className="bg-white/80 backdrop-blur-2xl border border-zinc-200/50 rounded-full px-8 py-2 flex items-center justify-between shadow-xl">
-          <div className="flex items-center gap-2">
-            <Image 
-              src="/nimmi-logo-new.png" 
-              alt="Nimmi AI Logo" 
-              width={250} 
-              height={80} 
-              className="h-14 w-auto object-contain scale-[2.8] origin-left"
-            />
+      <nav className="fixed top-6 md:top-8 left-1/2 -translate-x-1/2 w-[95%] md:w-[90%] max-w-6xl z-50">
+        <div className="bg-white/90 backdrop-blur-2xl border border-zinc-200/50 rounded-full px-4 md:px-8 py-2 md:py-3 flex items-center justify-between shadow-2xl relative overflow-hidden">
+          {/* Logo Section */}
+          <div className="flex items-center gap-2 relative z-10">
+            <Link href="/" className="relative h-10 md:h-12 w-28 md:w-36 flex items-center">
+              <Image 
+                src="/nimmi-logo-new.png" 
+                alt="Nimmi AI Logo" 
+                fill
+                className="object-contain scale-[2.8] origin-left translate-y-[-2px]"
+                priority
+              />
+            </Link>
           </div>
 
-          <div className="hidden md:flex items-center gap-10">
+          {/* Desktop Tabs */}
+          <div className="hidden lg:flex items-center gap-8 xl:gap-10 absolute left-1/2 -translate-x-1/2">
             {["Home", "About", "How it Works", "Services"].map((item) => (
-              <a key={item} href={`#${item.toLowerCase().replace(/\s+/g, '-')}`} className="text-sm font-medium text-zinc-600 hover:text-zinc-950 transition-colors">
+              <a key={item} href={`#${item.toLowerCase().replace(/\s+/g, '-')}`} className="text-sm font-semibold text-zinc-600 hover:text-zinc-950 transition-all hover:scale-105 active:scale-95">
                 {item}
               </a>
             ))}
           </div>
 
-          <div className="flex items-center gap-6">
-            <Link href="/auth/login" className="text-sm font-semibold text-zinc-950">Sign In</Link>
-            <Link href="/auth/login" className="px-6 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20">
-              Sign Up
-            </Link>
+          {/* Action Buttons & Mobile Toggle */}
+          <div className="flex items-center gap-2 md:gap-4 relative z-10">
+            <div className="hidden sm:flex items-center gap-4 mr-2">
+              <Link href="/auth/login" className="text-sm font-bold text-zinc-950 hover:text-blue-600 transition-colors">Sign In</Link>
+              <Link href="/auth/signup" className="px-5 md:px-6 py-2 md:py-2.5 bg-blue-600 text-white rounded-full text-sm font-black hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 hover:scale-105 active:scale-95">
+                Sign Up
+              </Link>
+            </div>
+            
+            {/* Mobile Menu Toggle */}
+            <button 
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              className="p-2.5 bg-zinc-50 rounded-full border border-zinc-200 text-zinc-950 lg:hidden hover:bg-zinc-100 transition-colors"
+              aria-label="Toggle Menu"
+            >
+              {isMobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
+            </button>
           </div>
         </div>
+
+        {/* Mobile Navigation Menu */}
+        <AnimatePresence>
+          {isMobileMenuOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: -20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20, scale: 0.95 }}
+              className="absolute top-full left-0 right-0 mt-4 lg:hidden"
+            >
+              <div className="mx-auto w-[98%] bg-white rounded-[2.5rem] border border-zinc-200/50 shadow-2xl p-6 md:p-8 backdrop-blur-3xl">
+                <div className="flex flex-col gap-4">
+                  {["Home", "About", "How it Works", "Services"].map((item) => (
+                    <a 
+                      key={item} 
+                      href={`#${item.toLowerCase().replace(/\s+/g, '-')}`}
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className="text-2xl font-black text-zinc-950 tracking-tighter italic p-4 hover:bg-blue-50 rounded-2xl transition-all"
+                    >
+                      {item}
+                    </a>
+                  ))}
+                  <div className="grid grid-cols-2 gap-4 mt-4 pt-6 border-t border-zinc-100 sm:hidden">
+                    <Link 
+                      href="/auth/login" 
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className="w-full py-4 text-center text-sm font-black text-zinc-950 bg-zinc-50 rounded-2xl border border-zinc-200"
+                    >
+                      Sign In
+                    </Link>
+                    <Link 
+                      href="/auth/signup" 
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className="w-full py-4 text-center text-sm font-black text-white bg-blue-600 rounded-2xl shadow-lg shadow-blue-500/20"
+                    >
+                      Sign Up
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </nav>
 
       {/* Hero Section */}

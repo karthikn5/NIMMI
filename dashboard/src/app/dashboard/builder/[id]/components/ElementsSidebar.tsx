@@ -55,17 +55,17 @@ const categories = [
     }
 ];
 
-const colorClasses: Record<string, { bg: string; text: string; border: string }> = {
-    green: { bg: "bg-green-500/10", text: "text-green-400", border: "border-green-500/20" },
-    blue: { bg: "bg-blue-500/10", text: "text-blue-400", border: "border-blue-500/20" },
-    purple: { bg: "bg-purple-500/10", text: "text-purple-400", border: "border-purple-500/20" },
-    cyan: { bg: "bg-cyan-500/10", text: "text-cyan-400", border: "border-cyan-500/20" },
-    amber: { bg: "bg-amber-500/10", text: "text-amber-400", border: "border-amber-500/20" },
-    pink: { bg: "bg-pink-500/10", text: "text-pink-400", border: "border-pink-500/20" },
-    red: { bg: "bg-red-500/10", text: "text-red-400", border: "border-red-500/20" },
-    orange: { bg: "bg-orange-500/10", text: "text-orange-400", border: "border-orange-500/20" },
-    white: { bg: "bg-white/10", text: "text-white", border: "border-white/20" },
-    indigo: { bg: "bg-indigo-500/10", text: "text-indigo-400", border: "border-indigo-500/20" },
+const colorClasses: Record<string, { bg: string; text: string; border: string; iconBg: string }> = {
+    green: { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-100", iconBg: "bg-emerald-100" },
+    blue: { bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-100", iconBg: "bg-blue-100" },
+    purple: { bg: "bg-purple-50", text: "text-purple-700", border: "border-purple-100", iconBg: "bg-purple-100" },
+    cyan: { bg: "bg-cyan-50", text: "text-cyan-700", border: "border-cyan-100", iconBg: "bg-cyan-100" },
+    amber: { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-100", iconBg: "bg-amber-100" },
+    pink: { bg: "bg-pink-50", text: "text-pink-700", border: "border-pink-100", iconBg: "bg-pink-100" },
+    red: { bg: "bg-rose-50", text: "text-rose-700", border: "border-rose-100", iconBg: "bg-rose-100" },
+    orange: { bg: "bg-orange-50", text: "text-orange-700", border: "border-orange-100", iconBg: "bg-orange-100" },
+    white: { bg: "bg-slate-50", text: "text-slate-700", border: "border-slate-200", iconBg: "bg-slate-100" },
+    indigo: { bg: "bg-indigo-50", text: "text-indigo-700", border: "border-indigo-100", iconBg: "bg-indigo-100" },
 };
 
 export default function ElementsSidebar() {
@@ -95,35 +95,36 @@ export default function ElementsSidebar() {
         <div className="space-y-6">
             {/* Search Bar */}
             <div className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                     type="text"
                     placeholder="Search elements..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-xs outline-none focus:border-blue-500 transition-colors"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-xs outline-none focus:border-blue-500 transition-colors text-slate-900 placeholder:text-slate-400"
                 />
             </div>
 
             <div className="space-y-4">
                 {/* Start Node Indicator */}
-                <div className="flex items-center gap-3 p-3 rounded-xl bg-green-500/10 border border-green-500/20 opacity-60 grayscale cursor-not-allowed">
-                    <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
-                        <Play size={14} className="text-green-400" fill="currentColor" />
+                {/* Start Node Indicator */}
+                <div className="flex items-center gap-4 p-4 rounded-2xl bg-emerald-50 border border-emerald-100 opacity-60 grayscale cursor-not-allowed shadow-sm">
+                    <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center border border-emerald-200 shadow-inner">
+                        <Play size={16} className="text-emerald-700" fill="currentColor" />
                     </div>
                     <div>
-                        <p className="text-xs font-bold text-green-400">Start Node</p>
-                        <p className="text-[10px] text-green-400/50">Already on canvas</p>
+                        <p className="text-xs font-black text-emerald-800 uppercase tracking-widest">Start Node</p>
+                        <p className="text-[10px] text-emerald-600 font-bold">Already on canvas</p>
                     </div>
                 </div>
 
-                <div className="h-px bg-white/5" />
+                <div className="h-px bg-slate-100" />
 
                 {filteredCategories.map(category => (
                     <div key={category.id} className="space-y-2">
                         <button
                             onClick={() => toggleCategory(category.id)}
-                            className="w-full flex items-center justify-between text-[10px] font-bold text-white/30 uppercase tracking-widest hover:text-white/50 transition-colors group px-1"
+                            className="w-full flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-slate-600 transition-colors group px-1"
                         >
                             <span>{category.label}</span>
                             <motion.div
@@ -150,18 +151,18 @@ export default function ElementsSidebar() {
                                                 key={type}
                                                 draggable
                                                 onDragStart={(e) => onDragStart(e as any, type)}
-                                                whileHover={{ scale: 1.02 }}
+                                                whileHover={{ scale: 1.02, y: -2 }}
                                                 whileTap={{ scale: 0.98 }}
-                                                className={`flex items-center gap-3 p-3 rounded-xl border ${colors.border} ${colors.bg} cursor-grab active:cursor-grabbing group transition-all`}
+                                                className={`flex items-center gap-4 p-3.5 rounded-2xl border ${colors.border} bg-white cursor-grab active:cursor-grabbing group transition-all shadow-[0_2px_8px_rgba(0,0,0,0.02)] hover:shadow-[0_8px_24px_rgba(0,0,0,0.06)] hover:border-blue-200`}
                                             >
-                                                <GripVertical size={14} className="text-white/10 group-hover:text-white/30 transition-colors" />
-                                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${colors.bg} border ${colors.border}`}>
-                                                    <Icon size={14} className={colors.text} />
+                                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${colors.iconBg} border ${colors.border} group-hover:scale-110 transition-transform`}>
+                                                    <Icon size={18} className={colors.text} strokeWidth={2.5} />
                                                 </div>
                                                 <div className="flex-1 min-w-0">
-                                                    <p className={`text-xs font-bold ${colors.text}`}>{label}</p>
-                                                    <p className="text-[10px] text-white/30 truncate">{description}</p>
+                                                    <p className={`text-[12px] font-black uppercase tracking-tight text-slate-800 group-hover:text-blue-600 transition-colors`}>{label}</p>
+                                                    <p className="text-[10px] text-slate-400 font-bold truncate mt-0.5">{description}</p>
                                                 </div>
+                                                <GripVertical size={16} className="text-slate-100 group-hover:text-slate-300 transition-colors" />
                                             </motion.div>
                                         );
                                     })}
@@ -172,11 +173,11 @@ export default function ElementsSidebar() {
                 ))}
             </div>
 
-            <div className="h-px bg-white/5 mt-4" />
+            <div className="h-px bg-slate-100 mt-4" />
 
             <div className="flex items-center gap-2 p-3 bg-blue-600/5 rounded-xl border border-blue-600/10">
                 <MousePointer2 size={12} className="text-blue-400" />
-                <p className="text-[10px] text-white/40 leading-relaxed">
+                <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
                     Drag elements onto the canvas to build your flow.
                 </p>
             </div>

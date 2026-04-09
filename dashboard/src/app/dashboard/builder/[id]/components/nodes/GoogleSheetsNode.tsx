@@ -4,32 +4,35 @@ import { Handle, Position } from "reactflow";
 import { Table } from "lucide-react";
 import { motion } from "framer-motion";
 
-const GoogleSheetsNode = ({ data, selected }: any) => {
+export default function GoogleSheetsNode({ data, selected }: any) {
     return (
-        <motion.div
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className={`px-4 py-3 rounded-2xl bg-zinc-900 border-2 transition-all ${selected ? "border-green-500 shadow-[0_0_20px_rgba(34,197,94,0.2)]" : "border-white/10"
-                } min-w-[180px] shadow-2xl relative overflow-hidden group`}
+        <div
+            className={`w-64 rounded-[24px] bg-white border border-slate-200 overflow-hidden shadow-xl transition-all ${selected ? "ring-4 ring-emerald-500/20 border-emerald-500 scale-105" : ""
+                }`}
         >
-            <div className="absolute top-0 left-0 w-1 h-full bg-green-500" />
-
-            <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-green-500/20 rounded-xl flex items-center justify-center border border-green-500/20 group-hover:scale-110 transition-transform">
-                    <Table size={20} className="text-green-400" />
+            <Handle
+                type="target"
+                position={Position.Top}
+                className="!w-4 !h-4 !bg-emerald-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+            />
+            <div className="px-4 py-3 bg-emerald-50 border-b border-emerald-100/50 flex items-center gap-2">
+                <Table size={14} className="text-emerald-600" />
+                <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">{data.label || "Sheets Export"}</span>
+            </div>
+            <div className="p-5 space-y-3">
+                 <div className="flex items-center gap-2">
+                    <span className="px-2 py-1 bg-emerald-100/50 rounded-lg text-[9px] font-black text-emerald-700 uppercase tracking-tighter">Sheet</span>
+                    <span className="text-xs font-black text-slate-700 uppercase tracking-tighter">{data.sheetName || "Sheet1"}</span>
                 </div>
-                <div>
-                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{data.label || "Sheets Sync"}</p>
-                    <p className="text-xs font-bold text-white/90 truncate max-w-[100px]">
-                        {data.spreadsheetName || "Choose Sheet"}
-                    </p>
+                <div className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-[10px] text-slate-400 font-mono font-bold truncate shadow-inner">
+                    {data.spreadsheetId || "Spreadsheet ID..."}
                 </div>
             </div>
-
-            <Handle type="target" position={Position.Left} className="w-3 h-3 bg-green-500 border-2 border-zinc-900" />
-            <Handle type="source" position={Position.Right} className="w-3 h-3 bg-green-500 border-2 border-zinc-900" />
-        </motion.div>
+            <Handle
+                type="source"
+                position={Position.Bottom}
+                className="!w-4 !h-4 !bg-emerald-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+            />
+        </div>
     );
-};
-
-export default GoogleSheetsNode;
+}

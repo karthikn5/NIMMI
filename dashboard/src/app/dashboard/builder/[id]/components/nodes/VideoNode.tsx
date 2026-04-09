@@ -1,25 +1,50 @@
 "use client";
 
 import { Handle, Position } from "reactflow";
-import { Video } from "lucide-react";
+import { Video as VideoIcon, Play } from "lucide-react";
 
-export default function VideoNode({ data }: { data: any }) {
+interface VideoNodeProps {
+    data: {
+        label: string;
+        url?: string;
+    };
+    selected?: boolean;
+}
+
+export default function VideoNode({ data, selected }: VideoNodeProps) {
     return (
-        <div className="w-64 bg-[#1a1a1a] border-2 border-red-500/50 rounded-2xl p-4 shadow-2xl">
-            <div className="flex items-center gap-3 mb-3 pb-3 border-b border-white/5">
-                <div className="w-8 h-8 bg-red-500/10 rounded-lg flex items-center justify-center">
-                    <Video size={14} className="text-red-400" />
+        <div
+            className={`w-64 rounded-[24px] bg-white border border-slate-200 overflow-hidden shadow-xl transition-all ${selected ? "ring-4 ring-red-500/20 border-red-500 scale-105" : ""
+                }`}
+        >
+            <Handle
+                type="target"
+                position={Position.Top}
+                className="!w-4 !h-4 !bg-red-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+            />
+            <div className="px-4 py-3 bg-red-50 border-b border-red-100/50 flex items-center gap-2">
+                <VideoIcon size={14} className="text-red-600" />
+                <span className="text-[10px] font-black text-red-700 uppercase tracking-widest">{data.label || "Display Video"}</span>
+            </div>
+            <div className="p-3">
+                <div className="aspect-video bg-slate-100 rounded-xl overflow-hidden flex items-center justify-center border border-slate-200 relative group">
+                    {data.url ? (
+                        <div className="w-full h-full bg-slate-900 flex items-center justify-center">
+                             <Play size={24} className="text-white" fill="white" />
+                        </div>
+                    ) : (
+                        <div className="flex flex-col items-center gap-2 text-slate-300">
+                             <VideoIcon size={24} />
+                             <span className="text-[10px] font-black uppercase tracking-tighter">No Video Source</span>
+                        </div>
+                    )}
                 </div>
-                <span className="text-xs font-bold text-white/70 uppercase tracking-widest">{data.label || "Embed Video"}</span>
             </div>
-
-            <div className="aspect-video bg-white/5 rounded-lg border border-white/10 flex flex-col items-center justify-center">
-                <Video size={24} className="text-white/10 mb-2" />
-                <p className="text-[9px] text-white/20 uppercase font-bold tracking-widest">Video URL Ready</p>
-            </div>
-
-            <Handle type="target" position={Position.Top} className="!bg-red-500 !w-3 !h-3 !border-4 !border-[#1a1a1a]" />
-            <Handle type="source" position={Position.Bottom} className="!bg-red-500 !w-3 !h-3 !border-4 !border-[#1a1a1a]" />
+            <Handle
+                type="source"
+                position={Position.Bottom}
+                className="!w-4 !h-4 !bg-red-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+            />
         </div>
     );
 }

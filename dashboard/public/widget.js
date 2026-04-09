@@ -183,6 +183,7 @@
 
                 const msg = `
                 <div id="nimmi-chat-window">
+                    ${background_image ? `<div id="nimmi-chat-bg" style="background-image: url('${background_image}'); opacity: ${background_opacity};"></div>` : ''}
                     <div id="nimmi-chat-header" style="position: relative; z-index: 10;">
                         <div style="display: flex; align-items: center; gap: 12px;">
                             <div id="nimmi-header-logo" style="width: 40px; height: 40px; background: rgba(255,255,255,0.2); border-radius: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0;">
@@ -193,7 +194,6 @@
                         <span id="nimmi-close" style="cursor:pointer; font-size: 24px; opacity: 0.7;">×</span>
                     </div>
                     <div id="nimmi-chat-messages">
-                        ${background_image ? `<div id="nimmi-chat-bg" style="background-image: url('${background_image}'); opacity: ${background_opacity};"></div>` : ''}
                     </div>
                     <div id="nimmi-chat-input-area">
                         <input type="text" id="nimmi-chat-input" placeholder="Type a message...">
@@ -220,7 +220,7 @@
                 const send = document.getElementById('nimmi-chat-send');
                 const messages = document.getElementById('nimmi-chat-messages');
 
-                messages.style.background = chat_bg_color;
+                messages.style.background = background_image ? 'transparent' : chat_bg_color;
                 bubble.style.background = (show_launcher_bg && launcher_shape !== 'none') ? color : 'transparent';
                 bubble.style.boxShadow = (show_launcher_bg && launcher_shape !== 'none') ? '0 4px 12px rgba(0,0,0,0.15)' : 'none';
                 const header = document.getElementById('nimmi-chat-header');

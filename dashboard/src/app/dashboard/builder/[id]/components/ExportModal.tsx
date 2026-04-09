@@ -167,30 +167,30 @@ export default function NimmiChatbot() {
     };
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <div className="bg-zinc-900 border border-white/10 rounded-[32px] w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-                <div className="p-6 border-b border-white/5 flex items-center justify-between bg-zinc-900/50 backdrop-blur-md sticky top-0 z-10">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <div className="bg-white/90 backdrop-blur-2xl border border-white/40 rounded-[32px] w-full max-w-2xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.1)] flex flex-col max-h-[90vh] ring-1 ring-black/5">
+                <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-white/50 backdrop-blur-md sticky top-0 z-10">
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-blue-600/20 rounded-xl flex items-center justify-center border border-blue-500/20">
-                            <Code size={20} className="text-blue-400" />
+                        <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center border border-blue-100 shadow-inner">
+                            <Code size={20} className="text-blue-600" />
                         </div>
                         <div>
-                            <h3 className="text-lg font-bold text-white">Export Chatbot</h3>
-                            <p className="text-xs text-white/40">Deploy your bot to any website or app</p>
+                            <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight">Export Chatbot</h3>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Deploy your bot to any website or app</p>
                         </div>
                     </div>
                     <button
                         onClick={onClose}
-                        className="p-2 hover:bg-white/5 rounded-full transition-colors group"
+                        className="p-2 hover:bg-slate-100 rounded-full transition-colors group"
                     >
-                        <X size={20} className="text-white/40 group-hover:text-white" />
+                        <X size={20} className="text-slate-400 group-hover:text-slate-900" />
                     </button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
                     <div className="space-y-8">
                         {/* Tab Switcher */}
-                        <div className="flex p-1.5 bg-white/5 rounded-2xl gap-1">
+                        <div className="flex p-1.5 bg-slate-50 rounded-2xl gap-1 border border-slate-200/50 shadow-inner">
                             {[
                                 { id: "html", label: "HTML Snippet", icon: Code },
                                 { id: "react", label: "React / TS", icon: Terminal },
@@ -199,12 +199,12 @@ export default function NimmiChatbot() {
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id as any)}
-                                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all ${activeTab === tab.id
-                                        ? "bg-blue-600 text-white shadow-lg shadow-blue-600/20"
-                                        : "text-white/40 hover:text-white/60"
+                                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab.id
+                                        ? "bg-white text-blue-600 shadow-md border border-slate-200"
+                                        : "text-slate-400 hover:text-slate-600 hover:bg-white/50"
                                         }`}
                                 >
-                                    <tab.icon size={14} />
+                                    <tab.icon size={14} strokeWidth={2.5} />
                                     {tab.label}
                                 </button>
                             ))}
@@ -213,12 +213,12 @@ export default function NimmiChatbot() {
                         {/* Code Display */}
                         <div className="space-y-4">
                             <div className="flex items-center justify-between mb-2">
-                                <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                                     {activeTab.toUpperCase()} Integration Code
                                 </p>
                                 <button
                                     onClick={() => handleCopy(activeTab, snippets[activeTab])}
-                                    className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-[10px] font-bold hover:bg-white/10 transition-all text-white/60 hover:text-white"
+                                    className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[10px] font-bold hover:bg-slate-50 transition-all text-slate-600 hover:text-slate-900 shadow-sm"
                                 >
                                     {copied === activeTab ? (
                                         <>
@@ -233,16 +233,16 @@ export default function NimmiChatbot() {
                                     )}
                                 </button>
                             </div>
-                            <div className="bg-black/40 border border-white/5 rounded-2xl p-8 font-mono text-sm group relative overflow-hidden min-h-[300px] flex flex-col justify-center">
+                            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-8 font-mono text-sm group relative overflow-hidden min-h-[300px] flex flex-col justify-center shadow-inner">
                                 {isUnlocked ? (
                                     <motion.div
                                         initial={{ opacity: 0 }}
                                         animate={{ opacity: 1 }}
                                     >
-                                        <pre className="text-blue-400 overflow-x-auto whitespace-pre-wrap leading-relaxed">
+                                        <pre className="text-slate-700 overflow-x-auto whitespace-pre-wrap leading-relaxed selection:bg-blue-100 italic">
                                             {snippets[activeTab]}
                                         </pre>
-                                        <div className="absolute top-0 right-0 w-1/4 h-full bg-gradient-to-l from-zinc-900/0 to-transparent pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity" />
+                                        <div className="absolute top-0 right-0 w-1/4 h-full bg-gradient-to-l from-slate-100/0 to-transparent pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity" />
                                     </motion.div>
                                 ) : (
                                     <AnimatePresence mode="wait">
@@ -255,38 +255,38 @@ export default function NimmiChatbot() {
                                                 className="flex flex-col items-center justify-center space-y-6 text-center"
                                             >
                                                 <div className="relative">
-                                                    <div className="p-5 bg-blue-600/10 rounded-full border border-blue-600/20 relative z-10">
-                                                        <Lock size={32} className="text-blue-400" />
+                                                    <div className="p-5 bg-blue-50 rounded-full border border-blue-100 relative z-10 shadow-inner">
+                                                        <Lock size={32} className="text-blue-600" />
                                                     </div>
                                                     <motion.div
                                                         animate={{ scale: [1, 1.2, 1] }}
                                                         transition={{ duration: 2, repeat: Infinity }}
-                                                        className="absolute inset-0 bg-blue-600/20 rounded-full blur-xl -z-0"
+                                                        className="absolute inset-0 bg-blue-400/10 rounded-full blur-xl -z-0"
                                                     />
                                                 </div>
 
                                                 <div className="space-y-2">
-                                                    <h4 className="text-xl font-bold text-white tracking-tight">Deployment Access Required</h4>
-                                                    <p className="text-xs text-white/40 max-w-[280px] leading-relaxed mx-auto">
+                                                    <h4 className="text-xl font-black text-slate-900 tracking-tight uppercase">Deployment Access Required</h4>
+                                                    <p className="text-[11px] text-slate-500 max-w-[280px] leading-relaxed mx-auto font-medium">
                                                         To export this chatbot to your website, a one-time activation fee is required.
                                                     </p>
                                                 </div>
 
                                                 <div className="flex items-center gap-6 py-2">
                                                     <div className="flex flex-col items-center gap-1">
-                                                        <ShieldCheck size={16} className="text-blue-500/50" />
-                                                        <span className="text-[10px] text-white/20 uppercase font-bold tracking-widest">Secure</span>
+                                                        <ShieldCheck size={16} className="text-blue-600/30" />
+                                                        <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Secure</span>
                                                     </div>
-                                                    <div className="h-8 w-px bg-white/5" />
+                                                    <div className="h-8 w-px bg-slate-200" />
                                                     <div className="flex flex-col items-center gap-1">
-                                                        <Zap size={16} className="text-blue-500/50" />
-                                                        <span className="text-[10px] text-white/20 uppercase font-bold tracking-widest">Instant</span>
+                                                        <Zap size={16} className="text-blue-600/30" />
+                                                        <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Instant</span>
                                                     </div>
                                                 </div>
 
                                                 <button
                                                     onClick={handlePay}
-                                                    className="group relative px-10 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-sm font-bold transition-all shadow-xl shadow-blue-600/20 active:scale-95 overflow-hidden"
+                                                    className="group relative px-10 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-xl shadow-blue-500/20 active:scale-95 overflow-hidden"
                                                 >
                                                     <div className="relative z-10 flex items-center gap-2">
                                                         Pay ₹50 to Unlock License
@@ -302,10 +302,10 @@ export default function NimmiChatbot() {
                                                 exit={{ opacity: 0 }}
                                                 className="flex flex-col items-center justify-center space-y-6 text-center"
                                             >
-                                                <div className="w-16 h-16 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin" />
+                                                <div className="w-16 h-16 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin shadow-inner" />
                                                 <div className="space-y-2">
-                                                    <h4 className="text-lg font-bold text-white">Secure Checkout</h4>
-                                                    <p className="text-xs text-white/40">Redirecting to payment gateway...</p>
+                                                    <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest">Secure Checkout</h4>
+                                                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">Redirecting to payment gateway...</p>
                                                 </div>
                                             </motion.div>
                                         )}
@@ -316,26 +316,26 @@ export default function NimmiChatbot() {
 
                         {/* Instructions */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
-                            <div className="p-5 bg-white/5 rounded-2xl border border-white/5 space-y-3">
-                                <h4 className="text-xs font-bold text-white/60 uppercase tracking-wider">Quick Setup</h4>
+                            <div className="p-5 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 shadow-inner">
+                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Quick Setup</h4>
                                 <ul className="space-y-2">
                                     {[
                                         "Copy the code snippet above",
                                         "Paste it before the closing </body> tag",
                                         "Refresh your website to see the bot"
                                     ].map((step, i) => (
-                                        <li key={i} className="text-[11px] text-white/30 flex gap-2">
-                                            <span className="text-blue-500 font-bold">{i + 1}.</span> {step}
+                                        <li key={i} className="text-[11px] text-slate-500 flex gap-2 font-medium">
+                                            <span className="text-blue-600 font-black">{i + 1}.</span> {step}
                                         </li>
                                     ))}
                                 </ul>
                             </div>
-                            <div className="p-5 bg-blue-600/5 rounded-2xl border border-blue-600/10 space-y-3">
-                                <h4 className="text-xs font-bold text-blue-400/60 uppercase tracking-wider">Need Help?</h4>
-                                <p className="text-[11px] text-white/30 leading-relaxed">
+                            <div className="p-5 bg-blue-50 rounded-2xl border border-blue-100 space-y-3 shadow-inner">
+                                <h4 className="text-[10px] font-black text-blue-600/60 uppercase tracking-wider">Need Help?</h4>
+                                <p className="text-[11px] text-slate-500 leading-relaxed font-medium">
                                     If you are having trouble deploying, check our documentation or reach out to support. Your Bot ID is:
                                 </p>
-                                <code className="block p-2 bg-black/20 rounded-lg text-[10px] text-blue-400 font-mono text-center">
+                                <code className="block p-2 bg-white/50 border border-white rounded-lg text-[10px] text-blue-600 font-mono text-center font-bold">
                                     {botId}
                                 </code>
                             </div>
@@ -343,13 +343,13 @@ export default function NimmiChatbot() {
                     </div>
                 </div>
 
-                <div className="p-6 bg-white/5 border-t border-white/5 flex items-center justify-between">
-                    <p className="text-[10px] text-white/20">
+                <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
                         Generated by Nimmi AI Engine • v1.0.4
                     </p>
                     <button
                         onClick={onClose}
-                        className="px-6 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold transition-all"
+                        className="px-6 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm"
                     >
                         Close
                     </button>
@@ -358,3 +358,4 @@ export default function NimmiChatbot() {
         </div>
     );
 }
+

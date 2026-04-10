@@ -1167,7 +1167,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                 {aiProvider === "google" && (
                                                     <>
                                                         <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-                                                        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                                                        <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
                                                     </>
                                                 )}
                                                 {aiProvider === "openai" && (

@@ -1145,7 +1145,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                 onChange={(e) => {
                                                     const p = e.target.value;
                                                     setAiProvider(p);
-                                                    if (p === "google") setAiModel("gemini-2.0-flash");
+                                                    if (p === "google") setAiModel("gemini-3-flash-preview");
                                                     if (p === "openai") setAiModel("gpt-4o-mini");
                                                     if (p === "groq") setAiModel("llama3-8b-8192");
                                                 }}

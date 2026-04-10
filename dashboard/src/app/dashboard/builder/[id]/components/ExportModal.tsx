@@ -216,22 +216,7 @@ export default function NimmiChatbot() {
                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                                     {activeTab.toUpperCase()} Integration Code
                                 </p>
-                                <button
-                                    onClick={() => handleCopy(activeTab, snippets[activeTab])}
-                                    className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[10px] font-bold hover:bg-slate-50 transition-all text-slate-600 hover:text-slate-900 shadow-sm"
-                                >
-                                    {copied === activeTab ? (
-                                        <>
-                                            <Check size={12} className="text-green-500" />
-                                            Copied!
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Copy size={12} />
-                                            Copy Code
-                                        </>
-                                    )}
-                                </button>
+                                
                             </div>
                             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-8 font-mono text-sm group relative overflow-hidden min-h-[300px] flex flex-col justify-center shadow-inner">
                                 {isUnlocked ? (

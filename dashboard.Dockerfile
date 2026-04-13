@@ -9,7 +9,7 @@ RUN npm install
 # Copy dashboard code
 COPY dashboard/ .
 
-# Build - skip linting and type checks to ensure it finishes
+# Build - Pass variables from Railway into the build
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY
 ARG NEXT_PUBLIC_API_URL

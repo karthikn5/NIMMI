@@ -16,3 +16,5 @@ beautifulsoup4
 youtube-transcript-api
 openai
 groq
+google-auth
+google-api-python-client

@@ -17,6 +17,9 @@ from crawler import extract_text_from_url, extract_youtube_transcript
 import asyncio
 import logging
 import traceback
+from datetime import datetime, timedelta
+import secrets
+from mailer import send_reset_email
 
 load_dotenv()
 
@@ -128,6 +131,13 @@ class SocialLogin(BaseModel):
     email: str
     name: Optional[str] = None
     provider: Optional[str] = "google"
+
+class PasswordResetRequest(BaseModel):
+    email: str
+
+class PasswordResetSubmit(BaseModel):
+    token: str
+    new_password: str
 
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
@@ -286,6 +296,50 @@ async def update_profile(user_id: str, profile_data: ProfileUpdate, db: AsyncSes
     
     await db.commit()
     return {"message": "Profile updated successfully"}
+
+@app.post("/api/auth/forgot-password")
+async def forgot_password(data: PasswordResetRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == data.email))
+    user = result.scalars().first()
+    
+    if not user:
+        # Avoid user enumeration - return success anyway
+        return {"message": "If that email exists, a reset link has been sent."}
+    
+    # Generate token
+    token = secrets.token_urlsafe(32)
+    user.reset_token = token
+    user.reset_token_expires = datetime.utcnow() + timedelta(hours=1)
+    
+    await db.commit()
+    
+    # Send email (async send)
+    sent = await send_reset_email(user.email, token)
+    
+    return {"message": "If that email exists, a reset link has been sent."}
+
+@app.post("/api/auth/reset-password")
+async def reset_password(data: PasswordResetSubmit, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.reset_token == data.token))
+    user = result.scalars().first()
+    
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    
+    # Check expiry
+    if user.reset_token_expires and user.reset_token_expires < datetime.utcnow():
+        user.reset_token = None
+        user.reset_token_expires = None
+        await db.commit()
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    
+    # Update password
+    user.password_hash = hash_password(data.new_password)
+    user.reset_token = None
+    user.reset_token_expires = None
+    
+    await db.commit()
+    return {"message": "Password reset successful"}
 
 @app.post("/api/bots/create")
 async def create_bot(bot_data: BotCreate, db: AsyncSession = Depends(get_db)):

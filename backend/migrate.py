@@ -35,6 +35,19 @@ async def run_migration():
             print("✓ Added 'password_hash' column")
         except Exception as e:
             print(f"Note: password_hash column - {e}")
+
+        # Add reset_token and reset_token_expires columns if they don't exist
+        try:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token VARCHAR"))
+            print("✓ Added 'reset_token' column")
+        except Exception as e:
+            print(f"Note: reset_token column - {e}")
+
+        try:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP WITH TIME ZONE"))
+            print("✓ Added 'reset_token_expires' column")
+        except Exception as e:
+            print(f"Note: reset_token_expires column - {e}")
         
         # Add flow_data column to bots table if it doesn't exist
         try:
@@ -82,6 +95,13 @@ async def run_migration():
             print("✓ Added 'ai_api_key' column")
         except Exception as e:
             print(f"Note: ai_api_key column - {e}")
+
+        # Add export_unlocked column to bots table
+        try:
+            await conn.execute(text("ALTER TABLE bots ADD COLUMN IF NOT EXISTS export_unlocked BOOLEAN DEFAULT FALSE"))
+            print("✓ Added 'export_unlocked' column")
+        except Exception as e:
+            print(f"Note: export_unlocked column - {e}")
     
     await engine.dispose()
     print("\n✅ Migration complete!")

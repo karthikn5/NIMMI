@@ -778,8 +778,8 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                 className="space-y-4"
                             >
                                 {/* Identity & Branding Section */}
-                                <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative overflow-hidden group">
-                                    <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-500/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative group">
+                                    <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-500/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-l-[32px]" />
                                     <div className="flex items-center gap-4 mb-6">
                                         <div className="w-12 h-12 bg-blue-600 rounded-[20px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),8px_8px_20px_rgba(37,99,235,0.25)] text-white">
                                             <Target size={24} strokeWidth={2.5} />
@@ -841,8 +841,8 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                 {/* Appearance Vertical Grid */}
                                 <div className="flex flex-col gap-6">
                                     {/* Visual Theme Card */}
-                                    <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative overflow-hidden group">
-                                        <div className="absolute top-0 left-0 w-1.5 h-full bg-purple-500/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                    <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative group">
+                                        <div className="absolute top-0 left-0 w-1.5 h-full bg-purple-500/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-l-[32px]" />
                                         <div className="flex items-center gap-4 mb-6">
                                             <div className="w-12 h-12 bg-purple-600 rounded-[20px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),8px_8px_20px_rgba(147,51,234,0.25)] text-white">
                                                 <Palette size={24} strokeWidth={2.5} />
@@ -878,8 +878,8 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                     </div>
 
                                     {/* Typography Settings */}
-                                    <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative overflow-hidden group">
-                                        <div className="absolute top-0 left-0 w-1.5 h-full bg-emerald-500/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                    <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative group">
+                                        <div className="absolute top-0 left-0 w-1.5 h-full bg-emerald-500/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-l-[32px]" />
                                         <div className="flex items-center gap-4 mb-6">
                                             <div className="w-12 h-12 bg-emerald-600 rounded-[20px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),8px_8px_20px_rgba(5,150,105,0.25)] text-white">
                                                 <Layers size={24} strokeWidth={2.5} />
@@ -942,8 +942,8 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                 </div>
 
                                 {/* Geometry Studio Section */}
-                                <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative overflow-hidden group">
-                                    <div className="absolute top-0 left-0 w-1.5 h-full bg-orange-500/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative group">
+                                    <div className="absolute top-0 left-0 w-1.5 h-full bg-orange-500/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-l-[32px]" />
                                     <div className="flex items-center justify-between mb-6">
                                         <div className="flex items-center gap-4">
                                             <div className="w-12 h-12 bg-orange-500 rounded-[20px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),8px_8px_20px_rgba(249,115,22,0.25)] text-white">
@@ -1004,8 +1004,8 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
 
 
                                 {/* Interface Skin Card */}
-                                <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative overflow-hidden group">
-                                    <div className="absolute top-0 left-0 w-1.5 h-full bg-emerald-500/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative group">
+                                    <div className="absolute top-0 left-0 w-1.5 h-full bg-emerald-500/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-l-[32px]" />
                                     <div className="flex items-center gap-4 mb-6">
                                         <div className="w-12 h-12 bg-emerald-600 rounded-[20px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),8px_8px_20px_rgba(16,185,129,0.25)] text-white">
                                             <Palette size={24} strokeWidth={2.5} />
@@ -1145,7 +1145,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                 onChange={(e) => {
                                                     const p = e.target.value;
                                                     setAiProvider(p);
-                                                    if (p === "google") setAiModel("gemini-2.0-flash");
+                                                    if (p === "google") setAiModel("gemini-3-flash-preview");
                                                     if (p === "openai") setAiModel("gpt-4o-mini");
                                                     if (p === "groq") setAiModel("llama3-8b-8192");
                                                 }}
@@ -1167,7 +1167,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                 {aiProvider === "google" && (
                                                     <>
                                                         <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-                                                        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                                                        <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
                                                     </>
                                                 )}
                                                 {aiProvider === "openai" && (

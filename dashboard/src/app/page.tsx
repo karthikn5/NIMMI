@@ -1,114 +1,154 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { ArrowRight, MessageSquare, ChevronDown, Check, Star, Mail, User, Send, Sparkles, Palette, Smartphone, ShoppingBag, Globe, Zap, Shield, Users, BarChart2, Menu, X } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { ArrowRight, MessageSquare, Check, Sparkles, Zap, Globe, Menu, X, ChevronRight, Play, Bot, Paintbrush, MousePointerClick, ShoppingCart, Code2, Settings2, Brain, Rocket, ChevronUp } from "lucide-react";
+import { motion, AnimatePresence, useScroll, useSpring, useInView, useMotionValue, useTransform } from "framer-motion";
 import Image from "next/image";
+
+const navLinks = ["Home", "About", "How it Works", "Services"];
+
+const features = [
+  { icon: Brain, title: "Natural Conversations", desc: "AI that understands context, tone, and intent — not just keywords." },
+  { icon: Sparkles, title: "Beautiful Interfaces", desc: "Customizable chat widgets that match your brand perfectly." },
+  { icon: Zap, title: "Lightning Setup", desc: "Go from idea to live chatbot in under 10 minutes." },
+];
+
+const stats = [
+  { value: "99%", label: "CLIENT SATISFACTION" },
+  { value: "50+", label: "AI PROJECTS LIVE" },
+  { value: "10M+", label: "MESSAGES HANDLED" },
+  { value: "<2min", label: "AVG. SETUP TIME" },
+];
+
+const steps = [
+  { num: "01", icon: MessageSquare, title: "Design Your Bot", desc: "Choose a template or start from scratch. Define your bot's personality, tone, and conversation flows with our visual builder." },
+  { num: "02", icon: Brain, title: "Train & Customize", desc: "Upload your knowledge base, FAQs, or documents. Fine-tune responses until your bot sounds exactly like your brand.", highlight: true },
+  { num: "03", icon: Rocket, title: "Deploy Anywhere", desc: "Embed on your website, connect to WhatsApp, Slack, or any platform. Go live with one click." },
+];
+
+const services = [
+  { icon: Bot, title: "AI Integration", desc: "Custom LLM-powered solutions tailored to your business needs and workflows." },
+  { icon: Code2, title: "Premium UI/UX", desc: "Design-first approach creating high-fidelity, interactive chat experiences." },
+  { icon: Globe, title: "Custom Development", desc: "Full-stack development of robust, scalable chatbot applications." },
+  { icon: ShoppingCart, title: "E-commerce Bots", desc: "Specialized shopping assistants that drive conversions and delight customers." },
+  { icon: MousePointerClick, title: "Multi-Platform", desc: "Deploy across web, mobile, WhatsApp, Telegram, and more seamlessly." },
+  { icon: Settings2, title: "Custom Solutions", desc: "Bespoke integrations and architectures tailored to your unique vision." },
+];
+
+const sectionFade = {
+  hidden: { opacity: 0, y: 40 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.6, ease: "easeOut" } },
+};
+
+// Animated counter component for stats
+function AnimatedCounter({ value, duration = 2 }: { value: string; duration?: number }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const isInView = useInView(ref, { once: true, margin: "-50px" });
+  const [displayValue, setDisplayValue] = useState("0");
+
+  useEffect(() => {
+    if (!isInView) return;
+    // Extract numeric part and suffix
+    const match = value.match(/^([<>]?)([\d.]+)(\+?)(.*?)$/);
+    if (!match) { setDisplayValue(value); return; }
+    const [, prefix, numStr, plus, suffix] = match;
+    const target = parseFloat(numStr);
+    const isDecimal = numStr.includes('.');
+    const startTime = Date.now();
+    const animate = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / (duration * 1000), 1);
+      // Ease out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const current = eased * target;
+      setDisplayValue(`${prefix}${isDecimal ? current.toFixed(1) : Math.round(current)}${plus}${suffix}`);
+      if (progress < 1) requestAnimationFrame(animate);
+    };
+    requestAnimationFrame(animate);
+  }, [isInView, value, duration]);
+
+  return <span ref={ref}>{isInView ? displayValue : "0"}</span>;
+}
+
+// Stagger container variants
+const staggerContainer = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.12, delayChildren: 0.1 } },
+};
+
+const staggerItem = {
+  hidden: { opacity: 0, y: 30, scale: 0.95 },
+  visible: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.5, ease: "easeOut" } },
+};
 
 export default function LandingPage() {
   const [mounted, setMounted] = useState(false);
-  const [activeFaq, setActiveFaq] = useState<number | null>(0);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [mobileMenu, setMobileMenu] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const { scrollYProgress } = useScroll();
+  const scaleX = useSpring(scrollYProgress, { stiffness: 100, damping: 30 });
+
+  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
-    setMounted(true);
+    const handleScroll = () => setShowScrollTop(window.scrollY > 400);
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
   if (!mounted) return null;
 
-  return (
-    <div className="min-h-screen bg-white text-zinc-950 font-[family-name:var(--font-geist-sans)] selection:bg-blue-500/30 overflow-x-hidden">
-      {/* Premium Background Pattern Layer */}
-      <div 
-        className="fixed inset-0 pointer-events-none z-[1] opacity-[0.15]" 
-        style={{ 
-          mixBlendMode: 'color-burn',
-          backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%239C92AC' fill-opacity='0.1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2v-4h4v-2h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2v-4h4v-2H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-        }}
-      />
-      {/* Navigation */}
-      <nav className="fixed top-6 md:top-8 left-1/2 -translate-x-1/2 w-[95%] md:w-[90%] max-w-6xl z-50">
-        <div className="bg-white/90 backdrop-blur-2xl border border-zinc-200/50 rounded-full px-4 md:px-8 py-2 md:py-3 flex items-center justify-between shadow-2xl relative overflow-hidden">
-          {/* Logo Section */}
-          <div className="flex items-center gap-2 relative z-10">
-            <Link href="/" className="relative h-10 md:h-12 w-28 md:w-36 flex items-center">
-              <Image 
-                src="/nimmi-logo-new.png" 
-                alt="Nimmi AI Logo" 
-                fill
-                className="object-contain scale-[2.8] origin-left translate-y-[-2px]"
-                priority
-              />
-            </Link>
-          </div>
+  const scrollToTop = () => window.scrollTo({ top: 0, behavior: "smooth" });
 
-          {/* Desktop Tabs */}
-          <div className="hidden lg:flex items-center gap-8 xl:gap-10 absolute left-1/2 -translate-x-1/2">
-            {["Home", "About", "How it Works", "Services"].map((item) => (
-              <a key={item} href={`#${item.toLowerCase().replace(/\s+/g, '-')}`} className="text-sm font-semibold text-zinc-600 hover:text-zinc-950 transition-all hover:scale-105 active:scale-95">
+  return (
+    <div className="min-h-screen bg-[#faf9f7] text-zinc-900 font-[family-name:var(--font-geist-sans)] overflow-x-hidden">
+      {/* ─── SCROLL PROGRESS BAR ─── */}
+      <motion.div style={{ scaleX }} className="fixed top-0 left-0 right-0 h-1 bg-[#9d55ac] origin-left z-[60]" />
+
+      {/* ─── NAVIGATION ─── */}
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-xl border-b border-zinc-100">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+          <Link href="/" className="relative h-10 sm:h-14 w-28 sm:w-36 flex items-center">
+            <Image src="/nimmi-logo-new.png" alt="Nimmi AI" fill className="object-contain object-left scale-[2.5] sm:scale-[3.2] origin-left" priority />
+          </Link>
+
+          <div className="hidden md:flex items-center gap-8">
+            {navLinks.map((item) => (
+              <a key={item} href={`#${item.toLowerCase().replace(/\s+/g, '-')}`}
+                className="text-sm font-medium text-zinc-500 hover:text-zinc-900 transition-colors">
                 {item}
               </a>
             ))}
           </div>
 
-          {/* Action Buttons & Mobile Toggle */}
-          <div className="flex items-center gap-2 md:gap-4 relative z-10">
-            <div className="hidden sm:flex items-center gap-4 mr-2">
-              <Link href="/auth/login" className="text-sm font-bold text-zinc-950 hover:text-blue-600 transition-colors">Sign In</Link>
-              <Link href="/auth/signup" className="px-5 md:px-6 py-2 md:py-2.5 bg-blue-600 text-white rounded-full text-sm font-black hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 hover:scale-105 active:scale-95">
-                Sign Up
-              </Link>
-            </div>
-            
-            {/* Mobile Menu Toggle */}
-            <button 
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="p-2.5 bg-zinc-50 rounded-full border border-zinc-200 text-zinc-950 lg:hidden hover:bg-zinc-100 transition-colors"
-              aria-label="Toggle Menu"
-            >
-              {isMobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
-            </button>
+          <div className="hidden md:flex items-center gap-4">
+            <Link href="/auth/login" className="text-sm font-semibold text-zinc-700 hover:text-zinc-900 transition-colors">Sign In</Link>
+            <Link href="/auth/signup" className="px-5 py-2 bg-[#9d55ac] text-white rounded-lg text-sm font-semibold hover:bg-[#8a4a97] transition-all shadow-md shadow-purple-500/20">
+              Get Started
+            </Link>
           </div>
+
+          <button onClick={() => setMobileMenu(!mobileMenu)} className="md:hidden p-2 text-zinc-700" aria-label="Toggle Menu">
+            {mobileMenu ? <X size={22} /> : <Menu size={22} />}
+          </button>
         </div>
 
-        {/* Mobile Navigation Menu */}
         <AnimatePresence>
-          {isMobileMenuOpen && (
-            <motion.div
-              initial={{ opacity: 0, y: -20, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -20, scale: 0.95 }}
-              className="absolute top-full left-0 right-0 mt-4 lg:hidden"
-            >
-              <div className="mx-auto w-[98%] bg-white rounded-[2.5rem] border border-zinc-200/50 shadow-2xl p-6 md:p-8 backdrop-blur-3xl">
-                <div className="flex flex-col gap-4">
-                  {["Home", "About", "How it Works", "Services"].map((item) => (
-                    <a 
-                      key={item} 
-                      href={`#${item.toLowerCase().replace(/\s+/g, '-')}`}
-                      onClick={() => setIsMobileMenuOpen(false)}
-                      className="text-2xl font-black text-zinc-950 tracking-tighter italic p-4 hover:bg-blue-50 rounded-2xl transition-all"
-                    >
-                      {item}
-                    </a>
-                  ))}
-                  <div className="grid grid-cols-2 gap-4 mt-4 pt-6 border-t border-zinc-100 sm:hidden">
-                    <Link 
-                      href="/auth/login" 
-                      onClick={() => setIsMobileMenuOpen(false)}
-                      className="w-full py-4 text-center text-sm font-black text-zinc-950 bg-zinc-50 rounded-2xl border border-zinc-200"
-                    >
-                      Sign In
-                    </Link>
-                    <Link 
-                      href="/auth/signup" 
-                      onClick={() => setIsMobileMenuOpen(false)}
-                      className="w-full py-4 text-center text-sm font-black text-white bg-blue-600 rounded-2xl shadow-lg shadow-blue-500/20"
-                    >
-                      Sign Up
-                    </Link>
-                  </div>
+          {mobileMenu && (
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+              className="md:hidden bg-white border-t border-zinc-100 overflow-hidden">
+              <div className="p-6 flex flex-col gap-4">
+                {navLinks.map((item) => (
+                  <a key={item} href={`#${item.toLowerCase().replace(/\s+/g, '-')}`}
+                    onClick={() => setMobileMenu(false)}
+                    className="text-lg font-semibold text-zinc-800 py-2">{item}</a>
+                ))}
+                <div className="flex gap-3 mt-4 pt-4 border-t border-zinc-100">
+                  <Link href="/auth/login" onClick={() => setMobileMenu(false)}
+                    className="flex-1 py-3 text-center text-sm font-semibold border border-zinc-200 rounded-lg">Sign In</Link>
+                  <Link href="/auth/signup" onClick={() => setMobileMenu(false)}
+                    className="flex-1 py-3 text-center text-sm font-semibold text-white bg-[#9d55ac] rounded-lg">Get Started</Link>
                 </div>
               </div>
             </motion.div>
@@ -116,404 +156,291 @@ export default function LandingPage() {
         </AnimatePresence>
       </nav>
 
-      {/* Hero Section */}
-      <section id="home" className="relative pt-48 pb-40 px-6 overflow-hidden">
-        {/* Background Asset */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[45%] w-[1400px] h-[900px] opacity-100 pointer-events-none z-0">
-          <Image 
-            src="/hero-blur-v3.png" 
-            alt="Gradient Glow" 
-            fill 
-            className="object-contain"
-            priority
-          />
-        </div>
-        
-        {/* Subliminal Mesh Grid */}
-        <div className="absolute inset-0 z-0 opacity-[0.03] pointer-events-none" 
-          style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '40px 40px' }} 
-        />
-        
-        {/* 3D Star Asset */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[45%] w-[800px] h-[800px] opacity-[0.03] pointer-events-none z-0">
-          <Image 
-            src="/star-3d.png" 
-            alt="3D Star" 
-            fill 
-            className="object-contain"
-          />
-        </div>
+      {/* ─── HERO SECTION ─── */}
+      <section id="home" className="pt-24 sm:pt-32 pb-12 sm:pb-20 px-4 sm:px-6">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-center">
+          <motion.div initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}>
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-purple-50 border border-purple-100 rounded-full mb-8">
+              <Sparkles size={14} className="text-[#9d55ac]" />
+              <span className="text-sm font-medium text-[#9d55ac]">Your AI chatbot, your way</span>
+            </div>
 
-        <div className="max-w-5xl mx-auto text-center relative z-10">
-          <motion.h1 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-6xl md:text-9xl font-black tracking-tighter mb-8 leading-[0.9] text-zinc-950 italic"
-          >
-            Elevate Your <br />
-            Brand with AI.
-          </motion.h1>
-          
-          <motion.p
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.05 }}
-            className="text-zinc-500 text-lg md:text-2xl font-semibold mb-12 max-w-3xl mx-auto leading-relaxed"
-          >
-            Nimmi AI is a premium design & development agency specializing in <br className="hidden md:block" />
-            custom-trained AI solutions, high-end UI/UX, and future-proof digital products.
-          </motion.p>
+            <h1 className="text-3xl sm:text-5xl md:text-6xl lg:text-7xl font-bold leading-[1.1] mb-4 sm:mb-6">
+              Build chatbots<br />
+              <span className="text-[#9d55ac]">that feel human.</span>
+            </h1>
 
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="flex flex-col md:flex-row items-center justify-center gap-6"
-          >
-            <Link href="/auth/login" className="px-12 py-5 bg-blue-600 text-white rounded-2xl font-black text-xl hover:bg-blue-700 transition-all shadow-[0_10px_40px_rgba(37,99,235,0.3)] hover:scale-105 active:scale-95">
-              Start Your Project
-            </Link>
-            <a href="#services" className="px-12 py-5 bg-white border-2 border-zinc-100 text-zinc-950 rounded-2xl font-black text-xl hover:bg-zinc-50 transition-all shadow-xl hover:scale-105 active:scale-95">
-              View Our Work
-            </a>
+            <div className="w-16 h-0.5 bg-zinc-300 mb-6" />
+
+            <p className="text-zinc-500 text-base sm:text-lg leading-relaxed mb-6 sm:mb-8 max-w-lg">
+              Design, train, and deploy beautiful AI chatbots without writing a single line of code. Make every conversation meaningful.
+            </p>
+
+            <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4 mb-6">
+              <Link href="/auth/signup"
+                className="inline-flex items-center justify-center gap-2 px-5 sm:px-7 py-3 bg-[#9d55ac] text-white rounded-lg font-semibold hover:bg-[#8a4a97] transition-all shadow-lg shadow-[#9d55ac]/25 text-sm sm:text-base">
+                Start Building Free <ArrowRight size={18} />
+              </Link>
+              <button className="inline-flex items-center justify-center gap-2 px-5 sm:px-7 py-3 bg-white border border-zinc-200 rounded-lg font-semibold text-zinc-700 hover:bg-zinc-50 transition-all shadow-sm text-sm sm:text-base">
+                <Play size={16} /> Watch Demo
+              </button>
+            </div>
+
+            <div className="flex items-center gap-6 text-sm text-zinc-500">
+              <span className="flex items-center gap-1.5"><Check size={16} className="text-[#9d55ac]" /> No credit card</span>
+              <span className="flex items-center gap-1.5"><Check size={16} className="text-[#9d55ac]" /> Free forever plan</span>
+            </div>
+          </motion.div>
+
+          <motion.div initial={{ opacity: 0, scale: 0.85, rotate: -2 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} transition={{ duration: 0.8, delay: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            className="relative flex items-center justify-center">
+            {/* Floating badges */}
+            <motion.div animate={{ y: [0, -8, 0] }} transition={{ duration: 3, repeat: Infinity }}
+              className="absolute top-4 right-4 md:right-8 z-20 flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-lg border border-zinc-100">
+              <Bot size={16} className="text-[#9d55ac]" />
+              <span className="text-xs font-semibold text-zinc-700">AI Powered</span>
+            </motion.div>
+
+            <motion.div animate={{ y: [0, 6, 0] }} transition={{ duration: 3.5, repeat: Infinity }}
+              className="absolute bottom-12 left-4 md:left-8 z-20 flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-lg border border-zinc-100">
+              <span className="text-[#9d55ac] font-bold text-sm">+</span>
+              <span className="text-xs font-semibold text-zinc-700">Instant Setup</span>
+            </motion.div>
+
+            {/* Decorative dots */}
+            <div className="absolute top-1/4 left-0 w-2 h-2 rounded-full bg-purple-300 opacity-60" />
+            <div className="absolute bottom-1/3 right-0 w-3 h-3 rounded-full bg-purple-200 opacity-50" />
+            <div className="absolute top-10 left-1/4 w-1.5 h-1.5 rounded-full bg-orange-300 opacity-60" />
+
+            <div className="relative w-[240px] h-[240px] sm:w-[320px] sm:h-[320px] md:w-[420px] md:h-[420px]">
+              <Image src="/robot-mascot.png" alt="AI Chatbot Mascot" fill className="object-contain drop-shadow-2xl" priority />
+            </div>
           </motion.div>
         </div>
       </section>
-      {/* About Section */}
-      <section id="about" className="py-24 px-6 relative z-10 border-t border-zinc-100 overflow-hidden">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center gap-20">
-          <div className="flex-1 space-y-10">
-            <h2 className="text-5xl md:text-8xl font-black text-zinc-950 tracking-tighter italic leading-[0.9]">
-              Elite AI <br /> Engineering.
+
+      {/* ─── WHY CHOOSE NIMMI AI ─── */}
+      <section id="about" className="py-16 sm:py-24 px-4 sm:px-6 bg-white">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-16 items-start">
+          <motion.div variants={sectionFade} initial="hidden" whileInView="visible" viewport={{ once: true }}>
+            <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold leading-tight mb-4">
+              Why teams choose<br /><span className="text-[#9d55ac]">Nimmi AI</span>
             </h2>
-            <p className="text-zinc-500 text-xl font-semibold leading-relaxed max-w-xl">
-              At Nimmi AI, we don't just build software. We engineer intelligent experiences that define the next generation of brand-customer interaction. Our team combines high-end aesthetics with cutting-edge machine learning.
+            <p className="text-zinc-500 leading-relaxed mb-10 max-w-md">
+              We don&apos;t just build chatbots. We craft intelligent, empathetic conversational experiences that your customers genuinely enjoy using.
             </p>
-            <div className="flex items-center gap-10">
-              <div>
-                <p className="text-4xl font-black text-blue-600 tracking-tighter italic">99%</p>
-                <p className="text-xs font-black uppercase tracking-widest text-zinc-400 mt-1">Client Satisfaction</p>
-              </div>
-              <div>
-                <p className="text-4xl font-black text-purple-600 tracking-tighter italic">50+</p>
-                <p className="text-xs font-black uppercase tracking-widest text-zinc-400 mt-1">AI Projects Live</p>
-              </div>
-            </div>
-          </div>
-          <div className="flex-1 relative">
-            <div className="aspect-square rounded-[4rem] bg-zinc-100 border border-zinc-200/50 relative overflow-hidden group shadow-2xl">
-              <Image 
-                src="/about-realistic.png" 
-                alt="AI Engineering Workspace" 
-                fill 
-                className="object-cover group-hover:scale-105 transition-transform duration-1000" 
-              />
-              <div className="absolute inset-0 bg-blue-600/10 opacity-0 group-hover:opacity-100 transition-opacity" />
-              {/* Floating Logo Overlay */}
-              <div className="absolute bottom-10 right-10 w-24 h-24 bg-white/40 backdrop-blur-xl rounded-2xl border border-white/40 flex items-center justify-center p-4 shadow-xl translate-y-4 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500">
-                 <Image src="/nimmi-logo-3d.png" alt="Nimmi AI" width={80} height={80} className="object-contain" />
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
 
-      {/* How it Works Section */}
-      <section id="how-it-works" className="py-24 px-6 relative z-10 bg-zinc-950 text-white overflow-hidden">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-24">
-            <h2 className="text-5xl md:text-8xl font-black tracking-tighter italic mb-6">How We Build.</h2>
-            <p className="text-zinc-400 text-xl font-medium max-w-2xl mx-auto">Our streamlined process ensures your vision is executed with surgical precision and artistic flair.</p>
-          </div>
-          
-          <div className="grid md:grid-cols-3 gap-12 relative z-10">
-            {[
-              { step: "01", title: "Strategy Audit", desc: "We deep-dive into your business goals and AI opportunities." },
-              { step: "02", title: "Custom Engineering", desc: "Bespoke development with continuous synchronization." },
-              { step: "03", title: "Scale & Optimize", desc: "Launch and iterative improvements for maximum impact." },
-            ].map((s, i) => (
-              <div key={i} className="group relative">
-                <div className="text-[10rem] font-black text-white/5 absolute -top-20 -left-6 leading-none select-none tracking-tighter">{s.step}</div>
-                <div className="relative z-10 space-y-6">
-                  <div className="w-16 h-2 bg-blue-600 group-hover:w-32 transition-all duration-500" />
-                  <h3 className="text-3xl font-black italic tracking-tighter">{s.title}</h3>
-                  <p className="text-zinc-400 font-medium leading-relaxed">{s.desc}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        
-        {/* Decorative Grid for Dark Mode */}
-        <div className="absolute inset-0 opacity-[0.05] pointer-events-none" 
-          style={{ backgroundImage: 'radial-gradient(#fff 1px, transparent 1px)', backgroundSize: '60px 60px' }} 
-        />
-        <div className="absolute -bottom-1/2 -right-1/4 w-[1000px] h-[1000px] bg-blue-600/10 blur-[200px] rounded-full" />
-      </section>
-
-      {/* Services Section */}
-      <section id="services" className="py-24 px-6 relative z-10 bg-slate-50/50 backdrop-blur-3xl border-t border-zinc-100">
-        <div className="max-w-7xl mx-auto">
-          <h2 className="text-5xl md:text-7xl font-black mb-20 text-zinc-950 tracking-tighter italic">Our Services</h2>
-          <div className="grid md:grid-cols-4 gap-6 mb-6">
-            {[
-              { title: "AI Integration", iconPath: "/icons/ai-realistic.png", desc: "We build custom LLM-powered solutions tailored to your business needs and workflows." },
-              { title: "Premium UI/UX", iconPath: "/icons/design-realistic.png", desc: "Design-first approach creating high-fidelity, interactive experiences that wow your users." },
-              { title: "Custom Software", iconPath: "/icons/software-realistic.png", desc: "Full-stack development of robust, scalable applications using modern tech stacks." },
-              { title: "E-comm Mastery", iconPath: "/icons/ecomm-3d.png", desc: "Specialized e-commerce solutions that drive conversions and enhance brand loyalty." },
-            ].map((service, i) => (
-              <div key={i} className="p-10 rounded-[3rem] bg-white border border-zinc-200/50 hover:border-blue-500/30 transition-all group overflow-hidden relative shadow-sm hover:shadow-2xl hover:-translate-y-2 duration-500">
-                <div className={`w-28 h-28 rounded-2xl bg-zinc-50/50 flex items-center justify-center mb-10 group-hover:bg-blue-50 transition-all duration-500 relative overflow-hidden`}>
-                  <Image 
-                    src={service.iconPath} 
-                    alt={service.title} 
-                    fill 
-                    className="object-contain p-2 group-hover:scale-110 transition-transform duration-500" 
-                  />
-                </div>
-                <h3 className="text-2xl font-black mb-4 text-zinc-950 tracking-tight">{service.title}</h3>
-                <p className="text-zinc-500 text-sm leading-relaxed font-semibold">
-                  {service.desc}
-                </p>
-                <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 blur-[80px] rounded-full translate-x-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-            ))}
-          </div>
-          <div className="grid md:grid-cols-2 gap-6">
-            <div className="p-10 rounded-[3rem] bg-white border border-zinc-200/50 hover:border-blue-500/30 transition-all group overflow-hidden relative shadow-sm hover:shadow-2xl flex items-center gap-10 duration-500">
-                <div className="w-40 h-40 rounded-3xl bg-zinc-50 flex items-center justify-center shrink-0 relative overflow-hidden group-hover:bg-blue-50 transition-colors duration-500 shadow-inner">
-                   <Image 
-                    src="/icons/webflow-3d.png" 
-                    alt="Webflow Mastery" 
-                    fill 
-                    className="object-contain p-6 group-hover:scale-110 transition-transform duration-500" 
-                  />
-                </div>
-                <div className="relative z-10 flex-1">
-                  <h3 className="text-3xl font-black mb-3 text-zinc-950 tracking-tighter italic">Webflow Mastery</h3>
-                  <p className="text-zinc-500 text-sm leading-relaxed font-semibold">
-                    We specialize in Webflow development, delivering ultra-fast, pixel-perfect, and responsive digital experiences.
-                  </p>
-                </div>
-                <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-blue-500/5 blur-[60px] rounded-full group-hover:bg-blue-500/10 transition-all" />
-            </div>
-            <div className="p-10 rounded-[3rem] bg-white border border-zinc-200/50 hover:border-blue-500/30 transition-all group overflow-hidden relative shadow-sm hover:shadow-2xl flex items-center gap-10 duration-500">
-                <div className="w-40 h-40 rounded-3xl bg-zinc-50 flex items-center justify-center shrink-0 relative overflow-hidden group-hover:bg-blue-50 transition-colors duration-500 shadow-inner">
-                   <Image 
-                    src="/icons/software-3d.png" 
-                    alt="Custom Development" 
-                    fill 
-                    className="object-contain p-4 group-hover:scale-110 transition-transform duration-500" 
-                  />
-                </div>
-                <div className="relative z-10 flex-1">
-                  <h3 className="text-3xl font-black mb-3 text-zinc-950 tracking-tighter italic">Custom Solutions</h3>
-                  <p className="text-zinc-500 text-sm leading-relaxed font-semibold">
-                    Building complex integrations, bespoke features, and scalable backend architectures tailored to your vision.
-                  </p>
-                </div>
-                <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-blue-500/5 blur-[60px] rounded-full group-hover:bg-blue-500/10 transition-all" />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Portfolio Section */}
-      <section id="portfolio" className="py-24 px-6 relative border-t border-zinc-100">
-        <div className="max-w-7xl mx-auto text-center">
-          <h2 className="text-4xl md:text-5xl font-black mb-4 text-zinc-950">Check our Work</h2>
-          <p className="text-zinc-500 mb-16 font-medium">Explore our latest projects and see how we help our clients grow.</p>
-          
-          <div className="grid md:grid-cols-3 gap-10">
-            {[
-              { name: "Nimmi AI Dashboard", category: "AI & Platform", img: "/portfolio/ai-dashboard.png" },
-              { name: "SaaS Analytics Pro", category: "Data Vis", img: "/portfolio/saas-analytics.png" },
-              { name: "E-commerce Redesign", category: "UI/UX", img: "/portfolio/ecommerce-app.png" },
-            ].map((item, i) => (
-              <div key={i} className="rounded-[50px] overflow-hidden group relative aspect-[4/5] bg-white border border-zinc-200/50 shadow-sm hover:shadow-[0_20px_60px_rgba(37,99,235,0.15)] transition-all duration-700">
-                <div className="absolute inset-0 bg-gradient-to-t from-zinc-950/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity z-10" />
-                <div className="absolute bottom-0 left-0 right-0 p-12 translate-y-8 group-hover:translate-y-0 transition-all duration-500 z-20">
-                   <div className="text-white text-left">
-                     <p className="font-black text-4xl mb-3 tracking-tighter italic">{item.name}</p>
-                     <p className="text-[10px] text-white/60 uppercase tracking-[0.3em] font-black">{item.category}</p>
-                   </div>
-                </div>
-                
-                {/* Visual Representation - Now with Actual Images */}
-                <div className="w-full h-full relative overflow-hidden transition-transform duration-1000 group-hover:scale-110">
-                   <Image 
-                    src={item.img} 
-                    alt={item.name} 
-                    fill 
-                    className="object-cover" 
-                  />
-                  {/* Glass Overlay on Hover */}
-                  <div className="absolute inset-0 bg-white/5 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-opacity" />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Pricing Section */}
-      <section id="pricing" className="py-24 px-6 border-t border-zinc-100">
-        <div className="max-w-6xl mx-auto flex flex-col md:flex-row gap-8 items-stretch">
-          <div className="flex-1 p-12 rounded-[40px] bg-zinc-950 border border-zinc-800 shadow-2xl flex flex-col justify-between relative overflow-hidden group">
-            <div className="relative z-10">
-              <h2 className="text-4xl font-black mb-8 text-white tracking-tighter italic">Enterprise</h2>
-              <p className="text-zinc-400 font-bold text-3xl mb-12 leading-tight">Custom AI <br /> Development</p>
-              <p className="text-zinc-500 text-sm font-medium mb-12">Tailored solutions for large-scale deployments and complex integrations.</p>
-            </div>
-            <Link href="/auth/login" className="relative z-10 px-8 py-4 bg-white text-zinc-950 rounded-xl font-black hover:bg-zinc-100 transition-all self-start shadow-xl active:scale-95">
-              Contact Sales
-            </Link>
-            <div className="absolute top-0 right-0 w-64 h-64 bg-blue-600/10 blur-[100px] rounded-full" />
-          </div>
-          <div className="flex-[1.5] p-12 rounded-[40px] bg-white border border-zinc-200/50 shadow-2xl relative overflow-hidden">
-             <div className="relative z-10">
-                <div className="flex justify-between items-start mb-10">
+            <motion.div className="space-y-4" variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }}>
+              {features.map((f, i) => (
+                <motion.div key={i} variants={staggerItem}
+                  whileHover={{ x: 8, transition: { duration: 0.2 } }}
+                  className="flex items-start gap-4 p-5 bg-[#faf9f7] rounded-2xl border border-zinc-100 hover:border-purple-200 hover:shadow-md transition-all cursor-default">
+                  <motion.div
+                    whileInView={{ rotate: [0, -10, 10, 0] }}
+                    transition={{ duration: 0.6, delay: i * 0.15 }}
+                    viewport={{ once: true }}
+                    className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center shrink-0">
+                    <f.icon size={20} className="text-[#9d55ac]" />
+                  </motion.div>
                   <div>
-                    <h3 className="text-3xl font-black text-zinc-950 tracking-tighter italic">Scale Plan</h3>
-                    <p className="text-zinc-500 text-sm font-bold mt-1">Best for growing startups</p>
+                    <h3 className="font-semibold text-zinc-900 mb-1">{f.title}</h3>
+                    <p className="text-sm text-zinc-500 leading-relaxed">{f.desc}</p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-6xl font-black text-zinc-950 tracking-tighter">$4,950<span className="text-lg text-zinc-400 font-bold tracking-tight">/mo</span></p>
-                  </div>
+                </motion.div>
+              ))}
+            </motion.div>
+          </motion.div>
+
+          {/* Chat Mockup */}
+          <motion.div initial={{ opacity: 0, y: 40, scale: 0.95 }} whileInView={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }} viewport={{ once: true }}
+            className="bg-white rounded-3xl shadow-xl border border-zinc-100 overflow-hidden">
+            <div className="flex items-center gap-2 px-5 py-3 border-b border-zinc-100">
+              <div className="w-3 h-3 rounded-full bg-red-400" />
+              <div className="w-3 h-3 rounded-full bg-yellow-400" />
+              <div className="w-3 h-3 rounded-full bg-green-400" />
+            </div>
+            <div className="p-6 space-y-4">
+              {/* Bot message */}
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-full bg-purple-100 shrink-0" />
+                <div className="bg-zinc-100 rounded-2xl rounded-tl-md px-4 py-3 max-w-[80%]">
+                  <p className="text-sm text-zinc-700">Hi! How can I help you today? 😊</p>
                 </div>
-                <div className="space-y-6 mb-12 grid grid-cols-2 gap-x-12">
-                   {[
-                     { name: "Custom LLM Training", icon: Zap },
-                     { name: "Priority Support", icon: Shield },
-                     { name: "Dedicated Designer", icon: Palette },
-                     { name: "Advanced Analytics", icon: BarChart2 },
-                     { name: "Unlimited Requests", icon: Users },
-                     { name: "Weekly Sync Calls", icon: Globe }
-                   ].map((feature) => (
-                     <div key={feature.name} className="flex items-center gap-3">
-                       <Check size={18} className="text-blue-500 shrink-0" />
-                       <span className="text-sm font-bold text-zinc-600">{feature.name}</span>
-                     </div>
-                   ))}
+              </div>
+              {/* User message */}
+              <div className="flex justify-end">
+                <div className="bg-[#9d55ac] rounded-2xl rounded-tr-md px-4 py-3 max-w-[80%]">
+                  <p className="text-sm text-white">I want to set up a chatbot for my store</p>
                 </div>
-                <Link href="/auth/login" className="block w-full py-6 bg-blue-600 text-white text-center rounded-2xl font-black text-xl hover:bg-blue-700 transition-all shadow-[0_10px_30px_rgba(37,99,235,0.2)] active:scale-[0.99]">
-                  Get Started Now
-                </Link>
-             </div>
-             <div className="absolute bottom-0 right-0 w-[500px] h-[500px] bg-blue-500/5 blur-[150px] rounded-full" />
-          </div>
+              </div>
+              {/* Bot response */}
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-full bg-purple-100 shrink-0" />
+                <div className="bg-zinc-100 rounded-2xl rounded-tl-md px-4 py-3 max-w-[80%]">
+                  <p className="text-sm text-zinc-700">Great choice! I can help with that. Let me walk you through — it only takes a few minutes ✨</p>
+                </div>
+              </div>
+              {/* Typing indicator */}
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-full bg-purple-100 shrink-0" />
+                <div className="flex gap-1 items-center px-4 py-3">
+                  <div className="w-2 h-2 rounded-full bg-zinc-300 animate-bounce" style={{ animationDelay: "0ms" }} />
+                  <div className="w-2 h-2 rounded-full bg-zinc-300 animate-bounce" style={{ animationDelay: "150ms" }} />
+                  <div className="w-2 h-2 rounded-full bg-zinc-300 animate-bounce" style={{ animationDelay: "300ms" }} />
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+
+        {/* Stats Bar */}
+        <motion.div className="max-w-7xl mx-auto mt-12 sm:mt-20 grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4"
+          variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }}>
+          {stats.map((s, i) => (
+            <motion.div key={i} variants={staggerItem}
+              whileHover={{ y: -6, boxShadow: "0 20px 40px -12px rgba(157,85,172,0.15)", transition: { duration: 0.3 } }}
+              className="text-center py-6 sm:py-8 px-3 sm:px-4 bg-[#faf9f7] rounded-2xl border border-zinc-100 hover:border-purple-200 transition-colors cursor-default">
+              <p className="text-2xl sm:text-3xl md:text-4xl font-bold text-zinc-900">
+                <AnimatedCounter value={s.value} duration={2} />
+              </p>
+              <motion.p initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} transition={{ delay: 0.8 + i * 0.1 }} viewport={{ once: true }}
+                className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-zinc-400 mt-1 sm:mt-2">{s.label}</motion.p>
+            </motion.div>
+          ))}
+        </motion.div>
+      </section>
+
+      {/* ─── HOW IT WORKS ─── */}
+      <section id="how-it-works" className="py-16 sm:py-24 px-4 sm:px-6 bg-[#faf9f7]">
+        <div className="max-w-7xl mx-auto">
+          <motion.div variants={sectionFade} initial="hidden" whileInView="visible" viewport={{ once: true }} className="text-center mb-16">
+            <span className="inline-block px-4 py-1.5 bg-purple-50 border border-purple-100 rounded-full text-sm font-medium text-[#9d55ac] mb-4">
+              Simple Process
+            </span>
+            <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-4">How it works</h2>
+            <p className="text-zinc-500 max-w-xl mx-auto">Three simple steps to your perfect AI chatbot. No coding, no complexity.</p>
+          </motion.div>
+
+          <motion.div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 relative"
+            variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }}>
+            {/* Dashed connector line */}
+            <motion.div initial={{ scaleX: 0 }} whileInView={{ scaleX: 1 }} transition={{ duration: 1, delay: 0.5 }} viewport={{ once: true }}
+              className="hidden md:block absolute top-1/2 left-[33%] right-[33%] h-px border-t-2 border-dashed border-zinc-200 -translate-y-1/2 z-0 origin-left" />
+
+            {steps.map((s, i) => (
+              <motion.div key={i} variants={staggerItem}
+                whileHover={{ y: -8, transition: { duration: 0.3 } }}
+                className={`relative z-10 p-6 sm:p-8 rounded-3xl border transition-all hover:shadow-lg ${
+                  s.highlight ? "bg-purple-50 border-purple-200 shadow-md" : "bg-white border-zinc-100 hover:border-purple-100"
+                }`}>
+                <motion.div initial={{ opacity: 0, scale: 0.5 }} whileInView={{ opacity: 1, scale: 1 }} transition={{ delay: 0.3 + i * 0.15, type: "spring" }} viewport={{ once: true }}
+                  className="absolute top-6 right-8 text-6xl font-bold text-zinc-100 select-none">{s.num}</motion.div>
+                <motion.div whileInView={{ rotate: [0, -15, 15, 0] }} transition={{ duration: 0.5, delay: i * 0.2 }} viewport={{ once: true }}
+                  className="w-12 h-12 rounded-2xl bg-purple-100 flex items-center justify-center mb-6">
+                  <s.icon size={22} className="text-[#9d55ac]" />
+                </motion.div>
+                <h3 className="text-xl font-bold mb-3">{s.title}</h3>
+                <p className="text-sm text-zinc-500 leading-relaxed">{s.desc}</p>
+              </motion.div>
+            ))}
+          </motion.div>
         </div>
       </section>
 
-      {/* FAQ Section */}
-      <section id="faq" className="py-24 px-6 relative overflow-hidden border-t border-zinc-100">
-        <div className="absolute top-1/2 left-0 w-[500px] h-[500px] bg-blue-600/5 blur-[120px] rounded-full -translate-x-1/2" />
-        
-        <div className="max-w-6xl mx-auto flex flex-col md:flex-row gap-20">
-          <div className="flex-1">
-            <h2 className="text-5xl font-black mb-12 leading-tight text-zinc-950">Frequently <br /> Asked <br /> Questions</h2>
-            <div className="w-48 h-48 relative opacity-10">
-               <div className="absolute inset-0 border border-zinc-300 rounded-full animate-[spin_20s_linear_infinite]" />
-               <div className="absolute inset-4 border border-zinc-400 rounded-full animate-[spin_25s_linear_infinite_reverse]" />
-            </div>
+      {/* ─── OUR SERVICES ─── */}
+      <section id="services" className="py-16 sm:py-24 px-4 sm:px-6 bg-white relative overflow-hidden">
+        <div className="max-w-7xl mx-auto">
+          <motion.div variants={sectionFade} initial="hidden" whileInView="visible" viewport={{ once: true }} className="text-center mb-10 sm:mb-16 relative">
+            {/* Mascot next to heading */}
+            <motion.div
+              animate={{ y: [0, -8, 0] }}
+              transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+              className="hidden sm:block absolute left-2 sm:left-[calc(50%-320px)] md:left-[calc(50%-350px)] top-1/2 -translate-y-1/2 w-[80px] h-[80px] sm:w-[120px] sm:h-[120px] md:w-[150px] md:h-[150px] z-10"
+            >
+              <Image src="/robot-mascot-2.png" alt="Nimmi AI Mascot" fill className="object-contain drop-shadow-lg" />
+            </motion.div>
+
+            <span className="inline-block px-4 py-1.5 bg-purple-50 border border-purple-100 rounded-full text-sm font-medium text-[#9d55ac] mb-4">
+              What We Offer
+            </span>
+            <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-4">Our Services</h2>
+            <p className="text-zinc-500 max-w-xl mx-auto">Everything you need to build, launch, and scale your conversational AI.</p>
+          </motion.div>
+
+          <motion.div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6"
+            variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }}>
+            {services.map((s, i) => (
+              <motion.div key={i} variants={staggerItem}
+                whileHover={{ y: -8, scale: 1.02, transition: { duration: 0.3 } }}
+                className="p-6 sm:p-8 bg-[#faf9f7] rounded-3xl border border-zinc-100 hover:border-purple-200 hover:shadow-lg transition-all group cursor-default">
+                <motion.div whileInView={{ scale: [0.5, 1.15, 1] }} transition={{ duration: 0.5, delay: i * 0.08 }} viewport={{ once: true }}
+                  className="w-12 h-12 rounded-2xl bg-purple-100 flex items-center justify-center mb-6 group-hover:bg-purple-200 transition-colors">
+                  <s.icon size={22} className="text-[#9d55ac]" />
+                </motion.div>
+                <h3 className="text-lg font-bold mb-2">{s.title}</h3>
+                <p className="text-sm text-zinc-500 leading-relaxed">{s.desc}</p>
+              </motion.div>
+            ))}
+          </motion.div>
+        </div>
+      </section>
+
+      {/* ─── CTA BANNER ─── */}
+      <section className="px-4 sm:px-6 pb-16 sm:pb-24">
+        <motion.div initial={{ opacity: 0, y: 50, scale: 0.95 }} whileInView={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }} viewport={{ once: true }}
+          className="max-w-5xl mx-auto relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-to-r from-[#6b2d7b] to-[#9d55ac] px-6 sm:px-8 md:px-16 py-10 sm:py-16 text-center">
+          <div className="absolute top-6 left-8 w-2 h-2 rounded-full bg-white/30" />
+          <div className="absolute top-10 left-16 w-1.5 h-1.5 rounded-full bg-white/20" />
+          <div className="absolute bottom-8 right-12 w-3 h-3 rounded-full bg-white/10" />
+
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-white mb-3 sm:mb-4">Ready to build your chatbot?</h2>
+          <p className="text-purple-200 mb-6 sm:mb-8 max-w-md mx-auto text-sm sm:text-base">Join thousands of teams already using Nimmi AI to create smarter, more engaging conversations.</p>
+          <div className="flex flex-col sm:flex-row flex-wrap justify-center gap-3 sm:gap-4">
+            <Link href="/auth/signup"
+              className="px-6 sm:px-8 py-3 bg-white text-[#9d55ac] rounded-lg font-semibold hover:bg-zinc-50 transition-all shadow-lg text-sm sm:text-base">
+              Get Started Free
+            </Link>
+            <Link href="/auth/login"
+              className="px-6 sm:px-8 py-3 border border-white/30 text-white rounded-lg font-semibold hover:bg-white/10 transition-all text-sm sm:text-base">
+              Sign In
+            </Link>
           </div>
-          <div className="flex-[1.5] space-y-4">
-            {[
-              "How does custom AI integration work?",
-              "Do you provide ongoing support?",
-              "What is the typical project timeline?",
-              "Can you help with existing product redesigns?"
-            ].map((q, i) => (
-              <div key={i} className="bg-white border border-zinc-200/50 rounded-3xl overflow-hidden shadow-sm transition-colors hover:bg-slate-50">
-                <button 
-                  onClick={() => setActiveFaq(activeFaq === i ? null : i)}
-                  className="w-full px-8 py-7 flex items-center justify-between font-bold text-left transition-colors"
-                >
-                  <span className={activeFaq === i ? "text-zinc-950" : "text-zinc-500"}>{q}</span>
-                  <ChevronDown className={`transition-transform duration-300 ${activeFaq === i ? 'rotate-180 text-zinc-950' : 'text-zinc-400'}`} />
-                </button>
-                <AnimatePresence>
-                  {activeFaq === i && (
-                    <motion.div 
-                      initial={{ height: 0 }}
-                      animate={{ height: "auto" }}
-                      exit={{ height: 0 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="px-8 pb-8 text-zinc-600 leading-relaxed text-sm font-medium">
-                        We take a deep dive into your business processes, identify high-impact AI opportunities, and build custom models or integrations that scale with your brand. From initial audit to final deployment, we handle the technical heavy lifting while you focus on growth.
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
+        </motion.div>
+      </section>
+
+      {/* ─── FOOTER ─── */}
+      <footer className="py-10 sm:py-16 px-4 sm:px-6 border-t border-zinc-100 bg-white">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6 sm:gap-8">
+          <div className="relative h-10 sm:h-12 w-32 sm:w-40">
+            <Image src="/nimmi-logo-new.png" alt="Nimmi AI" fill className="object-contain object-left" />
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-8">
+            {navLinks.map((item) => (
+              <a key={item} href={`#${item.toLowerCase().replace(/\s+/g, '-')}`}
+                className="text-sm text-zinc-500 hover:text-zinc-900 transition-colors">{item}</a>
             ))}
           </div>
-        </div>
-      </section>
 
-      {/* Contact Section */}
-      <section id="contact" className="py-24 px-6 relative border-t border-zinc-100">
-        <div className="max-w-6xl mx-auto">
-          <div className="bg-white rounded-[50px] p-20 border border-zinc-200/50 relative overflow-hidden text-center backdrop-blur-3xl shadow-2xl">
-            <h2 className="text-5xl font-black mb-16 text-zinc-950">Let's Get in Touch</h2>
-            <div className="max-w-2xl mx-auto relative z-10">
-              <div className="space-y-8">
-                <div className="grid md:grid-cols-2 gap-8">
-                  <div className="text-left">
-                    <label className="block text-xs uppercase tracking-widest font-black text-zinc-500 mb-4 ml-2">Name</label>
-                    <input type="text" placeholder="Full name" className="w-full px-8 py-5 rounded-2xl bg-slate-50 border border-zinc-200/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/50 transition-all text-zinc-950 placeholder:text-zinc-400" />
-                  </div>
-                  <div className="text-left">
-                    <label className="block text-xs uppercase tracking-widest font-black text-zinc-500 mb-4 ml-2">Email</label>
-                    <input type="email" placeholder="example@email.com" className="w-full px-8 py-5 rounded-2xl bg-slate-50 border border-zinc-200/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/50 transition-all text-zinc-950 placeholder:text-zinc-400" />
-                  </div>
-                </div>
-                <div className="text-left">
-                  <label className="block text-xs uppercase tracking-widest font-black text-zinc-500 mb-4 ml-2">Message</label>
-                  <textarea placeholder="Write your message..." rows={5} className="w-full px-8 py-5 rounded-2xl bg-slate-50 border border-zinc-200/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/50 transition-all text-zinc-950 placeholder:text-zinc-400" />
-                </div>
-                <button className="w-full py-6 bg-blue-600 text-white rounded-full font-black text-xl hover:bg-blue-700 transition-all shadow-2xl shadow-blue-500/20 active:scale-[0.98]">
-                  Send Message
-                </button>
-              </div>
-            </div>
-            
-            {/* Background Gradients for the form card */}
-            <div className="absolute bottom-0 right-0 w-[500px] h-[500px] bg-blue-500/5 blur-[150px] rounded-full translate-x-1/2 translate-y-1/2" />
-            <div className="absolute top-0 left-0 w-[400px] h-[400px] bg-zinc-950/5 blur-[120px] rounded-full -translate-x-1/2 -translate-y-1/2" />
-          </div>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="py-20 px-6 border-t border-zinc-100 bg-slate-50/30">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-12">
-          <div className="text-center md:text-left space-y-4">
-            <div className="flex items-center gap-2 justify-center md:justify-start">
-              <Image 
-                src="/nimmi-logo-new.png" 
-                alt="Nimmi AI Logo" 
-                width={250} 
-                height={80} 
-                className="h-20 w-auto object-contain scale-[2] origin-left"
-              />
-            </div>
-            <p className="text-zinc-500 text-sm max-w-xs leading-relaxed font-semibold">
-              Ready to launch your vision? Our passionate team is here to take your idea and make it real.
-            </p>
-            <div className="flex items-center gap-4 justify-center md:justify-start pt-4">
-               {[1, 2, 3, 4].map(i => (
-                 <div key={i} className="w-10 h-10 rounded-full border border-zinc-200 flex items-center justify-center text-zinc-400 hover:text-zinc-950 hover:border-zinc-400 transition-all cursor-pointer bg-white">
-                   <div className="w-1.5 h-1.5 bg-current rounded-full" />
-                 </div>
-               ))}
-            </div>
-          </div>
-          
-          <p className="text-zinc-400 text-sm font-black tracking-widest uppercase">© 2026 Nimmi AI. ALL RIGHTS RESERVED.</p>
+          <p className="text-sm text-zinc-400">© 2026 Nimmi AI. All rights reserved.</p>
         </div>
       </footer>
+
+      {/* ─── SCROLL TO TOP BUTTON ─── */}
+      <AnimatePresence>
+        {showScrollTop && (
+          <motion.button
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.8 }}
+            onClick={scrollToTop}
+            className="fixed bottom-4 right-4 sm:bottom-8 sm:right-8 z-50 w-10 h-10 sm:w-12 sm:h-12 bg-[#9d55ac] text-white rounded-full shadow-lg shadow-[#9d55ac]/30 flex items-center justify-center hover:bg-[#8a4a97] transition-colors"
+            aria-label="Scroll to top"
+          >
+            <ChevronUp size={22} />
+          </motion.button>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

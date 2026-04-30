@@ -25,7 +25,7 @@ class Bot(Base):
     flow_data = Column(JSON, default={"nodes": [], "edges": []})
     knowledge_base = Column(Text, nullable=True)
     ai_provider = Column(String, default="google") # google, openai, groq
-    ai_model = Column(String, default="gemini-2.0-flash")
+    ai_model = Column(String, default="gemini-3-flash-preview")
     ai_api_key = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     export_unlocked = Column(Boolean, default=False)

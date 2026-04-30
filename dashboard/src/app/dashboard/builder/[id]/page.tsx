@@ -204,7 +204,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     const [logoLoading, setLogoLoading] = useState(false);
     const [systemPrompt, setSystemPrompt] = useState("");
     const [aiProvider, setAiProvider] = useState("google");
-    const [aiModel, setAiModel] = useState("gemini-2.0-flash");
+    const [aiModel, setAiModel] = useState("gemini-3-flash-preview");
     const [aiApiKey, setAiApiKey] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
     const backgroundInputRef = useRef<HTMLInputElement>(null);
@@ -217,6 +217,25 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     const [crawling, setCrawling] = useState(false);
     const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('mobile');
     const router = useRouter();
+    const previewContainerRef = useRef<HTMLDivElement>(null);
+    const [previewScale, setPreviewScale] = useState(1);
+
+    // Dynamically calculate scale for desktop preview
+    useEffect(() => {
+        if (previewMode !== 'desktop' || !previewContainerRef.current) return;
+        const container = previewContainerRef.current;
+        const calculateScale = () => {
+            const availableWidth = container.clientWidth - 32;
+            const availableHeight = container.clientHeight - 120;
+            const scaleX = Math.min(availableWidth / 900, 1);
+            const scaleY = Math.min(availableHeight / 562, 1);
+            setPreviewScale(Math.min(scaleX, scaleY, 1));
+        };
+        calculateScale();
+        const observer = new ResizeObserver(calculateScale);
+        observer.observe(container);
+        return () => observer.disconnect();
+    }, [previewMode]);
 
     // Flow state
     const [flowNodes, setFlowNodes, onNodesChange] = useNodesState<any>([]);
@@ -301,7 +320,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                 setSystemPrompt(data.system_prompt || "");
                 setKnowledgeBase(data.knowledge_base || "");
                 setAiProvider(data.ai_provider || "google");
-                setAiModel(data.ai_model || "gemini-2.0-flash");
+                setAiModel(data.ai_model || "gemini-3-flash-preview");
                 setAiApiKey(data.ai_api_key || "");
                 if (data.flow_data && data.flow_data.nodes && data.flow_data.nodes.length > 0) {
                     setFlowNodes(data.flow_data.nodes);
@@ -345,7 +364,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                     nodes: data.flow_data?.nodes || [],
                     edges: data.flow_data?.edges || [],
                     aiProvider: data.ai_provider || "google",
-                    aiModel: data.ai_model || "gemini-2.0-flash",
+                    aiModel: data.ai_model || "gemini-3-flash-preview",
                     aiApiKey: data.ai_api_key || ""
                 });
             }
@@ -631,7 +650,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                             <button
                                 onClick={() => handleSave()}
                                 disabled={saving}
-                                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${saved ? "bg-green-600" : "bg-blue-600 hover:bg-blue-500"} disabled:opacity-50`}
+                                className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${saved ? "bg-green-600" : "bg-[#9d55ac] hover:bg-[#b06abf]"} disabled:opacity-50`}
                             >
                                 {saved ? <Check size={12} /> : <Save size={12} />}
                                 {saving ? "..." : saved ? "Saved!" : "Save"}
@@ -645,7 +664,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                             <button
                                 key={tab.id}
                                 onClick={() => setActiveTab(tab.id)}
-                                className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-lg text-[10px] font-bold transition-all ${activeTab === tab.id ? "bg-white text-blue-600 shadow-sm" : "text-slate-400 hover:text-slate-600"}`}
+                                className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-lg text-[10px] font-bold transition-all ${activeTab === tab.id ? "bg-white text-[#9d55ac] shadow-sm" : "text-slate-400 hover:text-slate-600"}`}
                             >
                                 <tab.icon size={14} />
                                 {tab.label}
@@ -716,13 +735,16 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                 />
             )}
             {/* Sidebar / Left Config */}
-            <aside className="w-full lg:w-[450px] lg:h-screen h-[45vh] border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col shrink-0 overflow-hidden bg-white">
+            <aside className="w-full lg:w-[520px] lg:h-screen h-[45vh] border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col shrink-0 overflow-hidden bg-white">
                 <header className="px-4 py-4 border-b border-slate-100 flex items-center justify-between gap-3 bg-white">
                     <Link href="/dashboard" className="p-1.5 hover:bg-slate-50 rounded-lg transition-colors shrink-0 text-slate-400 hover:text-slate-900">
                         <ChevronLeft size={20} />
                     </Link>
-                    <div className="flex items-center gap-1.5 font-bold uppercase text-[10px] tracking-widest text-slate-400 truncate">
-                        Bot Builder <span className="text-slate-900 font-black">#{id.slice(0, 8)}</span>
+                    <div className="flex items-center gap-3">
+                        <Image src="/nimmi-logo-new.png" alt="Nimmi AI" width={120} height={120} className="rounded-lg" />
+                        <div className="flex items-center gap-1.5 font-bold uppercase text-[10px] tracking-widest text-slate-400 truncate">
+                            Bot Builder <span className="text-[#9d55ac] font-black">#{id.slice(0, 8)}</span>
+                        </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                         <Link
@@ -735,7 +757,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                         <button
                             onClick={() => handleSave()}
                             disabled={saving}
-                            className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-bold transition-all shadow-sm ${saved ? "bg-green-600 shadow-[0_0_20px_rgba(22,163,74,0.2)] text-white" : "bg-blue-600 hover:bg-blue-700 text-white"} disabled:opacity-50`}
+                            className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-bold transition-all shadow-sm ${saved ? "bg-green-600 shadow-[0_0_20px_rgba(22,163,74,0.2)] text-white" : "bg-[#9d55ac] hover:bg-[#8a4a97] text-white"} disabled:opacity-50`}
                         >
                             {saved ? <Check size={14} /> : <Save size={14} />}
                             {saving ? "..." : saved ? "Done!" : "Save"}
@@ -756,7 +778,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
                             className={`flex-1 flex flex-col items-center gap-2 py-4 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all ${activeTab === tab.id
-                                ? "bg-white text-blue-600 shadow-[0_4px_12px_rgba(0,0,0,0.05)] border border-slate-200"
+                                ? "bg-white text-[#9d55ac] shadow-[0_4px_12px_rgba(0,0,0,0.05)] border border-slate-200"
                                 : "text-slate-400 hover:text-slate-600 hover:bg-slate-100/50"
                                 }`}
                         >
@@ -779,9 +801,9 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                             >
                                 {/* Identity & Branding Section */}
                                 <div className="p-6 bg-slate-50 rounded-[32px] shadow-[10px_10px_30px_#d1d9e6,-10px_-10px_30px_#ffffff] border border-white/50 relative group">
-                                    <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-500/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-l-[32px]" />
+                                    <div className="absolute top-0 left-0 w-1.5 h-full bg-[#b06abf]/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-l-[32px]" />
                                     <div className="flex items-center gap-4 mb-6">
-                                        <div className="w-12 h-12 bg-blue-600 rounded-[20px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),8px_8px_20px_rgba(37,99,235,0.25)] text-white">
+                                        <div className="w-12 h-12 bg-[#9d55ac] rounded-[20px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),8px_8px_20px_rgba(157,85,172,0.25)] text-white">
                                             <Target size={24} strokeWidth={2.5} />
                                         </div>
                                         <div>
@@ -793,7 +815,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                     <div className="grid grid-cols-1 gap-6">
                                         <div className="space-y-3">
                                             <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] pl-1">
-                                                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />
+                                                <div className="w-1.5 h-1.5 bg-[#b06abf] rounded-full" />
                                                 Bot Name
                                             </label>
                                             <input
@@ -801,13 +823,13 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                 value={botName}
                                                 onChange={(e) => setBotName(e.target.value)}
                                                 placeholder="Enter bot name..."
-                                                className="w-full bg-slate-50 border-2 border-white/80 rounded-[20px] px-5 py-4 text-sm font-black outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/30 transition-all text-slate-900 placeholder:text-slate-300 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]"
+                                                className="w-full bg-slate-50 border-2 border-white/80 rounded-[20px] px-5 py-4 text-sm font-black outline-none focus:ring-4 focus:ring-[#b06abf]/5 focus:border-[#b06abf]/30 transition-all text-slate-900 placeholder:text-slate-300 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]"
                                             />
                                         </div>
 
                                         <div className="space-y-3">
                                             <label className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] pl-1">
-                                                <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />
+                                                <div className="w-1.5 h-1.5 bg-[#b06abf] rounded-full" />
                                                 Bot Logo
                                             </label>
                                             <div className="flex gap-4">
@@ -817,12 +839,12 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                         placeholder="Paste URL or upload image..."
                                                         value={botLogo}
                                                         onChange={(e) => setBotLogo(e.target.value)}
-                                                        className="w-full bg-slate-50 border-2 border-white/80 rounded-[20px] px-5 py-4 text-sm font-black outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/30 transition-all text-slate-900 pr-12 placeholder:text-slate-300 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]"
+                                                        className="w-full bg-slate-50 border-2 border-white/80 rounded-[20px] px-5 py-4 text-sm font-black outline-none focus:ring-4 focus:ring-[#b06abf]/5 focus:border-[#b06abf]/30 transition-all text-slate-900 pr-12 placeholder:text-slate-300 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]"
                                                     />
                                                     <button
                                                         onClick={() => fileInputRef.current?.click()}
                                                         disabled={logoLoading}
-                                                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-white text-slate-400 rounded-xl hover:bg-blue-600 hover:text-white transition-all disabled:opacity-50 shadow-[2px_2px_4px_#d1d9e6,-2px_-2px_4px_#ffffff] border border-white"
+                                                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-white text-slate-400 rounded-xl hover:bg-[#9d55ac] hover:text-white transition-all disabled:opacity-50 shadow-[2px_2px_4px_#d1d9e6,-2px_-2px_4px_#ffffff] border border-white"
                                                     >
                                                         <Upload size={18} strokeWidth={2.5} />
                                                     </button>
@@ -867,7 +889,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                     {['left', 'right'].map(p => (
                                                         <button
                                                             key={p} onClick={() => setPosition(p as any)}
-                                                            className={`flex-1 py-3 rounded-[16px] text-[10px] font-black uppercase tracking-widest transition-all ${position === p ? 'bg-white text-blue-600 shadow-[2px_2px_6px_rgba(0,0,0,0.05)] border border-white' : 'text-slate-400 hover:text-slate-600'}`}
+                                                            className={`flex-1 py-3 rounded-[16px] text-[10px] font-black uppercase tracking-widest transition-all ${position === p ? 'bg-white text-[#9d55ac] shadow-[2px_2px_6px_rgba(0,0,0,0.05)] border border-white' : 'text-slate-400 hover:text-slate-600'}`}
                                                         >
                                                             {p === 'left' ? <AlignLeft size={18} className="mx-auto" /> : <AlignRight size={18} className="mx-auto" />}
                                                         </button>
@@ -895,7 +917,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] pl-1">Font Family</label>
                                                 <button
                                                     onClick={() => setShowFontDropdown(!showFontDropdown)}
-                                                    className="w-full bg-slate-50 border-2 border-white/80 rounded-[20px] px-5 py-4 text-sm font-black flex items-center justify-between hover:border-blue-500/30 transition-all text-slate-900 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]"
+                                                    className="w-full bg-slate-50 border-2 border-white/80 rounded-[20px] px-5 py-4 text-sm font-black flex items-center justify-between hover:border-[#b06abf]/30 transition-all text-slate-900 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]"
                                                 >
                                                     <span className="truncate">{FONT_OPTIONS.find(f => f.value === fontFamily)?.label}</span>
                                                     <ChevronDown size={20} className={`transition-transform shrink-0 ${showFontDropdown ? 'rotate-180' : ''}`} />
@@ -905,11 +927,11 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute bottom-full mb-4 left-0 w-full bg-slate-50 border border-white rounded-[28px] shadow-[0_20px_50px_rgba(0,0,0,0.15)] z-[100] overflow-hidden p-3 ring-1 ring-black/5">
                                                             <div className="px-2 pb-4 relative">
                                                                 <Search size={18} className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400" />
-                                                                <input type="text" placeholder="Search fonts..." value={fontSearch} onChange={(e) => setFontSearch(e.target.value)} className="w-full bg-white/80 border border-slate-100 rounded-[16px] pl-12 pr-4 py-3.5 text-sm outline-none focus:border-blue-500/50 transition-all font-black" />
+                                                                <input type="text" placeholder="Search fonts..." value={fontSearch} onChange={(e) => setFontSearch(e.target.value)} className="w-full bg-white/80 border border-slate-100 rounded-[16px] pl-12 pr-4 py-3.5 text-sm outline-none focus:border-[#b06abf]/50 transition-all font-black" />
                                                             </div>
                                                             <div className="max-h-56 overflow-y-auto custom-scrollbar p-1">
                                                                 {FONT_OPTIONS.filter(f => f.label.toLowerCase().includes(fontSearch.toLowerCase())).map(f => (
-                                                                    <button key={f.value} onClick={() => { setFontFamily(f.value); setShowFontDropdown(false); }} className={`w-full text-left px-5 py-4 rounded-[16px] text-sm font-black transition-all mb-1 ${fontFamily === f.value ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-white text-slate-600'}`} style={{ fontFamily: f.value }}>{f.label}</button>
+                                                                    <button key={f.value} onClick={() => { setFontFamily(f.value); setShowFontDropdown(false); }} className={`w-full text-left px-5 py-4 rounded-[16px] text-sm font-black transition-all mb-1 ${fontFamily === f.value ? 'bg-[#9d55ac] text-white shadow-md' : 'hover:bg-white text-slate-600'}`} style={{ fontFamily: f.value }}>{f.label}</button>
                                                                 ))}
                                                             </div>
                                                         </motion.div>
@@ -920,19 +942,19 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                             <div className="grid grid-cols-2 gap-4">
                                                 <button
                                                     onClick={() => setShowTail(!showTail)}
-                                                    className={`flex items-center justify-between px-4 py-4 rounded-[20px] border-2 transition-all ${showTail ? 'bg-blue-50/50 border-blue-200 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]' : 'bg-slate-50 border-white/80 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff] opacity-70'}`}
+                                                    className={`flex items-center justify-between px-4 py-4 rounded-[20px] border-2 transition-all ${showTail ? 'bg-[#f8f0fa]/50 border-[#e0c8e6] shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]' : 'bg-slate-50 border-white/80 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff] opacity-70'}`}
                                                 >
-                                                    <span className={`text-[10px] font-black uppercase tracking-[0.1em] ${showTail ? 'text-blue-700' : 'text-slate-500'}`}>Chat Tail</span>
-                                                    <div className={`w-10 h-5.5 rounded-full transition-all relative shadow-inner ${showTail ? 'bg-blue-600' : 'bg-slate-300'}`}>
+                                                    <span className={`text-[10px] font-black uppercase tracking-[0.1em] ${showTail ? 'text-[#8a4a97]' : 'text-slate-500'}`}>Chat Tail</span>
+                                                    <div className={`w-10 h-5.5 rounded-full transition-all relative shadow-inner ${showTail ? 'bg-[#9d55ac]' : 'bg-slate-300'}`}>
                                                         <div className={`absolute top-[3px] w-4 h-4 bg-white rounded-full transition-all shadow-sm ${showTail ? 'right-[3px] translate-x-0' : 'left-[3px] translate-x-0'}`} />
                                                     </div>
                                                 </button>
                                                 <button
                                                     onClick={() => setShowLauncherBg(!showLauncherBg)}
-                                                    className={`flex items-center justify-between px-4 py-4 rounded-[20px] border-2 transition-all ${showLauncherBg ? 'bg-blue-50/50 border-blue-200 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]' : 'bg-slate-50 border-white/80 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff] opacity-70'}`}
+                                                    className={`flex items-center justify-between px-4 py-4 rounded-[20px] border-2 transition-all ${showLauncherBg ? 'bg-[#f8f0fa]/50 border-[#e0c8e6] shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]' : 'bg-slate-50 border-white/80 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff] opacity-70'}`}
                                                 >
-                                                    <span className={`text-[10px] font-black uppercase tracking-[0.1em] ${showLauncherBg ? 'text-blue-700' : 'text-slate-500'}`}>Launcher BG</span>
-                                                    <div className={`w-10 h-5.5 rounded-full transition-all relative shadow-inner ${showLauncherBg ? 'bg-blue-600' : 'bg-slate-300'}`}>
+                                                    <span className={`text-[10px] font-black uppercase tracking-[0.1em] ${showLauncherBg ? 'text-[#8a4a97]' : 'text-slate-500'}`}>Launcher BG</span>
+                                                    <div className={`w-10 h-5.5 rounded-full transition-all relative shadow-inner ${showLauncherBg ? 'bg-[#9d55ac]' : 'bg-slate-300'}`}>
                                                         <div className={`absolute top-[3px] w-4 h-4 bg-white rounded-full transition-all shadow-sm ${showLauncherBg ? 'right-[3px] translate-x-0' : 'left-[3px] translate-x-0'}`} />
                                                     </div>
                                                 </button>
@@ -974,7 +996,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                         type="number"
                                                         value={item.v}
                                                         onChange={(e) => item.s(parseInt(e.target.value) || 0)}
-                                                        className="w-full bg-slate-50 border-2 border-white/80 rounded-[18px] pl-3 pr-7 py-3 text-sm font-black text-slate-900 outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/30 transition-all text-center shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                                        className="w-full bg-slate-50 border-2 border-white/80 rounded-[18px] pl-3 pr-7 py-3 text-sm font-black text-slate-900 outline-none focus:ring-4 focus:ring-[#b06abf]/5 focus:border-[#b06abf]/30 transition-all text-center shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                                     />
                                                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] text-slate-300 font-extrabold uppercase tracking-tighter">px</span>
                                                 </div>
@@ -992,9 +1014,9 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                 ].map(s => (
                                                     <button
                                                         key={s.id} onClick={() => setLauncherShape(s.id)}
-                                                        className={`h-16 flex flex-col items-center justify-center gap-2.5 rounded-[20px] border-2 transition-all ${launcherShape === s.id ? 'bg-white border-blue-400 shadow-[6px_6px_12px_#d1d9e6,-6px_-6px_12px_#ffffff] scale-[1.05]' : 'bg-slate-50/50 border-white shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff] hover:scale-[1.02]'}`}
+                                                        className={`h-16 flex flex-col items-center justify-center gap-2.5 rounded-[20px] border-2 transition-all ${launcherShape === s.id ? 'bg-white border-[#c080cc] shadow-[6px_6px_12px_#d1d9e6,-6px_-6px_12px_#ffffff] scale-[1.05]' : 'bg-slate-50/50 border-white shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff] hover:scale-[1.02]'}`}
                                                     >
-                                                        <div className="w-6 h-6 bg-blue-600 shadow-[inset_2px_2px_4px_rgba(255,255,255,0.3),inset_-2px_-2px_4px_rgba(0,0,0,0.1),4px_4px_8px_rgba(37,99,235,0.2)] transition-all duration-500" style={{ borderRadius: s.r }} />
+                                                        <div className="w-6 h-6 bg-[#9d55ac] shadow-[inset_2px_2px_4px_rgba(255,255,255,0.3),inset_-2px_-2px_4px_rgba(0,0,0,0.1),4px_4px_8px_rgba(157,85,172,0.2)] transition-all duration-500" style={{ borderRadius: s.r }} />
                                                     </button>
                                                 ))}
                                             </div>
@@ -1038,7 +1060,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                     <div className="grid grid-cols-1 gap-8 mt-8 pt-6 border-t border-white/50">
                                         <div className="space-y-4">
                                             <div className="flex items-center gap-3 mb-2 pl-1">
-                                                <div className="w-2.5 h-2.5 bg-blue-600 rounded-full shadow-[0_0_8px_rgba(37,99,235,0.4)]" />
+                                                <div className="w-2.5 h-2.5 bg-[#9d55ac] rounded-full shadow-[0_0_8px_rgba(157,85,172,0.4)]" />
                                                 <span className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em]">User Bubble</span>
                                             </div>
                                             <div className="flex gap-4 p-5 bg-slate-100/30 rounded-[28px] border border-white/50 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]">
@@ -1081,14 +1103,14 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                     <div className="mt-8 pt-6 border-t border-white/50 space-y-6">
                                         <div className="flex items-center justify-between mb-2">
                                             <div className="flex items-center gap-4">
-                                                <div className="w-10 h-10 bg-blue-600 rounded-[16px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),6px_6px_16px_rgba(37,99,235,0.25)] text-white">
+                                                <div className="w-10 h-10 bg-[#9d55ac] rounded-[16px] flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(255,255,255,0.3),inset_-4px_-4px_8px_rgba(0,0,0,0.1),6px_6px_16px_rgba(157,85,172,0.25)] text-white">
                                                     <Layout size={20} />
                                                 </div>
                                                 <div>
                                                     <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Chat Backdrop</h3>
                                                 </div>
                                             </div>
-                                            <span className="px-4 py-1.5 bg-blue-50/50 text-blue-600 rounded-xl text-[10px] font-black uppercase tracking-widest border border-white shadow-sm">{Math.round(backgroundOpacity * 100)}% Visibility</span>
+                                            <span className="px-4 py-1.5 bg-[#f8f0fa]/50 text-[#9d55ac] rounded-xl text-[10px] font-black uppercase tracking-widest border border-white shadow-sm">{Math.round(backgroundOpacity * 100)}% Visibility</span>
                                         </div>
 
                                         <div className="grid grid-cols-1 gap-6">
@@ -1098,12 +1120,12 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                     value={backgroundImage}
                                                     onChange={(e) => setBackgroundImage(e.target.value)}
                                                     placeholder="Paste backdrop URL or upload image..."
-                                                    className="w-full bg-slate-50 border-2 border-white/80 rounded-[20px] px-5 py-4 text-sm font-black outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/30 transition-all text-slate-900 placeholder:text-slate-300 pr-16 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]"
+                                                    className="w-full bg-slate-50 border-2 border-white/80 rounded-[20px] px-5 py-4 text-sm font-black outline-none focus:ring-4 focus:ring-[#b06abf]/5 focus:border-[#b06abf]/30 transition-all text-slate-900 placeholder:text-slate-300 pr-16 shadow-[inset_4px_4px_8px_#d1d9e6,inset_-4px_-4px_8px_#ffffff]"
                                                 />
                                                 <button
                                                     onClick={() => backgroundInputRef.current?.click()}
                                                     disabled={backgroundLoading}
-                                                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-white text-slate-400 rounded-[14px] hover:bg-blue-600 hover:text-white transition-all disabled:opacity-50 border border-white shadow-[2px_2px_4px_#d1d9e6,-2px_-2px_4px_#ffffff]"
+                                                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-white text-slate-400 rounded-[14px] hover:bg-[#9d55ac] hover:text-white transition-all disabled:opacity-50 border border-white shadow-[2px_2px_4px_#d1d9e6,-2px_-2px_4px_#ffffff]"
                                                 >
                                                     <Upload size={18} className={backgroundLoading ? "animate-spin" : ""} strokeWidth={2.5} />
                                                 </button>
@@ -1115,7 +1137,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                     type="range" min="0" max="1" step="0.01"
                                                     value={backgroundOpacity}
                                                     onChange={(e) => setBackgroundOpacity(parseFloat(e.target.value))}
-                                                    className="flex-1 h-2 bg-slate-200/50 rounded-full appearance-none transition-all accent-blue-600 cursor-pointer shadow-inner"
+                                                    className="flex-1 h-2 bg-slate-200/50 rounded-full appearance-none transition-all accent-[#9d55ac] cursor-pointer shadow-inner"
                                                 />
                                             </div>
                                         </div>
@@ -1128,7 +1150,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                             <motion.div key="knowledge" className="space-y-6">
                                 <div className="p-6 bg-slate-50 border border-slate-200 rounded-3xl space-y-6 shadow-sm">
                                     <div className="flex items-center gap-4 mb-2">
-                                        <div className="p-3 bg-blue-600 shadow-[0_4px_12px_rgba(37,99,235,0.2)] rounded-2xl">
+                                        <div className="p-3 bg-[#9d55ac] shadow-[0_4px_12px_rgba(157,85,172,0.2)] rounded-2xl">
                                             <Brain size={24} className="text-white" />
                                         </div>
                                         <div>
@@ -1149,7 +1171,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                     if (p === "openai") setAiModel("gpt-4o-mini");
                                                     if (p === "groq") setAiModel("llama3-8b-8192");
                                                 }}
-                                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-900 shadow-sm appearance-none cursor-pointer"
+                                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#b06abf]/20 focus:border-[#b06abf] transition-all text-slate-900 shadow-sm appearance-none cursor-pointer"
                                             >
                                                 <option value="google">Google Gemini</option>
                                                 <option value="openai">OpenAI ChatGPT</option>
@@ -1162,7 +1184,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                             <select
                                                 value={aiModel}
                                                 onChange={(e) => setAiModel(e.target.value)}
-                                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-900 shadow-sm appearance-none cursor-pointer"
+                                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#b06abf]/20 focus:border-[#b06abf] transition-all text-slate-900 shadow-sm appearance-none cursor-pointer"
                                             >
                                                 {aiProvider === "google" && (
                                                     <>
@@ -1189,7 +1211,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                 value={aiApiKey}
                                                 onChange={(e) => setAiApiKey(e.target.value)}
                                                 placeholder={`Enter your ${aiProvider.toUpperCase()} API Key`}
-                                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-900 shadow-sm"
+                                                className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#b06abf]/20 focus:border-[#b06abf] transition-all text-slate-900 shadow-sm"
                                             />
                                         </div>
                                     </div>
@@ -1198,7 +1220,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                 <div className="space-y-4">
                                     <div className="p-5 bg-white border border-slate-200 rounded-3xl space-y-4 shadow-sm">
                                         <div className="flex items-center gap-3">
-                                            <div className="p-2 bg-blue-50 text-blue-600 rounded-xl border border-blue-100">
+                                            <div className="p-2 bg-[#f8f0fa] text-[#9d55ac] rounded-xl border border-[#f0e0f4]">
                                                 <Globe size={20} />
                                             </div>
                                             <h4 className="text-[11px] font-black uppercase tracking-[0.15em] text-slate-800">Website Crawler</h4>
@@ -1209,12 +1231,12 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                 placeholder="https://example.com"
                                                 value={crawlUrl}
                                                 onChange={(e) => setCrawlUrl(e.target.value)}
-                                                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-inner"
+                                                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#b06abf]/20 focus:border-[#b06abf] shadow-inner"
                                             />
                                             <button
                                                 onClick={handleCrawl}
                                                 disabled={crawling}
-                                                className="w-full py-3 bg-blue-600 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-blue-700 disabled:opacity-50 transition-all shadow-[0_4px_12px_rgba(37,99,235,0.2)] active:scale-[0.98]"
+                                                className="w-full py-3 bg-[#9d55ac] text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-[#8a4a97] disabled:opacity-50 transition-all shadow-[0_4px_12px_rgba(157,85,172,0.2)] active:scale-[0.98]"
                                             >
                                                 {crawling ? "Crawling..." : "Start Crawling"}
                                             </button>
@@ -1247,10 +1269,10 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                     </div>
                                 </div>
 
-                                <div className="flex items-center justify-between p-6 bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-100 rounded-3xl shadow-sm">
+                                <div className="flex items-center justify-between p-6 bg-gradient-to-r from-[#f8f0fa] to-purple-50 border border-[#f0e0f4] rounded-3xl shadow-sm">
                                     <div className="flex items-center gap-4">
                                         <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-md border border-white">
-                                            <Search size={22} className="text-blue-600" />
+                                            <Search size={22} className="text-[#9d55ac]" />
                                         </div>
                                         <div>
                                             <h4 className="font-black text-sm text-slate-900">Live Web Search (RAG)</h4>
@@ -1259,7 +1281,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                     </div>
                                     <button
                                         onClick={() => setLiveSearchEnabled(!liveSearchEnabled)}
-                                        className={`w-12 h-6 rounded-full transition-all relative ${liveSearchEnabled ? 'bg-blue-600 shadow-[0_4px_12px_rgba(37,99,235,0.2)]' : 'bg-slate-200'}`}
+                                        className={`w-12 h-6 rounded-full transition-all relative ${liveSearchEnabled ? 'bg-[#9d55ac] shadow-[0_4px_12px_rgba(157,85,172,0.2)]' : 'bg-slate-200'}`}
                                     >
                                         <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${liveSearchEnabled ? 'right-1' : 'left-1'}`} />
                                     </button>
@@ -1267,17 +1289,17 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
 
                                 <div
                                     onClick={() => !knowledgeLoading && knowledgeInputRef.current?.click()}
-                                    className={`border-2 border-dashed rounded-[32px] p-10 text-center transition-all cursor-pointer group shadow-sm bg-white ${knowledgeLoading ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-blue-400 hover:bg-slate-50'}`}
+                                    className={`border-2 border-dashed rounded-[32px] p-10 text-center transition-all cursor-pointer group shadow-sm bg-white ${knowledgeLoading ? 'border-[#b06abf] bg-[#f8f0fa]' : 'border-slate-200 hover:border-[#c080cc] hover:bg-slate-50'}`}
                                 >
                                     {knowledgeLoading ? (
                                         <div className="flex flex-col items-center">
-                                            <div className="w-14 h-14 border-4 border-blue-500/10 border-t-blue-600 rounded-full animate-spin mb-4" />
-                                            <p className="font-black text-lg text-blue-600 uppercase tracking-widest">Processing Data...</p>
+                                            <div className="w-14 h-14 border-4 border-[#b06abf]/10 border-t-[#9d55ac] rounded-full animate-spin mb-4" />
+                                            <p className="font-black text-lg text-[#9d55ac] uppercase tracking-widest">Processing Data...</p>
                                         </div>
                                     ) : (
                                         <>
                                             <div className="w-20 h-20 bg-slate-50 rounded-3xl flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform">
-                                                <Upload className="text-slate-300 group-hover:text-blue-500 transition-colors" size={40} />
+                                                <Upload className="text-slate-300 group-hover:text-[#b06abf] transition-colors" size={40} />
                                             </div>
                                             <p className="font-black text-xl mb-1 text-slate-800">Upload Data Source</p>
                                             <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-2">Support: PDF, TXT, CSV, DOCX</p>
@@ -1295,14 +1317,14 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                 <div className="space-y-4">
                                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex justify-between px-2">
                                         Manual Knowledge Base
-                                        <span className="text-blue-600 font-mono font-black">{knowledgeBase.length} chars</span>
+                                        <span className="text-[#9d55ac] font-mono font-black">{knowledgeBase.length} chars</span>
                                     </h4>
                                     <textarea
                                         rows={10}
                                         value={knowledgeBase}
                                         onChange={(e) => setKnowledgeBase(e.target.value)}
                                         placeholder="Enter product details, company info, FAQs..."
-                                        className="w-full bg-white border border-slate-200 rounded-3xl px-6 py-6 outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-400 shadow-sm transition-all resize-none text-sm leading-relaxed text-slate-800"
+                                        className="w-full bg-white border border-slate-200 rounded-3xl px-6 py-6 outline-none focus:ring-4 focus:ring-[#b06abf]/5 focus:border-[#c080cc] shadow-sm transition-all resize-none text-sm leading-relaxed text-slate-800"
                                     />
                                 </div>
                             </motion.div>
@@ -1317,7 +1339,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                         value={systemPrompt}
                                         onChange={(e) => setSystemPrompt(e.target.value)}
                                         placeholder="e.g. You are a professional sales assistant for a tech company..."
-                                        className="w-full bg-white border border-slate-200 rounded-3xl px-6 py-6 outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-400 shadow-sm transition-all resize-none text-sm leading-relaxed text-slate-800"
+                                        className="w-full bg-white border border-slate-200 rounded-3xl px-6 py-6 outline-none focus:ring-4 focus:ring-[#b06abf]/5 focus:border-[#c080cc] shadow-sm transition-all resize-none text-sm leading-relaxed text-slate-800"
                                     />
                                     <p className="text-[11px] text-slate-400 font-bold leading-relaxed px-1">
                                         Define your bot's behavior, personality traits, and specific constraints.
@@ -1330,7 +1352,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                             <button
                                                 key={m}
                                                 onClick={() => setSystemPrompt(`You are a ${m.toLowerCase()} AI assistant. Focus on being helpful and accurate.`)}
-                                                className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-600 hover:border-blue-400 hover:text-blue-600 transition-all shadow-sm active:scale-95"
+                                                className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-black text-slate-600 hover:border-[#c080cc] hover:text-[#9d55ac] transition-all shadow-sm active:scale-95"
                                             >
                                                 {m}
                                             </button>
@@ -1347,7 +1369,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                         <h3 className="font-bold text-lg text-slate-900">Lead Storage</h3>
                                         <p className="text-slate-500 text-xs font-medium uppercase tracking-widest">Captured from flows</p>
                                     </div>
-                                    <div className="bg-blue-600 shadow-lg shadow-blue-500/20 text-white px-4 py-2 rounded-xl text-sm font-black flex items-center gap-2">
+                                    <div className="bg-[#9d55ac] shadow-lg shadow-[#b06abf]/20 text-white px-4 py-2 rounded-xl text-sm font-black flex items-center gap-2">
                                         <Inbox size={16} /> {leads.length} Leads
                                     </div>
                                 </div>
@@ -1355,7 +1377,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                 <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden min-h-[400px] shadow-sm">
                                     {leadsLoading ? (
                                         <div className="flex flex-col items-center justify-center h-[400px]">
-                                            <div className="w-10 h-10 border-4 border-blue-500/10 border-t-blue-500 rounded-full animate-spin mb-4" />
+                                            <div className="w-10 h-10 border-4 border-[#b06abf]/10 border-t-[#b06abf] rounded-full animate-spin mb-4" />
                                             <p className="text-slate-400 text-[10px] uppercase font-black tracking-[0.2em]">Syncing Records...</p>
                                         </div>
                                     ) : leads.length === 0 ? (
@@ -1393,7 +1415,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                                 <div className="flex flex-wrap gap-2">
                                                                     {Object.entries(lead.data).map(([key, value]: [string, any]) => (
                                                                         <div key={key} className="bg-white border border-slate-200 rounded-xl px-2.5 py-1 flex items-center gap-2 shadow-sm transition-transform hover:scale-105">
-                                                                            <span className="text-[9px] font-black text-blue-600 uppercase tracking-tighter">{key}:</span>
+                                                                            <span className="text-[9px] font-black text-[#9d55ac] uppercase tracking-tighter">{key}:</span>
                                                                             <span className="text-[10px] text-slate-700 font-bold">{value}</span>
                                                                         </div>
                                                                     ))}
@@ -1422,95 +1444,102 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                 {/* Abstract Background for Preview */}
                 <div className="absolute inset-0 z-0">
                     <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:16px_16px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-30" />
-                    <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-blue-600/5 blur-[150px] rounded-full" />
+                    <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-[#9d55ac]/5 blur-[150px] rounded-full" />
                     <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-purple-600/5 blur-[120px] rounded-full" />
                 </div>
 
-                <div className="relative z-10 w-full h-full flex flex-col items-center justify-center">
+                <div ref={previewContainerRef} className="relative z-10 w-full h-full flex flex-col items-center justify-center">
                     <div className="flex bg-slate-200/50 p-1 rounded-full mb-8 border border-slate-300 shadow-sm backdrop-blur-sm relative z-20">
                         <button
                             onClick={() => setPreviewMode('desktop')}
                             className={`px-4 py-1.5 shadow-sm rounded-full text-xs font-bold flex items-center gap-2 transition-all ${previewMode === 'desktop' ? 'bg-white text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}>
-                            <Monitor size={14} className={previewMode === 'desktop' ? "text-blue-600" : ""} /> Desktop
+                            <Monitor size={14} className={previewMode === 'desktop' ? "text-[#9d55ac]" : ""} /> Desktop
                         </button>
                         <button
                             onClick={() => setPreviewMode('mobile')}
                             className={`px-4 py-1.5 shadow-sm rounded-full text-xs font-bold flex items-center gap-2 transition-all ${previewMode === 'mobile' ? 'bg-white text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}>
-                            <Smartphone size={14} className={previewMode === 'mobile' ? "text-blue-600" : ""} /> Mobile
+                            <Smartphone size={14} className={previewMode === 'mobile' ? "text-[#9d55ac]" : ""} /> Mobile
                         </button>
                     </div>
 
                     {previewMode === 'desktop' ? (
-                        <div className="w-full max-w-[1200px] aspect-video bg-white rounded-2xl overflow-hidden shadow-2xl border border-slate-200 relative flex flex-col transition-all duration-500 animate-in fade-in zoom-in-95">
-                            <div className="h-10 bg-slate-100 border-b border-slate-200 flex items-center px-4 gap-2 shrink-0">
-                                <div className="w-3 h-3 rounded-full bg-red-400" />
-                                <div className="w-3 h-3 rounded-full bg-amber-400" />
-                                <div className="w-3 h-3 rounded-full bg-green-400" />
-                                <div className="flex-1 ml-4 mr-10 bg-white border border-slate-200 h-6 rounded-md shadow-inner flex items-center px-3">
-                                    <div className="w-24 h-2 bg-slate-200 rounded-full" />
-                                </div>
-                            </div>
-                            <div className="flex-1 bg-slate-50 relative p-8">
-                                <div className="max-w-md space-y-6">
-                                    <div className="w-48 h-8 bg-slate-200 rounded-xl" />
-                                    <div className="space-y-3">
-                                        <div className="w-full h-4 bg-slate-200 rounded-md" />
-                                        <div className="w-5/6 h-4 bg-slate-200 rounded-md" />
-                                        <div className="w-4/6 h-4 bg-slate-200 rounded-md" />
+                        <div className="w-full flex items-center justify-center" style={{ maxHeight: 'calc(100vh - 200px)' }}>
+                            <div className="origin-center transition-transform duration-300" style={{ transform: `scale(${previewScale})` }}>
+                                <div
+                                    className="bg-white rounded-2xl overflow-hidden shadow-2xl border border-slate-200 relative flex flex-col transition-all duration-500 animate-in fade-in zoom-in-95"
+                                    style={{ width: '900px', height: '562px' }}
+                                >
+                                    <div className="h-10 bg-slate-100 border-b border-slate-200 flex items-center px-4 gap-2 shrink-0">
+                                        <div className="w-3 h-3 rounded-full bg-red-400" />
+                                        <div className="w-3 h-3 rounded-full bg-amber-400" />
+                                        <div className="w-3 h-3 rounded-full bg-green-400" />
+                                        <div className="flex-1 ml-4 mr-10 bg-white border border-slate-200 h-6 rounded-md shadow-inner flex items-center px-3">
+                                            <div className="w-24 h-2 bg-slate-200 rounded-full" />
+                                        </div>
                                     </div>
-                                    <div className="w-32 h-10 bg-blue-100 rounded-xl mt-8" />
-                                </div>
-                                <div className="absolute right-8 top-8 w-64 h-48 bg-slate-200 rounded-2xl" />
+                                    <div className="flex-1 bg-slate-50 relative p-8">
+                                        <div className="max-w-md space-y-6">
+                                            <div className="w-48 h-8 bg-slate-200 rounded-xl" />
+                                            <div className="space-y-3">
+                                                <div className="w-full h-4 bg-slate-200 rounded-md" />
+                                                <div className="w-5/6 h-4 bg-slate-200 rounded-md" />
+                                                <div className="w-4/6 h-4 bg-slate-200 rounded-md" />
+                                            </div>
+                                            <div className="w-32 h-10 bg-[#f0e0f4] rounded-xl mt-8" />
+                                        </div>
+                                        <div className="absolute right-8 top-8 w-64 h-48 bg-slate-200 rounded-2xl" />
 
-                                <div
-                                    className="absolute flex flex-col overflow-hidden shadow-[0_24px_48px_-12px_rgba(0,0,0,0.15)] ring-1 ring-slate-900/5 transition-all duration-300"
-                                    style={{
-                                        fontFamily: fontFamily,
-                                        borderRadius: `${borderRadius}px`,
-                                        width: '350px',
-                                        height: '500px',
-                                        bottom: `${bottomPadding + 80}px`,
-                                        right: position === 'right' ? `${rightPadding}px` : 'auto',
-                                        left: position === 'left' ? `${rightPadding}px` : 'auto',
-                                        zIndex: 30
-                                    }}
-                                >
-                                    <ChatbotWidgetContent
-                                        botName={botName}
-                                        botLogo={botLogo}
-                                        color={color}
-                                        textColor={textColor}
-                                        headerHeight={headerHeight}
-                                        chatBgColor={chatBgColor}
-                                        backgroundImage={backgroundImage}
-                                        backgroundOpacity={backgroundOpacity}
-                                        assistantBubbleBg={assistantBubbleBg}
-                                        assistantBubbleText={assistantBubbleText}
-                                        userBubbleBg={userBubbleBg}
-                                        userBubbleText={userBubbleText}
-                                        borderRadius={borderRadius}
-                                        inputBgColor={inputBgColor}
-                                        inputTextColor={inputTextColor}
-                                    />
-                                </div>
+                                        <div
+                                            className="absolute flex flex-col overflow-hidden shadow-[0_24px_48px_-12px_rgba(0,0,0,0.15)] ring-1 ring-slate-900/5 transition-all duration-300"
+                                            style={{
+                                                fontFamily: fontFamily,
+                                                borderRadius: `${borderRadius}px`,
+                                                width: '300px',
+                                                height: '350px',
+                                                bottom: `${bottomPadding + 70}px`,
+                                                right: position === 'right' ? `${rightPadding}px` : 'auto',
+                                                left: position === 'left' ? `${rightPadding}px` : 'auto',
+                                                zIndex: 30
+                                            }}
+                                        >
+                                            <ChatbotWidgetContent
+                                                botName={botName}
+                                                botLogo={botLogo}
+                                                color={color}
+                                                textColor={textColor}
+                                                headerHeight={headerHeight}
+                                                chatBgColor={chatBgColor}
+                                                backgroundImage={backgroundImage}
+                                                backgroundOpacity={backgroundOpacity}
+                                                assistantBubbleBg={assistantBubbleBg}
+                                                assistantBubbleText={assistantBubbleText}
+                                                userBubbleBg={userBubbleBg}
+                                                userBubbleText={userBubbleText}
+                                                borderRadius={borderRadius}
+                                                inputBgColor={inputBgColor}
+                                                inputTextColor={inputTextColor}
+                                            />
+                                        </div>
 
-                                <div
-                                    className="absolute flex items-center justify-center pointer-events-auto"
-                                    style={{
-                                        bottom: `${bottomPadding}px`,
-                                        right: position === 'right' ? `${rightPadding}px` : 'auto',
-                                        left: position === 'left' ? `${rightPadding}px` : 'auto',
-                                        zIndex: 40
-                                    }}
-                                >
-                                    <LauncherPreview
-                                        color={color}
-                                        showLauncherBg={showLauncherBg}
-                                        launcherShape={launcherShape}
-                                        botLogo={botLogo}
-                                        logoSize={logoSize}
-                                        showTail={showTail}
-                                    />
+                                        <div
+                                            className="absolute flex items-center justify-center pointer-events-auto"
+                                            style={{
+                                                bottom: `${bottomPadding}px`,
+                                                right: position === 'right' ? `${rightPadding}px` : 'auto',
+                                                left: position === 'left' ? `${rightPadding}px` : 'auto',
+                                                zIndex: 40
+                                            }}
+                                        >
+                                            <LauncherPreview
+                                                color={color}
+                                                showLauncherBg={showLauncherBg}
+                                                launcherShape={launcherShape}
+                                                botLogo={botLogo}
+                                                logoSize={logoSize}
+                                                showTail={showTail}
+                                            />
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>

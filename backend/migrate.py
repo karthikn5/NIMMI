@@ -85,10 +85,17 @@ async def run_migration():
             print(f"Note: ai_provider column - {e}")
 
         try:
-            await conn.execute(text("ALTER TABLE bots ADD COLUMN IF NOT EXISTS ai_model VARCHAR DEFAULT 'gemini-2.0-flash'"))
+            await conn.execute(text("ALTER TABLE bots ADD COLUMN IF NOT EXISTS ai_model VARCHAR DEFAULT 'gemini-3-flash-preview'"))
             print("✓ Added 'ai_model' column")
         except Exception as e:
             print(f"Note: ai_model column - {e}")
+
+        # Migrate existing bots from old default to new default model
+        try:
+            result = await conn.execute(text("UPDATE bots SET ai_model = 'gemini-3-flash-preview' WHERE ai_model = 'gemini-2.0-flash' OR ai_model IS NULL"))
+            print(f"✓ Updated existing bots to gemini-3-flash-preview")
+        except Exception as e:
+            print(f"Note: model migration - {e}")
 
         try:
             await conn.execute(text("ALTER TABLE bots ADD COLUMN IF NOT EXISTS ai_api_key VARCHAR"))

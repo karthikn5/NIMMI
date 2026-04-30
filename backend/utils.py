@@ -38,7 +38,7 @@ def generate_ai_response(system_prompt, context, user_query, provider="google", 
             "gemini-1.5-pro": "gemini-1.5-pro", # Standard names
             "gemini-1.5-flash": "gemini-1.5-flash",
         }
-        requested_model = (model_name or "gemini-2.0-flash").replace("models/", "")
+        requested_model = (model_name or "gemini-3-flash-preview").replace("models/", "")
         primary_model = model_mapping.get(requested_model, requested_model)
         
         # Build fallback chain with free-tier models only

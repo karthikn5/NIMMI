@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { ArrowRight, MessageSquare, Check, Sparkles, Zap, Globe, Menu, X, ChevronRight, Play, Bot, Paintbrush, MousePointerClick, ShoppingCart, Code2, Settings2, Brain, Rocket, ChevronUp } from "lucide-react";
-import { motion, AnimatePresence, useScroll, useSpring, useInView, useMotionValue, useTransform } from "framer-motion";
+import { motion, AnimatePresence, useScroll, useSpring, useInView, useMotionValue, useTransform, Variants } from "framer-motion";
 import Image from "next/image";
 
 const navLinks = ["Home", "About", "How it Works", "Services"];
@@ -36,7 +36,7 @@ const services = [
   { icon: Settings2, title: "Custom Solutions", desc: "Bespoke integrations and architectures tailored to your unique vision." },
 ];
 
-const sectionFade = {
+const sectionFade: Variants = {
   hidden: { opacity: 0, y: 40 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.6, ease: "easeOut" } },
 };
@@ -72,12 +72,12 @@ function AnimatedCounter({ value, duration = 2 }: { value: string; duration?: nu
 }
 
 // Stagger container variants
-const staggerContainer = {
+const staggerContainer: Variants = {
   hidden: {},
   visible: { transition: { staggerChildren: 0.12, delayChildren: 0.1 } },
 };
 
-const staggerItem = {
+const staggerItem: Variants = {
   hidden: { opacity: 0, y: 30, scale: 0.95 },
   visible: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.5, ease: "easeOut" } },
 };

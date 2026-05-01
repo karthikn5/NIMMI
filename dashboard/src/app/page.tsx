@@ -411,8 +411,8 @@ export default function LandingPage() {
       {/* ─── FOOTER ─── */}
       <footer className="py-10 sm:py-16 px-4 sm:px-6 border-t border-zinc-100 bg-white">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6 sm:gap-8">
-          <div className="relative h-24 sm:h-32 w-72 sm:w-96">
-            <Image src="/nimmi-logo-new.png" alt="Nimmi AI" fill className="object-contain object-center md:object-left" />
+          <div className="relative h-40 sm:h-48 w-full max-w-[400px] md:max-w-[500px]">
+            <Image src="/nimmi-logo-new.png" alt="Nimmi AI" fill className="object-contain object-center md:object-left scale-110" />
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-8">

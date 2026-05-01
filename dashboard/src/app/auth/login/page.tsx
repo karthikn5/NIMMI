@@ -111,10 +111,10 @@ export default function Login() {
                             className="relative w-full h-full"
                         >
                             <Image 
-                                src="/login-mascot.png" 
+                                src="/login-mascot-v3.png" 
                                 alt="Nimmi Mascot" 
                                 fill 
-                                className="object-contain drop-shadow-2xl" 
+                                className="object-contain drop-shadow-2xl mix-blend-multiply" 
                             />
                         </motion.div>
                     </div>

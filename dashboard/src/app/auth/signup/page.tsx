@@ -7,6 +7,7 @@ import { User, Mail, Lock, Eye, EyeOff, ArrowRight } from "lucide-react";
 import Image from "next/image";
 import { useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
+import { motion } from "framer-motion";
 
 export default function Signup() {
     const [formData, setFormData] = useState({ name: "", email: "", password: "" });

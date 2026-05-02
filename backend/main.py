@@ -105,6 +105,7 @@ class BotCreate(BaseModel):
     bot_name: str
     system_prompt: Optional[str] = "You are a helpful assistant."
     visual_config: Optional[dict] = {"color": "#3b82f6", "logo_url": "", "position": "right"}
+    ai_model: Optional[str] = "gemini-flash-latest"
 
 class ChatMessage(BaseModel):
     bot_id: str

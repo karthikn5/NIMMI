@@ -168,8 +168,8 @@ export default function LandingClient() {
             </motion.div>
 
             <motion.h1 variants={staggerItem} className="text-3xl sm:text-5xl md:text-6xl lg:text-7xl font-bold leading-[1.1] mb-4 sm:mb-6">
-              Build Your Own Custom <br />
-              <span className="text-[#9d55ac]">AI Chatbot — No Code Needed.</span>
+              Build Your Own AI Chatbot — <br />
+              <span className="text-[#9d55ac]">No Code Required</span>
             </motion.h1>
 
             <motion.div variants={staggerItem} className="w-16 h-0.5 bg-zinc-300 mb-6 mx-auto md:mx-0" />

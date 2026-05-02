@@ -19,6 +19,9 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "/",
   },
+  verification: {
+    google: "woQlFXLN9lakQBgXCghYGOoN5RNv7bQBFUr-bJZmlOk",
+  },
   openGraph: {
     title: "Nimmi AI — Build Custom AI Chatbots for Your Business | India",
     description: "Build custom AI chatbots for your business with Nimmi AI. Train on your data in minutes & embed anywhere. Boost leads and engagement.",

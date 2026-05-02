@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { ArrowRight, MessageSquare, Check, Sparkles, Zap, Globe, Menu, X, ChevronRight, Play, Bot, Paintbrush, MousePointerClick, ShoppingCart, Code2, Settings2, Brain, Rocket, ChevronUp } from "lucide-react";
+import { ArrowRight, MessageSquare, Check, Sparkles, Zap, Globe, Menu, X, ChevronRight, Play, Bot, Paintbrush, MousePointerClick, ShoppingCart, Code2, Settings2, Brain, Rocket, ChevronUp, Twitter, Linkedin } from "lucide-react";
 import { motion, AnimatePresence, useScroll, useSpring, useInView, useMotionValue, useTransform, Variants } from "framer-motion";
 import Image from "next/image";
 

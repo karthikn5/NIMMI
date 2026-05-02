@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   title: "Nimmi AI — Custom AI Chatbot Builder for Indian Businesses | Train on Your Data",
   description: "Nimmi AI lets you build and deploy custom AI chatbots for your website, WhatsApp, and app — no code needed. Start free. Made in India.",
   alternates: {
-    canonical: "/",
+    canonical: "https://nimmiai.in",
   },
   verification: {
     google: "woQlFXLN9lakQBgXCghYGOoN5RNv7bQBFUr-bJZmlOk",

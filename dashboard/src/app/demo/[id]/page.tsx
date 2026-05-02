@@ -25,7 +25,9 @@ function DemoContent({ params }: { params: Promise<{ id: string }> }) {
 
         const fetchConfig = async () => {
             try {
-                const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in";
+                const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
+                    ? "https://api.nimmiai.in"
+                    : (process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in");
                 const res = await fetch(`${apiUrl}/api/bots/${id}/config`);
                 const data = await res.json();
                 if (res.ok) {
@@ -44,7 +46,10 @@ function DemoContent({ params }: { params: Promise<{ id: string }> }) {
         const script = document.createElement("script");
         script.src = "/widget.js";
         script.setAttribute("data-bot-id", id);
-        script.setAttribute("data-api-url", process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in");
+        const scriptApiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
+            ? "https://api.nimmiai.in"
+            : (process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in");
+        script.setAttribute("data-api-url", scriptApiUrl);
         script.async = true;
         document.body.appendChild(script);
 

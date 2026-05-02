@@ -33,7 +33,9 @@ export default function Dashboard() {
         // Fetch user profile
         const fetchProfile = async () => {
             try {
-                const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in";
+                const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
+                    ? "https://api.nimmiai.in"
+                    : (process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in");
                 const res = await fetch(`${apiUrl}/api/auth/profile?user_id=${userId}`);
                 const data = await res.json();
                 if (res.ok) {
@@ -47,7 +49,9 @@ export default function Dashboard() {
 
         const fetchBots = async () => {
             try {
-                const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in";
+                const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
+                    ? "https://api.nimmiai.in"
+                    : (process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in");
                 const res = await fetch(`${apiUrl}/api/bots?user_id=${userId}`);
                 const data = await res.json();
                 setBots(data);
@@ -68,7 +72,9 @@ export default function Dashboard() {
 
         setCreatingBot(true);
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in";
+            const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
+                ? "https://api.nimmiai.in"
+                : (process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in");
             const res = await fetch(`${apiUrl}/api/bots/create`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -101,7 +107,9 @@ export default function Dashboard() {
         }
 
         try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in";
+            const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
+                ? "https://api.nimmiai.in"
+                : (process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in");
             const res = await fetch(`${apiUrl}/api/bots/${botId}`, {
                 method: "DELETE",
             });

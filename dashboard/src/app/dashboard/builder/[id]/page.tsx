@@ -20,6 +20,10 @@ import ExportModal from "./components/ExportModal";
 
 // Dynamic import for FlowBuilder to avoid SSR issues
 const FlowBuilder = dynamic(() => import("./components/FlowBuilder"), { ssr: false });
+ 
+const API_URL = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
+    ? "https://api.nimmiai.in"
+    : (process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in");
 
 const GOOGLE_FONTS_BATCH_1 = "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Roboto:wght@400;700&family=Open+Sans:wght@400;700&family=Montserrat:wght@400;700&family=Poppins:wght@400;700&family=Lato:wght@400;700&family=Oswald:wght@400;700&family=Raleway:wght@400;700&family=Nunito:wght@400;700&family=Ubuntu:wght@400;700&family=Playfair+Display:wght@400;700&family=Lora:wght@400;700&family=Merriweather:wght@400;700&family=PT+Sans:wght@400;700&family=PT+Serif:wght@400;700&family=Noto+Sans:wght@400;700&family=Noto+Serif:wght@400;700&family=Work+Sans:wght@400;700&family=Fira+Sans:wght@400;700&family=Quicksand:wght@400;700&family=Josefin+Sans:wght@400;700&display=swap";
 const GOOGLE_FONTS_BATCH_2 = "https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@400;700&family=Caveat:wght@400;700&family=Lexend:wght@400;700&family=Kanit:wght@400;700&family=Outfit:wght@400;700&family=Syne:wght@400;700&family=Darker+Grotesque:wght@400;700&family=DM+Sans:wght@400;700&family=Manrope:wght@400;700&family=Sora:wght@400;700&family=Urbanist:wght@400;700&family=Figtree:wght@400;700&family=Archivo:wght@400;700&family=Schibsted+Grotesk:wght@400;700&family=Hanken+Grotesk:wght@400;700&family=Bricolage+Grotesque:wght@400;700&family=Young+Serif&family=Instrument+Serif&family=Playpen+Sans&family=Cabin:wght@400;700&display=swap";
@@ -250,7 +254,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     const fetchLeads = async () => {
         setLeadsLoading(true);
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/bots/${id}/leads`);
+            const res = await fetch(`${API_URL}/api/bots/${id}/leads`);
             const data = await res.json();
             if (res.ok) {
                 setLeads(data);
@@ -290,7 +294,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
 
     const fetchConfig = useCallback(async () => {
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/bots/${id}/config`);
+            const res = await fetch(`${API_URL}/api/bots/${id}/config`);
             const data = await res.json();
             if (res.ok) {
                 setBotName(data.bot_name || "Nimmi Assistant");
@@ -414,7 +418,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
             }
 
             setSaving(true);
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/bots/${id}`, {
+            const res = await fetch(`${API_URL}/api/bots/${id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -490,7 +494,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
         formData.append("file", file);
 
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/bots/${id}/knowledge/upload`, {
+            const res = await fetch(`${API_URL}/api/bots/${id}/knowledge/upload`, {
                 method: "POST",
                 body: formData,
             });
@@ -511,7 +515,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
         if (!crawlUrl) return;
         setCrawling(true);
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/knowledge/crawl`, {
+            const response = await fetch(`${API_URL}/api/knowledge/crawl`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ bot_id: id, url: crawlUrl })
@@ -535,7 +539,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
         if (!youtubeUrl) return;
         setCrawling(true);
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/knowledge/youtube`, {
+            const response = await fetch(`${API_URL}/api/knowledge/youtube`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ bot_id: id, url: youtubeUrl })
@@ -563,7 +567,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
         formData.append("file", file);
 
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/bots/${id}/logo`, {
+            const res = await fetch(`${API_URL}/api/bots/${id}/logo`, {
                 method: "POST",
                 body: formData,
             });
@@ -588,7 +592,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
         formData.append("file", file);
 
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/bots/${id}/background`, {
+            const res = await fetch(`${API_URL}/api/bots/${id}/background`, {
                 method: "POST",
                 body: formData,
             });

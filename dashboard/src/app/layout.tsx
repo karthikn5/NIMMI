@@ -47,6 +47,7 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: "/favicon.png",
+    apple: "/favicon.png", // Google often uses the apple-touch-icon for search snippets
   },
 };
 

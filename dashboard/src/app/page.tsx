@@ -28,7 +28,7 @@ export default function Home() {
     "@type": "Organization",
     "name": "Nimmi AI",
     "url": "https://nimmiai.in",
-    "logo": "https://nimmiai.in/og-image.png",
+    "logo": "https://nimmiai.in/favicon.png",
     "sameAs": [
       "https://twitter.com/nimmiai",
       "https://linkedin.com/company/nimmiai"

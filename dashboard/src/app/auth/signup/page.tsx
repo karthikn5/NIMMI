@@ -24,7 +24,8 @@ export default function Signup() {
                 const user = session.user;
                 // Sync with our backend
                 try {
-                    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/social`, {
+                    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in";
+                    const res = await fetch(`${apiUrl}/api/auth/social`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ 
@@ -63,7 +64,8 @@ export default function Signup() {
         setLoading(true);
         setError("");
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/signup`, {
+            const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in";
+            const res = await fetch(`${apiUrl}/api/auth/signup`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name: formData.name, email: formData.email, password: formData.password })

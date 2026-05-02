@@ -31,7 +31,8 @@ export default function Profile() {
 
         const fetchProfile = async () => {
             try {
-                const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/profile?user_id=${userId}`);
+                const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in";
+                const res = await fetch(`${apiUrl}/api/auth/profile?user_id=${userId}`);
                 const data = await res.json();
                 if (res.ok) {
                     setProfile(data);
@@ -56,7 +57,8 @@ export default function Profile() {
         setSuccess("");
 
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/profile?user_id=${userId}`, {
+            const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in";
+            const res = await fetch(`${apiUrl}/api/auth/profile?user_id=${userId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

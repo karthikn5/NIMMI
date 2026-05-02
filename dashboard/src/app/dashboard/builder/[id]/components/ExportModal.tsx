@@ -19,7 +19,7 @@ export default function ExportModal({ botId, onClose }: ExportModalProps) {
     const baseUrl = typeof window !== "undefined" && !window.location.hostname.includes("localhost")
         ? window.location.origin
         : "http://localhost:3000";
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in";
     const scriptUrl = `${baseUrl}/widget.js`;
 
     useEffect(() => {

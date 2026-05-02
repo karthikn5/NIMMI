@@ -250,7 +250,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     const fetchLeads = async () => {
         setLeadsLoading(true);
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bots/${id}/leads`);
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/bots/${id}/leads`);
             const data = await res.json();
             if (res.ok) {
                 setLeads(data);
@@ -290,7 +290,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
 
     const fetchConfig = useCallback(async () => {
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bots/${id}/config`);
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/bots/${id}/config`);
             const data = await res.json();
             if (res.ok) {
                 setBotName(data.bot_name || "Nimmi Assistant");
@@ -414,7 +414,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
             }
 
             setSaving(true);
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bots/${id}`, {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/bots/${id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -490,7 +490,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
         formData.append("file", file);
 
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bots/${id}/knowledge/upload`, {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/bots/${id}/knowledge/upload`, {
                 method: "POST",
                 body: formData,
             });
@@ -511,7 +511,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
         if (!crawlUrl) return;
         setCrawling(true);
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/knowledge/crawl`, {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/knowledge/crawl`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ bot_id: id, url: crawlUrl })
@@ -535,7 +535,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
         if (!youtubeUrl) return;
         setCrawling(true);
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/knowledge/youtube`, {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/knowledge/youtube`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ bot_id: id, url: youtubeUrl })
@@ -563,7 +563,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
         formData.append("file", file);
 
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bots/${id}/logo`, {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/bots/${id}/logo`, {
                 method: "POST",
                 body: formData,
             });
@@ -588,7 +588,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
         formData.append("file", file);
 
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/bots/${id}/background`, {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in"}/api/bots/${id}/background`, {
                 method: "POST",
                 body: formData,
             });

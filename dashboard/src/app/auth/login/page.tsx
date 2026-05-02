@@ -24,7 +24,8 @@ export default function Login() {
                 const user = session.user;
                 // Sync with our backend
                 try {
-                    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/social`, {
+                    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in";
+                    const res = await fetch(`${apiUrl}/api/auth/social`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ 
@@ -63,7 +64,8 @@ export default function Login() {
         setLoading(true);
         setError("");
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/login`, {
+            const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in";
+            const res = await fetch(`${apiUrl}/api/auth/login`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ email: formData.email, password: formData.password })

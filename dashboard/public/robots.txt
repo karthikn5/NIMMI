@@ -1,0 +1,11 @@
+User-agent: Googlebot
+Allow: /
+Disallow: /dashboard/
+Disallow: /api/
+
+User-agent: *
+Allow: /
+Disallow: /dashboard/
+Disallow: /api/
+
+Sitemap: https://nimmiai.in/sitemap.xml

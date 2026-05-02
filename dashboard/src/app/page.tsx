@@ -35,6 +35,37 @@ export default function Home() {
     ]
   };
 
+  const faqJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "How do I build a custom AI chatbot with Nimmi AI?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "You can build a custom AI chatbot by signing up for a Nimmi AI account, uploading your data (PDFs, URLs, or text), and using our no-code builder to design and deploy your assistant in minutes."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Can I train the AI on my own business data?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes, Nimmi AI is specifically designed to be trained on your own data. You can sync your website, upload documents, or provide raw text to create a chatbot that knows your business inside out."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Is there a free plan available?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes, Nimmi AI offers a free forever plan that allows you to build and test your first AI chatbot with basic features and limits."
+        }
+      }
+    ]
+  };
+
   return (
     <>
       <script
@@ -44,6 +75,10 @@ export default function Home() {
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
       />
       <LandingClient />
     </>

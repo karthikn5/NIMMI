@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Request
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -523,6 +524,12 @@ async def delete_bot(bot_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Bot not found")
     
     try:
+        # Also delete vectors from Pinecone
+        try:
+            await asyncio.to_thread(delete_bot_knowledge, str(bot_uuid))
+        except Exception as vec_err:
+            logger.warning(f"Failed to delete vectors for bot {bot_id}: {vec_err}")
+        
         await db.delete(bot)
         await db.commit()
         return {"message": "Bot deleted successfully"}
@@ -534,7 +541,8 @@ async def delete_bot(bot_id: str, db: AsyncSession = Depends(get_db)):
             traceback.print_exc(file=f)
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-from utils import extract_text_from_pdf, extract_text_from_txt, generate_ai_response
+from utils import extract_text_from_pdf, extract_text_from_txt, generate_ai_response, generate_ai_response_stream
+from vector_store import upsert_knowledge, query_knowledge, delete_bot_knowledge, get_bot_vector_count
 
 @app.post("/api/bots/{bot_id}/logo")
 async def upload_logo(bot_id: str, file: UploadFile = File(...)):
@@ -664,14 +672,31 @@ async def upload_knowledge(bot_id: str, file: UploadFile = File(...), db: AsyncS
     if not extracted_text:
         raise HTTPException(status_code=400, detail="Could not extract text from file")
     
-    # Append to existing knowledge base
+    # Append to existing knowledge base (backup)
     if bot.knowledge_base:
         bot.knowledge_base += "\n\n" + extracted_text
     else:
         bot.knowledge_base = extracted_text
     
     await db.commit()
-    return {"message": "Knowledge updated", "bot_id": bot_id, "filename": file.filename, "knowledge_base": bot.knowledge_base}
+    
+    # Index into Pinecone for semantic search
+    chunks_indexed = 0
+    try:
+        chunks_indexed = await asyncio.to_thread(
+            upsert_knowledge, str(bot_uuid), extracted_text, file.filename
+        )
+        logger.info(f"Indexed {chunks_indexed} chunks from {file.filename} for bot {bot_id}")
+    except Exception as vec_err:
+        logger.error(f"Vector indexing failed for {file.filename}: {vec_err}")
+    
+    return {
+        "message": "Knowledge updated", 
+        "bot_id": bot_id, 
+        "filename": file.filename, 
+        "chunks_indexed": chunks_indexed,
+        "knowledge_base": bot.knowledge_base
+    }
 
 @app.post("/api/chat/message")
 async def chat_message(chat: ChatMessage, db: AsyncSession = Depends(get_db)):
@@ -685,12 +710,38 @@ async def chat_message(chat: ChatMessage, db: AsyncSession = Depends(get_db)):
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
     
-    system_prompt = bot.system_prompt or "You are a helpful assistant."
-    knowledge_context = bot.knowledge_base or ""
+    bot_name = bot.bot_name or "Assistant"
+    user_system_prompt = bot.system_prompt or ""
     
-    logger.info(f"Generating AI response for Bot: {bot.bot_id}")
+    logger.info(f"Generating AI response for Bot: {bot.bot_id} ({bot_name})")
     logger.info(f"Query: {chat.message}")
-    logger.info(f"Context Length: {len(knowledge_context)} characters")
+    
+    # Semantic search via Pinecone for relevant context
+    knowledge_context = ""
+    try:
+        matches = await asyncio.to_thread(query_knowledge, str(bot_uuid), chat.message, 5)
+        if matches:
+            knowledge_context = "\n\n".join([m["text"] for m in matches])
+            logger.info(f"RAG: Retrieved {len(matches)} chunks (top score: {matches[0]['score']:.3f}), context: {len(knowledge_context)} chars")
+        else:
+            # Fallback to raw knowledge_base if Pinecone has no data
+            knowledge_context = (bot.knowledge_base or "")[:8000]
+            logger.info(f"RAG: No Pinecone matches, using raw knowledge_base ({len(knowledge_context)} chars)")
+    except Exception as vec_err:
+        logger.warning(f"RAG search failed, falling back to raw knowledge: {vec_err}")
+        knowledge_context = (bot.knowledge_base or "")[:8000]
+    
+    # Build persona-aware system prompt
+    system_prompt = f"""You are {bot_name}. You must respond in first person as if you ARE {bot_name}.
+Never say "according to the document" or "based on the data provided."
+Instead, speak naturally as yourself — as {bot_name}.
+
+If the user asks your name, you are {bot_name}.
+If the user asks about your skills, experience, or background, answer using the knowledge below as YOUR OWN information.
+
+{user_system_prompt}
+
+Use ONLY the following knowledge to answer. If you don't know something from the knowledge provided, say so naturally without mentioning any documents or data sources."""
     
     try:
         answer = generate_ai_response(
@@ -715,6 +766,88 @@ async def chat_message(chat: ChatMessage, db: AsyncSession = Depends(get_db)):
             "answer": "Sorry, I'm having trouble thinking right now. Please try again.",
             "bot_id": chat.bot_id
         }
+
+
+@app.post("/api/chat/message/stream")
+async def chat_message_stream(chat: ChatMessage, db: AsyncSession = Depends(get_db)):
+    """Streaming version of chat — returns SSE events with word-by-word response."""
+    logger.info(f"Received streaming request for Bot ID: {chat.bot_id} | Session: {chat.visitor_session_id}")
+    try:
+        bot_uuid = uuid.UUID(chat.bot_id)
+        result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
+    except (ValueError, AttributeError) as e:
+        logger.error(f"Invalid Bot ID format in streaming request: '{chat.bot_id}' | Error: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid Bot ID format: {chat.bot_id}")
+        
+    bot = result.scalars().first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    
+    bot_name = bot.bot_name or "Assistant"
+    user_system_prompt = bot.system_prompt or ""
+    
+    # Semantic search via Pinecone
+    knowledge_context = ""
+    try:
+        matches = await asyncio.to_thread(query_knowledge, str(bot_uuid), chat.message, 5)
+        if matches:
+            knowledge_context = "\n\n".join([m["text"] for m in matches])
+        else:
+            knowledge_context = (bot.knowledge_base or "")[:8000]
+    except Exception:
+        knowledge_context = (bot.knowledge_base or "")[:8000]
+    
+    # Persona system prompt
+    is_first_message = len(chat.history) == 0
+    
+    system_prompt = f"""You are {bot_name}. You must ALWAYS respond in first person as {bot_name}.
+Speak naturally as a human assistant.
+
+YOUR IDENTITY:
+- Name: {bot_name}
+- Role: Personal Assistant
+- Organization/Company: Find the company name or the person's name in the "INTERNAL KNOWLEDGE" below.
+
+INTRODUCTION RULE:
+{f'Introduce yourself naturally in this first message: "Hi, I am {bot_name}, your personal assistant from [Company/Name]".' if is_first_message else 'Do NOT introduce yourself again. You have already introduced yourself. Get straight to the answer without repeating your name or role.'}
+
+STRICT RULES:
+1. NEVER mention technical terms like "RAG", "AI model", "knowledge base", "context", or "database".
+2. NO HALLUCINATION: Only answer using the "INTERNAL KNOWLEDGE" provided. If the information is not there, say "I'm sorry, I don't have that information in my current knowledge base."
+3. CORRECT SPACING: Ensure you use proper spacing between words.
+4. BE CONCISE: Don't repeat your name in every sentence.
+
+{user_system_prompt}
+
+Adopt the persona fully. Be helpful, natural, and stay in character."""
+    
+    async def event_generator():
+        try:
+            for text_chunk in generate_ai_response_stream(
+                system_prompt,
+                knowledge_context,
+                chat.message,
+                history=chat.history,
+                provider=bot.ai_provider,
+                model_name=bot.ai_model,
+                api_key=bot.ai_api_key,
+            ):
+                yield f"data: {text_chunk}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            logger.error(f"Stream error: {e}")
+            yield f"data: Sorry, I'm having trouble responding. Please try again.\n\n"
+            yield "data: [DONE]\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 @app.post("/api/chat/variables")
 async def capture_variables(data: VariableCapture, db: AsyncSession = Depends(get_db)):
@@ -870,13 +1003,20 @@ async def crawl_website(data: KnowledgeCrawlRequest, db: AsyncSession = Depends(
         if not bot:
             return {"error": "Bot not found"}
             
-        # Append to knowledge base
+        # Append to knowledge base (backup)
         current_kb = bot.knowledge_base or ""
         new_kb = f"{current_kb}\n\n--- Source: {data.url} ---\n{text}"
         bot.knowledge_base = new_kb
         await db.commit()
         
-        return {"status": "success", "message": f"Crawled {len(text)} characters from {data.url}"}
+        # Index into Pinecone
+        chunks_indexed = 0
+        try:
+            chunks_indexed = await asyncio.to_thread(upsert_knowledge, str(bot_uuid), text, data.url)
+        except Exception as vec_err:
+            logger.error(f"Vector indexing failed for crawl {data.url}: {vec_err}")
+        
+        return {"status": "success", "message": f"Crawled {len(text)} characters from {data.url}", "chunks_indexed": chunks_indexed}
     except Exception as e:
         logger.error(f"Crawl Error: {e}")
         return {"error": str(e)}
@@ -894,16 +1034,70 @@ async def crawl_youtube(data: YouTubeCrawlRequest, db: AsyncSession = Depends(ge
         if not bot:
             return {"error": "Bot not found"}
             
-        # Append to knowledge base
+        # Append to knowledge base (backup)
         current_kb = bot.knowledge_base or ""
         new_kb = f"{current_kb}\n\n--- YouTube Source ---\n{text}"
         bot.knowledge_base = new_kb
         await db.commit()
         
-        return {"status": "success", "message": f"Extracted {len(text)} characters from YouTube"}
+        # Index into Pinecone
+        chunks_indexed = 0
+        try:
+            chunks_indexed = await asyncio.to_thread(upsert_knowledge, str(bot_uuid), text, data.url)
+        except Exception as vec_err:
+            logger.error(f"Vector indexing failed for YouTube {data.url}: {vec_err}")
+        
+        return {"status": "success", "message": f"Extracted {len(text)} characters from YouTube", "chunks_indexed": chunks_indexed}
     except Exception as e:
         logger.error(f"YouTube Extract Error: {e}")
         return {"error": str(e)}
+
+
+@app.post("/api/bots/{bot_id}/knowledge/reindex")
+async def reindex_knowledge(bot_id: str, db: AsyncSession = Depends(get_db)):
+    """Re-index existing knowledge_base text into Pinecone (one-time migration)."""
+    try:
+        bot_uuid = uuid.UUID(bot_id)
+        result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid Bot ID format")
+    
+    bot = result.scalars().first()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    
+    if not bot.knowledge_base:
+        return {"message": "No knowledge base to index", "chunks_indexed": 0}
+    
+    # Clear existing vectors first
+    try:
+        await asyncio.to_thread(delete_bot_knowledge, str(bot_uuid))
+    except Exception:
+        pass
+    
+    # Re-index
+    try:
+        chunks_indexed = await asyncio.to_thread(
+            upsert_knowledge, str(bot_uuid), bot.knowledge_base, "reindex"
+        )
+        return {
+            "message": f"Successfully re-indexed {chunks_indexed} chunks",
+            "chunks_indexed": chunks_indexed
+        }
+    except Exception as e:
+        logger.error(f"Reindex error for bot {bot_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/bots/{bot_id}/knowledge/stats")
+async def knowledge_stats(bot_id: str):
+    """Get vector count and indexing status for a bot."""
+    try:
+        bot_uuid = uuid.UUID(bot_id)
+        count = await asyncio.to_thread(get_bot_vector_count, str(bot_uuid))
+        return {"bot_id": bot_id, "vector_count": count, "indexed": count > 0}
+    except Exception as e:
+        return {"bot_id": bot_id, "vector_count": 0, "indexed": False, "error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn

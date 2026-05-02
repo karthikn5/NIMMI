@@ -18,3 +18,5 @@ openai
 groq
 google-auth
 google-api-python-client
+pinecone
+sse-starlette

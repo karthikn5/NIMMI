@@ -9,9 +9,9 @@ import Image from "next/image";
 const navLinks = ["Home", "About", "How it Works", "Services"];
 
 const features = [
-  { icon: Brain, title: "Natural Conversations", desc: "AI that understands context, tone, and intent — not just keywords." },
-  { icon: Sparkles, title: "Beautiful Interfaces", desc: "Customizable chat widgets that match your brand perfectly." },
-  { icon: Zap, title: "Lightning Setup", desc: "Go from idea to live chatbot in under 10 minutes." },
+  { image: "/feat-brain.png", title: "Natural Conversations", desc: "AI that understands context, tone, and intent — not just keywords." },
+  { image: "/feat-design.png", title: "Beautiful Interfaces", desc: "Customizable chat widgets that match your brand perfectly." },
+  { image: "/feat-rocket.png", title: "Lightning Setup", desc: "Go from idea to live chatbot in under 10 minutes." },
 ];
 
 const stats = [
@@ -22,18 +22,18 @@ const stats = [
 ];
 
 const steps = [
-  { num: "01", icon: MessageSquare, title: "Design Your Bot", desc: "Choose a template or start from scratch. Define your bot's personality, tone, and conversation flows with our visual builder." },
-  { num: "02", icon: Brain, title: "Train & Customize", desc: "Upload your knowledge base, FAQs, or documents. Fine-tune responses until your bot sounds exactly like your brand.", highlight: true },
-  { num: "03", icon: Rocket, title: "Deploy Anywhere", desc: "Embed on your website, connect to WhatsApp, Slack, or any platform. Go live with one click." },
+  { num: "01", image: "/step-pencil.png", title: "Design Your Bot", desc: "Choose a template or start from scratch. Define your bot's personality, tone, and conversation flows with our visual builder." },
+  { num: "02", image: "/feat-brain.png", title: "Train & Customize", desc: "Upload your knowledge base, FAQs, or documents. Fine-tune responses until your bot sounds exactly like your brand.", highlight: true },
+  { num: "03", image: "/feat-rocket.png", title: "Deploy Anywhere", desc: "Embed on your website, connect to WhatsApp, Slack, or any platform. Go live with one click." },
 ];
 
 const services = [
-  { icon: Bot, title: "AI Integration", desc: "Custom LLM-powered solutions tailored to your business needs and workflows." },
-  { icon: Code2, title: "Premium UI/UX", desc: "Design-first approach creating high-fidelity, interactive chat experiences." },
-  { icon: Globe, title: "Custom Development", desc: "Full-stack development of robust, scalable chatbot applications." },
-  { icon: ShoppingCart, title: "E-commerce Bots", desc: "Specialized shopping assistants that drive conversions and delight customers." },
-  { icon: MousePointerClick, title: "Multi-Platform", desc: "Deploy across web, mobile, WhatsApp, Telegram, and more seamlessly." },
-  { icon: Settings2, title: "Custom Solutions", desc: "Bespoke integrations and architectures tailored to your unique vision." },
+  { image: "/service-ai.png", title: "AI Integration", desc: "Custom LLM-powered solutions tailored to your business needs and workflows." },
+  { image: "/service-uiux.png", title: "Premium UI/UX", desc: "Design-first approach creating high-fidelity, interactive chat experiences." },
+  { image: "/service-dev.png", title: "Custom Development", desc: "Full-stack development of robust, scalable chatbot applications." },
+  { image: "/service-cart.png", title: "E-commerce Bots", desc: "Specialized shopping assistants that drive conversions and delight customers." },
+  { image: "/chat-3d.png", title: "Multi-Platform", desc: "Deploy across web, mobile, WhatsApp, Telegram, and more seamlessly." },
+  { image: "/gear-3d.png", title: "Custom Solutions", desc: "Bespoke integrations and architectures tailored to your unique vision." },
 ];
 
 const sectionFade: Variants = {
@@ -137,8 +137,8 @@ export default function LandingPage() {
         <AnimatePresence>
           {mobileMenu && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-              className="md:hidden bg-white border-t border-zinc-100 overflow-hidden">
-              <div className="p-6 flex flex-col gap-4">
+              className="md:hidden bg-white/95 backdrop-blur-xl border-t border-zinc-100 overflow-hidden shadow-2xl">
+              <div className="p-6 flex flex-col gap-5">
                 {navLinks.map((item) => (
                   <a key={item} href={`#${item.toLowerCase().replace(/\s+/g, '-')}`}
                     onClick={() => setMobileMenu(false)}
@@ -159,24 +159,24 @@ export default function LandingPage() {
       {/* ─── HERO SECTION ─── */}
       <section id="home" className="pt-24 sm:pt-32 pb-12 sm:pb-20 px-4 sm:px-6">
         <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-center">
-          <motion.div initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}>
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-purple-50 border border-purple-100 rounded-full mb-8">
+          <motion.div initial="hidden" animate="visible" variants={staggerContainer} className="text-center md:text-left z-10">
+            <motion.div variants={staggerItem} className="inline-flex items-center gap-2 px-4 py-1.5 bg-purple-50 border border-purple-100 rounded-full mb-8 mx-auto md:mx-0">
               <Sparkles size={14} className="text-[#9d55ac]" />
               <span className="text-sm font-medium text-[#9d55ac]">Your AI chatbot, your way</span>
-            </div>
+            </motion.div>
 
-            <h1 className="text-3xl sm:text-5xl md:text-6xl lg:text-7xl font-bold leading-[1.1] mb-4 sm:mb-6">
+            <motion.h1 variants={staggerItem} className="text-3xl sm:text-5xl md:text-6xl lg:text-7xl font-bold leading-[1.1] mb-4 sm:mb-6">
               Build chatbots<br />
               <span className="text-[#9d55ac]">that feel human.</span>
-            </h1>
+            </motion.h1>
 
-            <div className="w-16 h-0.5 bg-zinc-300 mb-6" />
+            <motion.div variants={staggerItem} className="w-16 h-0.5 bg-zinc-300 mb-6 mx-auto md:mx-0" />
 
-            <p className="text-zinc-500 text-base sm:text-lg leading-relaxed mb-6 sm:mb-8 max-w-lg">
+            <motion.p variants={staggerItem} className="text-zinc-500 text-base sm:text-lg leading-relaxed mb-6 sm:mb-8 max-w-lg mx-auto md:mx-0">
               Design, train, and deploy beautiful AI chatbots without writing a single line of code. Make every conversation meaningful.
-            </p>
+            </motion.p>
 
-            <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4 mb-6">
+            <motion.div variants={staggerItem} className="flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4 mb-8 items-stretch sm:items-center">
               <Link href="/auth/signup"
                 className="inline-flex items-center justify-center gap-2 px-5 sm:px-7 py-3 bg-[#9d55ac] text-white rounded-lg font-semibold hover:bg-[#8a4a97] transition-all shadow-lg shadow-[#9d55ac]/25 text-sm sm:text-base">
                 Start Building Free <ArrowRight size={18} />
@@ -184,12 +184,12 @@ export default function LandingPage() {
               <button className="inline-flex items-center justify-center gap-2 px-5 sm:px-7 py-3 bg-white border border-zinc-200 rounded-lg font-semibold text-zinc-700 hover:bg-zinc-50 transition-all shadow-sm text-sm sm:text-base">
                 <Play size={16} /> Watch Demo
               </button>
-            </div>
+            </motion.div>
 
-            <div className="flex items-center gap-6 text-sm text-zinc-500">
+            <motion.div variants={staggerItem} className="flex flex-wrap items-center justify-center md:justify-start gap-4 sm:gap-6 text-sm text-zinc-500">
               <span className="flex items-center gap-1.5"><Check size={16} className="text-[#9d55ac]" /> No credit card</span>
               <span className="flex items-center gap-1.5"><Check size={16} className="text-[#9d55ac]" /> Free forever plan</span>
-            </div>
+            </motion.div>
           </motion.div>
 
           <motion.div initial={{ opacity: 0, scale: 0.85, rotate: -2 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} transition={{ duration: 0.8, delay: 0.3, ease: [0.22, 1, 0.36, 1] }}
@@ -212,8 +212,8 @@ export default function LandingPage() {
             <div className="absolute bottom-1/3 right-0 w-3 h-3 rounded-full bg-purple-200 opacity-50" />
             <div className="absolute top-10 left-1/4 w-1.5 h-1.5 rounded-full bg-orange-300 opacity-60" />
 
-            <div className="relative w-[240px] h-[240px] sm:w-[320px] sm:h-[320px] md:w-[420px] md:h-[420px]">
-              <Image src="/robot-mascot.png" alt="AI Chatbot Mascot" fill className="object-contain drop-shadow-2xl" priority />
+            <div className="relative w-[280px] h-[280px] sm:w-[320px] sm:h-[320px] md:w-[420px] md:h-[420px] mt-8 md:mt-0">
+              <Image src="/robot-mascot.png" alt="AI Chatbot Mascot" fill className="object-contain drop-shadow-2xl mix-blend-multiply" priority />
             </div>
           </motion.div>
         </div>
@@ -239,8 +239,8 @@ export default function LandingPage() {
                     whileInView={{ rotate: [0, -10, 10, 0] }}
                     transition={{ duration: 0.6, delay: i * 0.15 }}
                     viewport={{ once: true }}
-                    className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center shrink-0">
-                    <f.icon size={20} className="text-[#9d55ac]" />
+                    className="w-12 h-12 rounded-xl bg-purple-100 flex items-center justify-center shrink-0 relative overflow-hidden">
+                    <Image src={f.image} alt={f.title} fill className="object-contain p-1.5 mix-blend-multiply" />
                   </motion.div>
                   <div>
                     <h3 className="font-semibold text-zinc-900 mb-1">{f.title}</h3>
@@ -252,8 +252,8 @@ export default function LandingPage() {
           </motion.div>
 
           {/* Chat Mockup */}
-          <motion.div initial={{ opacity: 0, y: 40, scale: 0.95 }} whileInView={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }} viewport={{ once: true }}
-            className="bg-white rounded-3xl shadow-xl border border-zinc-100 overflow-hidden">
+          <motion.div initial={{ opacity: 0, x: 50 }} whileInView={{ opacity: 1, x: 0 }} transition={{ duration: 0.8 }} viewport={{ once: true }}
+            className="relative scale-90 sm:scale-100 origin-top bg-white rounded-3xl shadow-xl border border-zinc-100 overflow-hidden">
             <div className="flex items-center gap-2 px-5 py-3 border-b border-zinc-100">
               <div className="w-3 h-3 rounded-full bg-red-400" />
               <div className="w-3 h-3 rounded-full bg-yellow-400" />
@@ -294,8 +294,17 @@ export default function LandingPage() {
         </div>
 
         {/* Stats Bar */}
-        <motion.div className="max-w-7xl mx-auto mt-12 sm:mt-20 grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4"
+        <motion.div className="max-w-7xl mx-auto mt-12 sm:mt-20 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 sm:gap-4 relative"
           variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }}>
+          {/* Decorative icons for stats */}
+          <motion.div animate={{ scale: [1, 1.15, 1], rotate: [0, 10, 0] }} transition={{ duration: 4, repeat: Infinity }}
+            className="absolute -left-6 -top-6 w-10 h-10 hidden lg:block opacity-60">
+            <Image src="/heart-3d.png" alt="Heart" fill className="object-contain mix-blend-multiply" />
+          </motion.div>
+          <motion.div animate={{ y: [0, -10, 0], rotate: [0, -10, 0] }} transition={{ duration: 3.5, repeat: Infinity }}
+            className="absolute -right-6 -bottom-6 w-12 h-12 hidden lg:block opacity-50">
+            <Image src="/bolt-3d.png" alt="Bolt" fill className="object-contain mix-blend-multiply" />
+          </motion.div>
           {stats.map((s, i) => (
             <motion.div key={i} variants={staggerItem}
               whileHover={{ y: -6, boxShadow: "0 20px 40px -12px rgba(157,85,172,0.15)", transition: { duration: 0.3 } }}
@@ -313,7 +322,17 @@ export default function LandingPage() {
       {/* ─── HOW IT WORKS ─── */}
       <section id="how-it-works" className="py-16 sm:py-24 px-4 sm:px-6 bg-[#faf9f7]">
         <div className="max-w-7xl mx-auto">
-          <motion.div variants={sectionFade} initial="hidden" whileInView="visible" viewport={{ once: true }} className="text-center mb-16">
+          <motion.div variants={sectionFade} initial="hidden" whileInView="visible" viewport={{ once: true }} className="text-center mb-16 relative">
+            {/* Floating Decorative Icons */}
+            <motion.div animate={{ rotate: [0, 10, -10, 0], scale: [1, 1.1, 1] }} transition={{ duration: 4, repeat: Infinity }}
+              className="absolute -top-10 -left-4 w-12 h-12 hidden md:block opacity-60">
+              <Image src="/spark-3d.png" alt="Spark" fill className="object-contain mix-blend-multiply" />
+            </motion.div>
+            <motion.div animate={{ y: [0, 12, 0], rotate: [0, -5, 5, 0] }} transition={{ duration: 5, repeat: Infinity }}
+              className="absolute top-20 -right-8 w-16 h-16 hidden md:block opacity-40">
+              <Image src="/chat-3d.png" alt="Chat" fill className="object-contain mix-blend-multiply" />
+            </motion.div>
+
             <span className="inline-block px-4 py-1.5 bg-purple-50 border border-purple-100 rounded-full text-sm font-medium text-[#9d55ac] mb-4">
               Simple Process
             </span>
@@ -330,14 +349,13 @@ export default function LandingPage() {
             {steps.map((s, i) => (
               <motion.div key={i} variants={staggerItem}
                 whileHover={{ y: -8, transition: { duration: 0.3 } }}
-                className={`relative z-10 p-6 sm:p-8 rounded-3xl border transition-all hover:shadow-lg ${
-                  s.highlight ? "bg-purple-50 border-purple-200 shadow-md" : "bg-white border-zinc-100 hover:border-purple-100"
-                }`}>
+                className={`relative z-10 p-6 sm:p-8 rounded-3xl border transition-all hover:shadow-lg ${s.highlight ? "bg-purple-50 border-purple-200 shadow-md" : "bg-white border-zinc-100 hover:border-purple-100"
+                  }`}>
                 <motion.div initial={{ opacity: 0, scale: 0.5 }} whileInView={{ opacity: 1, scale: 1 }} transition={{ delay: 0.3 + i * 0.15, type: "spring" }} viewport={{ once: true }}
                   className="absolute top-6 right-8 text-6xl font-bold text-zinc-100 select-none">{s.num}</motion.div>
                 <motion.div whileInView={{ rotate: [0, -15, 15, 0] }} transition={{ duration: 0.5, delay: i * 0.2 }} viewport={{ once: true }}
-                  className="w-12 h-12 rounded-2xl bg-purple-100 flex items-center justify-center mb-6">
-                  <s.icon size={22} className="text-[#9d55ac]" />
+                  className="w-16 h-16 rounded-2xl bg-purple-100 flex items-center justify-center mb-6 relative overflow-hidden">
+                  <Image src={s.image} alt={s.title} fill className="object-contain p-2 mix-blend-multiply" />
                 </motion.div>
                 <h3 className="text-xl font-bold mb-3">{s.title}</h3>
                 <p className="text-sm text-zinc-500 leading-relaxed">{s.desc}</p>
@@ -360,6 +378,16 @@ export default function LandingPage() {
               <Image src="/robot-mascot-2.png" alt="Nimmi AI Mascot" fill className="object-contain drop-shadow-lg" />
             </motion.div>
 
+            {/* Floating Decorative Icons */}
+            <motion.div animate={{ rotate: [0, 15, -15, 0], y: [0, -10, 0] }} transition={{ duration: 5, repeat: Infinity }}
+              className="absolute right-0 sm:right-[15%] top-0 w-12 h-12 hidden sm:block opacity-60">
+              <Image src="/spark-3d.png" alt="Spark" fill className="object-contain mix-blend-multiply" />
+            </motion.div>
+            <motion.div animate={{ rotate: [0, -20, 20, 0], y: [0, 10, 0] }} transition={{ duration: 6, repeat: Infinity }}
+              className="absolute left-[20%] bottom-[-20px] w-14 h-14 hidden sm:block opacity-50">
+              <Image src="/chat-3d.png" alt="Chat" fill className="object-contain mix-blend-multiply" />
+            </motion.div>
+
             <span className="inline-block px-4 py-1.5 bg-purple-50 border border-purple-100 rounded-full text-sm font-medium text-[#9d55ac] mb-4">
               What We Offer
             </span>
@@ -367,15 +395,20 @@ export default function LandingPage() {
             <p className="text-zinc-500 max-w-xl mx-auto">Everything you need to build, launch, and scale your conversational AI.</p>
           </motion.div>
 
-          <motion.div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6"
+          <motion.div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 sm:gap-6 relative"
             variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }}>
+            {/* Background decorative gear */}
+            <motion.div animate={{ rotate: 360 }} transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
+              className="absolute -right-12 bottom-1/4 w-20 h-20 hidden xl:block opacity-20 pointer-events-none">
+              <Image src="/gear-3d.png" alt="Gear" fill className="object-contain mix-blend-multiply" />
+            </motion.div>
             {services.map((s, i) => (
               <motion.div key={i} variants={staggerItem}
                 whileHover={{ y: -8, scale: 1.02, transition: { duration: 0.3 } }}
                 className="p-6 sm:p-8 bg-[#faf9f7] rounded-3xl border border-zinc-100 hover:border-purple-200 hover:shadow-lg transition-all group cursor-default">
                 <motion.div whileInView={{ scale: [0.5, 1.15, 1] }} transition={{ duration: 0.5, delay: i * 0.08 }} viewport={{ once: true }}
-                  className="w-12 h-12 rounded-2xl bg-purple-100 flex items-center justify-center mb-6 group-hover:bg-purple-200 transition-colors">
-                  <s.icon size={22} className="text-[#9d55ac]" />
+                  className="w-16 h-16 rounded-2xl bg-purple-100 flex items-center justify-center mb-6 group-hover:bg-purple-200 transition-colors relative overflow-hidden">
+                  <Image src={s.image} alt={s.title} fill className="object-contain p-2 mix-blend-multiply" />
                 </motion.div>
                 <h3 className="text-lg font-bold mb-2">{s.title}</h3>
                 <p className="text-sm text-zinc-500 leading-relaxed">{s.desc}</p>

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { User, Mail, Lock, Eye, EyeOff, ArrowRight } from "lucide-react";
+import { User, Mail, Lock, Eye, EyeOff, ArrowRight, ArrowLeft } from "lucide-react";
 import Image from "next/image";
 import { useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
@@ -86,6 +86,13 @@ export default function Signup() {
 
     return (
         <div className="min-h-screen bg-[#fcfcfd] flex items-center justify-center p-6 relative overflow-hidden">
+            {/* Back Button */}
+            <Link href="/" className="absolute top-8 left-8 flex items-center gap-2 text-zinc-500 hover:text-zinc-900 transition-colors z-20 group">
+                <div className="w-8 h-8 rounded-full border border-zinc-200 flex items-center justify-center group-hover:border-zinc-300 transition-colors">
+                    <ArrowLeft size={16} />
+                </div>
+                <span className="text-sm font-medium">Back to Home</span>
+            </Link>
             {/* Background Accents */}
             <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-purple-400/5 blur-[120px] rounded-full" />
             <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-purple-400/5 blur-[120px] rounded-full" />
@@ -93,9 +100,6 @@ export default function Signup() {
             <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 gap-12 items-center z-10">
                 {/* Left Side: Visual/Branding */}
                 <div className="hidden md:flex flex-col items-start space-y-8 p-8">
-                    <div className="relative h-12 w-40">
-                        <Image src="/nimmi-logo-new.png" alt="Nimmi AI" fill className="object-contain object-left" />
-                    </div>
                     <div className="space-y-4">
                         <h2 className="text-4xl font-bold text-zinc-900 leading-tight">
                             Start building <span className="text-[#9d55ac]">smarter</span> bots.

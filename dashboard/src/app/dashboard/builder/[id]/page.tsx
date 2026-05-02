@@ -219,6 +219,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
     const router = useRouter();
     const previewContainerRef = useRef<HTMLDivElement>(null);
     const [previewScale, setPreviewScale] = useState(1);
+    const [showMobilePreview, setShowMobilePreview] = useState(false);
 
     // Dynamically calculate scale for desktop preview
     useEffect(() => {
@@ -735,7 +736,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                 />
             )}
             {/* Sidebar / Left Config */}
-            <aside className="w-full lg:w-[520px] lg:h-screen h-[45vh] border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col shrink-0 overflow-hidden bg-white">
+            <aside className={`${showMobilePreview ? 'hidden' : 'flex'} lg:flex w-full lg:w-[520px] h-screen lg:h-screen border-b lg:border-b-0 lg:border-r border-slate-200 flex-col shrink-0 overflow-hidden bg-white`}>
                 <header className="px-4 py-4 border-b border-slate-100 flex items-center justify-between gap-3 bg-white">
                     <Link href="/dashboard" className="p-1.5 hover:bg-slate-50 rounded-lg transition-colors shrink-0 text-slate-400 hover:text-slate-900">
                         <ChevronLeft size={20} />
@@ -747,6 +748,12 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                         </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                            onClick={() => setShowMobilePreview(true)}
+                            className="lg:hidden flex items-center gap-1.5 px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold hover:bg-slate-100 transition-colors text-[#9d55ac] shadow-sm"
+                        >
+                            <Bot size={14} /> Preview
+                        </button>
                         <Link
                             href={`/demo/${id}`}
                             target="_blank"
@@ -1440,7 +1447,14 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
             </aside>
 
             {/* Main Preview Area */}
-            <main className="flex-1 bg-slate-50 relative flex items-center justify-center p-4 sm:p-8 lg:p-12 overflow-hidden shadow-inner">
+            <main className={`${showMobilePreview ? 'flex' : 'hidden'} lg:flex flex-1 bg-slate-50 relative flex-col lg:flex-row items-center justify-center p-4 sm:p-8 lg:p-12 overflow-hidden shadow-inner`}>
+                {/* Mobile Back Button */}
+                <button 
+                    onClick={() => setShowMobilePreview(false)}
+                    className="lg:hidden absolute top-6 left-6 z-50 flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95"
+                >
+                    <ChevronLeft size={16} /> Back to Design
+                </button>
                 {/* Abstract Background for Preview */}
                 <div className="absolute inset-0 z-0">
                     <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:16px_16px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-30" />

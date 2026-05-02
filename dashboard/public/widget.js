@@ -114,6 +114,25 @@
         }
         #nimmi-chat-send:hover { opacity: 0.9; transform: scale(1.05); }
         #nimmi-chat-send:active { transform: scale(0.95); }
+        .nimmi-typing {
+            display: inline-flex;
+            gap: 4px;
+            align-items: center;
+        }
+        .nimmi-typing span {
+            width: 4px;
+            height: 4px;
+            background: currentColor;
+            border-radius: 50%;
+            opacity: 0.4;
+            animation: nimmi-blink 1.4s infinite both;
+        }
+        .nimmi-typing span:nth-child(2) { animation-delay: 0.2s; }
+        .nimmi-typing span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes nimmi-blink {
+            0%, 100% { opacity: 0.4; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.2); }
+        }
     `;
     document.head.appendChild(style);
 
@@ -175,6 +194,12 @@
                     visitorSessionId = 'v' + Math.random().toString(36).substring(2, 10);
                     localStorage.setItem('nimmi_session_id', visitorSessionId);
                 }
+
+                let chatHistory = JSON.parse(localStorage.getItem(`nimmi_history_${botId}`) || '[]');
+
+                const saveHistory = () => {
+                    localStorage.setItem(`nimmi_history_${botId}`, JSON.stringify(chatHistory));
+                };
 
                 container.style.right = position === 'right' ? `${right_padding}px` : 'auto';
                 container.style.left = position === 'left' ? `${right_padding}px` : 'auto';
@@ -269,14 +294,27 @@
                 inputElement.style.background = input_bg_color;
                 inputElement.style.color = input_text_color;
 
-                bubble.onclick = () => window.style.display = window.style.display === 'flex' ? 'none' : 'flex';
+                bubble.onclick = () => {
+                    const isOpening = window.style.display !== 'flex';
+                    window.style.display = isOpening ? 'flex' : 'none';
+                    
+                    if (isOpening && chatHistory.length === 0) {
+                        setTimeout(() => {
+                            addMessage(`Hi! I am ${bot_name}, your personal assistant. How can I help you today?`, 'assistant');
+                        }, 500);
+                    }
+                };
                 close.onclick = () => window.style.display = 'none';
 
                 // Alignment Fix: Ensure window stays on screen
                 window.style.right = visual_config.position === 'right' ? '0' : 'auto';
                 window.style.left = visual_config.position === 'left' ? '0' : 'auto';
 
-                const addMessage = (content, role, isHtml = false) => {
+                const addMessage = (content, role, isHtml = false, shouldSave = true) => {
+                    if (shouldSave) {
+                        chatHistory.push({ role, content });
+                        saveHistory();
+                    }
                     const div = document.createElement('div');
                     div.style.marginBottom = '10px';
                     div.style.textAlign = role === 'user' ? 'right' : 'left';
@@ -304,8 +342,11 @@
                     div.appendChild(inner);
                     messages.appendChild(div);
                     messages.scrollTop = messages.scrollHeight;
-                    return div;
+                    return { div, inner };
                 };
+
+                // Load existing history into UI
+                chatHistory.forEach(m => addMessage(m.content, m.role, m.content.includes('<'), false));
 
                 const addOptions = (options, onSelect) => {
                     const div = document.createElement('div');
@@ -379,31 +420,34 @@
                     input.onchange = (e) => {
                         const file = e.target.files[0];
                         if (file) {
-                            addMessage(`Uploaded: ${file.name}`, 'user');
-                            onSelect(file.name);
+                            div.remove();
+                            addMessage(`File: ${file.name}`, 'user');
+                            onSelect(file);
                         }
                     };
+                    document.body.appendChild(input);
 
                     const btn = document.createElement('button');
                     btn.innerText = "Upload File";
                     btn.style.padding = '8px 16px';
-                    btn.style.borderRadius = '12px';
+                    btn.style.borderRadius = '20px';
                     btn.style.background = color;
                     btn.style.color = text_color;
                     btn.style.border = 'none';
                     btn.style.cursor = 'pointer';
                     btn.onclick = () => input.click();
 
-                    div.appendChild(input);
                     div.appendChild(btn);
                     messages.appendChild(div);
                     messages.scrollTop = messages.scrollHeight;
                 };
 
-                const getNextNode = (nodeId, sourceHandle = null) => {
-                    const edge = edges.find(e =>
-                        e.source === nodeId && (!sourceHandle || e.sourceHandle === sourceHandle)
-                    );
+                const getNextNode = (id, label = null) => {
+                    if (label) {
+                        const edge = edges.find(e => e.source === id && e.sourceHandle === label);
+                        return edge ? nodes.find(n => n.id === edge.target) : null;
+                    }
+                    const edge = edges.find(e => e.source === id);
                     return edge ? nodes.find(n => n.id === edge.target) : null;
                 };
 
@@ -459,23 +503,23 @@
                             setTimeout(() => processNode(getNextNode(node.id)), 600);
                             break;
                         case 'multipleChoice':
-                            addMessage(node.data.message || "Please choose an option:", 'assistant');
-                            addOptions(node.data.options || [], (choice) => {
-                                setVariable(node, choice);
-                                processNode(getNextNode(node.id));
+                            addMessage(node.data.message || "Please select an option:", 'assistant');
+                            addOptions(node.data.options || [], (val) => {
+                                setVariable(node, val);
+                                processNode(getNextNode(node.id, val));
                             });
                             break;
                         case 'rating':
-                            addMessage(node.data.message || "Rate your experience:", 'assistant');
+                            addMessage(node.data.message || "Rate us:", 'assistant');
                             addRating((val) => {
                                 setVariable(node, val);
-                                processNode(getNextNode(node.id));
+                                processNode(getNextNode(node.id, String(val)));
                             });
                             break;
                         case 'fileUpload':
                             addMessage(node.data.message || "Please upload a file:", 'assistant');
-                            addFileLink((fileName) => {
-                                setVariable(node, fileName);
+                            addFileLink((file) => {
+                                setVariable(node, file.name);
                                 processNode(getNextNode(node.id));
                             });
                             break;
@@ -501,7 +545,7 @@
                             processNode(getNextNode(node.id, result ? 'true' : 'false'));
                             break;
                         case 'aiPrompt':
-                            addMessage("...", 'assistant'); // Typing indicator placeholder
+                            const { inner: typingInner } = addMessage('<div class="nimmi-typing"><span></span><span></span><span></span></div>', 'assistant', true, false);
                             fetch(`${API_BASE}/api/chat/ai-prompt`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
@@ -512,8 +556,7 @@
                                 })
                             }).then(res => res.json())
                                 .then(data => {
-                                    messages.lastChild.remove(); // Remove thinking indicator
-                                    addMessage(data.answer, 'assistant');
+                                    typingInner.innerText = data.answer;
                                     setVariable(node, data.answer);
                                     processNode(getNextNode(node.id));
                                 });
@@ -606,20 +649,62 @@
                     addMessage(text, 'user');
                     input.value = '';
 
-                    fetch(`${API_BASE}/api/chat/message`, {
+                    // Create placeholder for assistant response with typing indicator
+                    const { inner: assistantInner } = addMessage('<div class="nimmi-typing"><span></span><span></span><span></span></div>', 'assistant', true, false);
+
+                    fetch(`${API_BASE}/api/chat/message/stream`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             bot_id: botId,
                             message: text,
                             visitor_session_id: visitorSessionId,
-                            history: []
+                            history: chatHistory.slice(0, -1) // Send all history except the one we just added (the prompt itself)
                         })
                     })
-                        .then(res => res.json())
-                        .then(data => {
-                            addMessage(data.answer, 'assistant');
-                        });
+                    .then(async response => {
+                        if (!response.ok) throw new Error("Network response was not ok");
+                        
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+                        assistantInner.innerHTML = ''; // Clear typing indicator
+                        
+                        let buffer = "";
+                        let isStreaming = true;
+                        let fullText = "";
+
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+
+                            buffer += decoder.decode(value, { stream: true });
+                            let lines = buffer.split('\n');
+                            buffer = lines.pop() || ""; // Keep the last partial line in the buffer
+
+                            for (const line of lines) {
+                                if (!line || !line.startsWith('data: ')) continue;
+                                
+                                const data = line.slice(6); // DO NOT trim here, preserve spaces
+                                if (data.trim() === '[DONE]') {
+                                    isStreaming = false;
+                                    break;
+                                }
+                                
+                                // Append chunk to text
+                                fullText += data;
+                                assistantInner.innerText = fullText;
+                                messages.scrollTop = messages.scrollHeight;
+                            }
+                            if (!isStreaming) break;
+                        }
+                        // Save assistant response to history
+                        chatHistory.push({ role: 'assistant', content: fullText });
+                        saveHistory();
+                    })
+                    .catch(err => {
+                        console.error("Streaming error:", err);
+                        assistantInner.innerText = "Sorry, I'm having trouble responding right now.";
+                    });
                 };
 
                 const handleUserInput = () => {

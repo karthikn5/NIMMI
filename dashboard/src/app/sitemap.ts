@@ -8,6 +8,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
     '',
     '/auth/login',
     '/auth/signup',
+    '/blog',
+    '/blog/how-to-build-custom-ai-chatbot-2026',
+    '/blog/ai-chatbot-vs-live-chat-india',
+    '/blog/calculating-chatbot-roi',
   ];
 
   return routes.map((route) => ({

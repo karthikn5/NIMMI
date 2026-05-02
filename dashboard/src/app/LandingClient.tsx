@@ -6,7 +6,7 @@ import { ArrowRight, MessageSquare, Check, Sparkles, Zap, Globe, Menu, X, Chevro
 import { motion, AnimatePresence, useScroll, useSpring, useInView, useMotionValue, useTransform, Variants } from "framer-motion";
 import Image from "next/image";
 
-const navLinks = ["Home", "About", "How it Works", "Services"];
+const navLinks = ["Home", "About", "How it Works", "Services", "Blog"];
 
 const features = [
   { image: "/feat-brain.png", title: "Natural Conversations", desc: "AI that understands context, tone, and intent — not just keywords." },
@@ -115,10 +115,12 @@ export default function LandingClient() {
 
           <div className="hidden md:flex items-center gap-8">
             {navLinks.map((item) => (
-              <a key={item} href={`#${item.toLowerCase().replace(/\s+/g, '-')}`}
-                className="text-sm font-medium text-zinc-500 hover:text-zinc-900 transition-colors">
+              <Link key={item} 
+                href={item === "Blog" ? "/blog" : `#${item.toLowerCase().replace(/\s+/g, '-')}`}
+                className="text-sm font-medium text-zinc-500 hover:text-[#9d55ac] transition-colors"
+              >
                 {item}
-              </a>
+              </Link>
             ))}
           </div>
 

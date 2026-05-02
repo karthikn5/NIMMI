@@ -13,8 +13,34 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Nimmi AI | Custom AI Chatbot Platform",
-  description: "Train, customize, and embed your own AI assistants in minutes. Powered by Gemini 1.5 Pro.",
+  metadataBase: new URL("https://nimmiai.in"),
+  title: "Nimmi AI — Build Custom AI Chatbots for Your Business | India",
+  description: "Build custom AI chatbots for your business with Nimmi AI. Train on your data in minutes & embed anywhere. Boost leads and engagement. Get started for free today!",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    title: "Nimmi AI — Build Custom AI Chatbots for Your Business | India",
+    description: "Build custom AI chatbots for your business with Nimmi AI. Train on your data in minutes & embed anywhere. Boost leads and engagement.",
+    url: "https://nimmiai.in",
+    siteName: "Nimmi AI",
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "Nimmi AI — Build Custom AI Chatbots",
+      },
+    ],
+    locale: "en_IN",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Nimmi AI — Build Custom AI Chatbots for Your Business",
+    description: "Build custom AI chatbots for your business with Nimmi AI. Train on your data in minutes & embed anywhere.",
+    images: ["/og-image.png"],
+  },
   icons: {
     icon: "/favicon.png",
   },

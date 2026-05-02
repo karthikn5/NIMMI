@@ -1,8 +1,32 @@
-import LandingClient from "./LandingClient";
+import Navbar from "@/components/landing/Navbar";
+import Hero from "@/components/landing/Hero";
+import Features from "@/components/landing/Features";
+import HowItWorks from "@/components/landing/HowItWorks";
+import Services from "@/components/landing/Services";
+import CTA from "@/components/landing/CTA";
+import Footer from "@/components/landing/Footer";
 
-// This is a Server Component (no "use client" here)
-// Next.js will pre-render this on the server, ensuring 
-// that search engine crawlers see the page content immediately.
+export const metadata = {
+  title: "Nimmi AI - Build Your Own Custom AI Chatbot | No Code Required",
+  description: "Create, train, and deploy custom AI chatbots for your business in India. Train on your PDFs, website, or text documents. Embedded in minutes with Nimmi AI.",
+  keywords: ["AI Chatbot India", "Custom AI Chatbot", "Chatbot Builder India", "No-code AI", "Business Chatbot"],
+  openGraph: {
+    title: "Nimmi AI - Build Your Own Custom AI Chatbot",
+    description: "The most powerful no-code AI chatbot builder for Indian businesses.",
+    url: "https://nimmiai.in",
+    siteName: "Nimmi AI",
+    images: [
+      {
+        url: "https://nimmiai.in/og-image.png",
+        width: 1200,
+        height: 630,
+      },
+    ],
+    locale: "en_IN",
+    type: "website",
+  },
+};
+
 export default function Home() {
   const jsonLd = {
     "@context": "https://schema.org",
@@ -66,15 +90,8 @@ export default function Home() {
     ]
   };
 
-  const websiteJsonLd = {
-    "@context": "https://schema.org",
-    "@type": "WebSite",
-    "name": "Nimmi AI",
-    "url": "https://nimmiai.in"
-  };
-
   return (
-    <>
+    <div className="min-h-screen bg-[#faf9f7] text-zinc-900 overflow-x-hidden">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
@@ -87,11 +104,16 @@ export default function Home() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
       />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }}
-      />
-      <LandingClient />
-    </>
+
+      <Navbar />
+      <main>
+        <Hero />
+        <Features />
+        <HowItWorks />
+        <Services />
+        <CTA />
+      </main>
+      <Footer />
+    </div>
   );
 }

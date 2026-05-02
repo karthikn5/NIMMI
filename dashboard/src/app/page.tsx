@@ -66,6 +66,13 @@ export default function Home() {
     ]
   };
 
+  const websiteJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Nimmi AI",
+    "url": "https://nimmiai.in"
+  };
+
   return (
     <>
       <script
@@ -79,6 +86,10 @@ export default function Home() {
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }}
       />
       <LandingClient />
     </>

@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL("https://nimmiai.in"),
   title: "Nimmi AI — Custom AI Chatbot Builder for Indian Businesses | Train on Your Data",
-  description: "Nimmi AI lets you build and deploy custom AI chatbots for your website, WhatsApp, and app — no code needed. Start free. Made in India.",
+  description: "Build and deploy a custom AI chatbot in minutes with Nimmi AI. Train it on your data, integrate with WhatsApp & website. Trusted by Indian SMEs. Start free today.",
   alternates: {
     canonical: "https://nimmiai.in",
   },
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Nimmi AI — Custom AI Chatbot Builder for Indian Businesses | Train on Your Data",
-  description: "Nimmi AI lets you build and deploy custom AI chatbots for your website, WhatsApp, and app — no code needed. Start free. Made in India.",
+  description: "Build and deploy a custom AI chatbot in minutes with Nimmi AI. Train it on your data, integrate with WhatsApp & website. Trusted by Indian SMEs. Start free today.",
     url: "https://nimmiai.in",
     siteName: "Nimmi AI",
     images: [
@@ -42,7 +42,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Nimmi AI — Build Custom AI Chatbots for Your Business",
-    description: "Nimmi AI lets you build and deploy custom AI chatbots for your website, WhatsApp, and app — no code needed. Start free. Made in India.",
+    description: "Build and deploy a custom AI chatbot in minutes with Nimmi AI. Train it on your data, integrate with WhatsApp & website. Trusted by Indian SMEs. Start free today.",
     images: ["/og-image.png"],
   },
   icons: {

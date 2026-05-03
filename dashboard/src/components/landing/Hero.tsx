@@ -20,7 +20,7 @@ export default function Hero() {
           <div className="w-16 h-0.5 bg-zinc-300 mb-6 mx-auto md:mx-0" />
 
           <p className="text-zinc-500 text-base sm:text-lg leading-relaxed mb-6 sm:mb-8 max-w-lg mx-auto md:mx-0">
-            Design, train, and deploy a <strong>custom AI chatbot for your website</strong> in India without writing a single line of code. Nimmi AI is the most powerful <strong>chatbot builder India</strong> has to offer for modern businesses.
+            <strong>Build your own AI chatbot</strong> and deploy it to your website in India with <strong>no code required</strong>. Design, train, and launch the most powerful <strong>custom AI chatbot</strong> for modern businesses using Nimmi AI.
           </p>
 
           <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4 mb-8 items-stretch sm:items-center">

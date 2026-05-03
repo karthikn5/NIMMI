@@ -26,7 +26,7 @@ export default function Signup() {
                 try {
                     const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
                         ? "https://api.nimmiai.in"
-                        : (process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in");
+                        : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
                     const res = await fetch(`${apiUrl}/api/auth/social`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -68,7 +68,7 @@ export default function Signup() {
         try {
             const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
                 ? "https://api.nimmiai.in"
-                : (process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in");
+                : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
             const res = await fetch(`${apiUrl}/api/auth/signup`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },

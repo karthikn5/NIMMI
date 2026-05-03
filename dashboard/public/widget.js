@@ -2,6 +2,7 @@
     const script = document.currentScript;
     const botId = script.getAttribute('data-bot-id');
     const API_BASE = script.getAttribute('data-api-url') || "http://localhost:8000";
+    const IS_DEMO = script.getAttribute('data-is-demo') === 'true';
 
     if (!botId) {
         console.error("Nimmi AI: data-bot-id is missing.");
@@ -659,7 +660,8 @@
                             bot_id: botId,
                             message: text,
                             visitor_session_id: visitorSessionId,
-                            history: chatHistory.slice(0, -1) // Send all history except the one we just added (the prompt itself)
+                            history: chatHistory.slice(0, -1),
+                            is_demo: IS_DEMO
                         })
                     })
                     .then(async response => {

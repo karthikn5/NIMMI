@@ -40,9 +40,14 @@ else:
         echo=False,
         poolclass=NullPool,
         connect_args={
+            "ssl": "require",
             "prepared_statement_cache_size": 0,
             "statement_cache_size": 0,
-            "command_timeout": 60
+            "command_timeout": 60,
+            "server_settings": {
+                "jit": "off",
+                "response_timeout": "60"
+            }
         }
     )
 

@@ -23,7 +23,7 @@ const FlowBuilder = dynamic(() => import("./components/FlowBuilder"), { ssr: fal
  
 const API_URL = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
     ? "https://api.nimmiai.in"
-    : (process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in");
+    : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
 
 const GOOGLE_FONTS_BATCH_1 = "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Roboto:wght@400;700&family=Open+Sans:wght@400;700&family=Montserrat:wght@400;700&family=Poppins:wght@400;700&family=Lato:wght@400;700&family=Oswald:wght@400;700&family=Raleway:wght@400;700&family=Nunito:wght@400;700&family=Ubuntu:wght@400;700&family=Playfair+Display:wght@400;700&family=Lora:wght@400;700&family=Merriweather:wght@400;700&family=PT+Sans:wght@400;700&family=PT+Serif:wght@400;700&family=Noto+Sans:wght@400;700&family=Noto+Serif:wght@400;700&family=Work+Sans:wght@400;700&family=Fira+Sans:wght@400;700&family=Quicksand:wght@400;700&family=Josefin+Sans:wght@400;700&display=swap";
 const GOOGLE_FONTS_BATCH_2 = "https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@400;700&family=Caveat:wght@400;700&family=Lexend:wght@400;700&family=Kanit:wght@400;700&family=Outfit:wght@400;700&family=Syne:wght@400;700&family=Darker+Grotesque:wght@400;700&family=DM+Sans:wght@400;700&family=Manrope:wght@400;700&family=Sora:wght@400;700&family=Urbanist:wght@400;700&family=Figtree:wght@400;700&family=Archivo:wght@400;700&family=Schibsted+Grotesk:wght@400;700&family=Hanken+Grotesk:wght@400;700&family=Bricolage+Grotesque:wght@400;700&family=Young+Serif&family=Instrument+Serif&family=Playpen+Sans&family=Cabin:wght@400;700&display=swap";
@@ -84,7 +84,22 @@ function ChatbotWidgetContent({
                 <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center overflow-hidden backdrop-blur-md border border-white/10">
                         {botLogo ? (
-                            <img src={botLogo} alt="Bot" className="w-full h-full object-cover" />
+                            <img 
+                                src={botLogo} 
+                                alt="Bot" 
+                                className="w-full h-full object-cover" 
+                                onError={(e) => {
+                                    const img = e.target as HTMLImageElement;
+                                    img.style.display = 'none';
+                                    const parent = img.parentElement;
+                                    if (parent && !parent.querySelector('.fallback-icon')) {
+                                        const div = document.createElement('div');
+                                        div.className = 'fallback-icon flex items-center justify-center w-full h-full bg-[#9d55ac] text-white text-[10px] font-black uppercase';
+                                        div.innerText = 'Bot';
+                                        parent.appendChild(div);
+                                    }
+                                }}
+                            />
                         ) : (
                             <Bot size={20} />
                         )}
@@ -97,7 +112,7 @@ function ChatbotWidgetContent({
                     <div
                         className="absolute inset-0 z-0 pointer-events-none"
                         style={{
-                            backgroundImage: `url(${backgroundImage})`,
+                            backgroundImage: `url(${backgroundImage.includes('/static/uploads/') ? `${API_URL}/static/uploads/${backgroundImage.split('/').pop()}` : backgroundImage})`,
                             backgroundSize: 'cover',
                             backgroundPosition: 'center',
                             opacity: backgroundOpacity
@@ -108,13 +123,13 @@ function ChatbotWidgetContent({
                     <div className="space-y-4 flex flex-col">
                         <div
                             className="p-4 rounded-tl-none text-xs leading-relaxed max-w-[85%] shadow-sm border border-slate-100"
-                            style={{ backgroundColor: assistantBubbleBg, color: assistantBubbleText, borderRadius: `${borderRadius}px` }}
+                            style={{ backgroundColor: assistantBubbleBg, color: assistantBubbleText, borderRadius: `${borderRadius}px`, borderTopLeftRadius: 0 }}
                         >
                             Hello! I'm trained on your company data. How can I help you today?
                         </div>
                         <div
                             className="p-4 rounded-tr-none text-xs leading-relaxed max-w-[80%] self-end shadow-md transition-transform hover:scale-[1.02]"
-                            style={{ backgroundColor: userBubbleBg, color: userBubbleText, borderRadius: `${borderRadius}px` }}
+                            style={{ backgroundColor: userBubbleBg, color: userBubbleText, borderRadius: `${borderRadius}px`, borderTopRightRadius: 0 }}
                         >
                             What's the return policy?
                         </div>
@@ -152,7 +167,20 @@ function LauncherPreview({ color, showLauncherBg, launcherShape, botLogo, logoSi
             }}
         >
             {botLogo ? (
-                <img src={botLogo} alt="Launcher" style={{ width: `${logoSize}px`, height: `${logoSize}px`, objectFit: 'contain' }} />
+                <img 
+                    src={botLogo} 
+                    alt="Launcher" 
+                    style={{ width: `${logoSize}px`, height: `${logoSize}px`, objectFit: 'contain' }} 
+                    onError={(e) => {
+                        const img = e.target as HTMLImageElement;
+                        img.style.display = 'none';
+                        const parent = img.parentElement;
+                        if (parent && !parent.querySelector('.fallback-launcher')) {
+                            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z"/></svg>`;
+                            parent.insertAdjacentHTML('beforeend', `<div class="fallback-launcher flex items-center justify-center w-full h-full">${svg}</div>`);
+                        }
+                    }}
+                />
             ) : (
                 <MessageSquare size={30} className="text-white drop-shadow-md" />
             )}
@@ -300,7 +328,12 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                 setBotName(data.bot_name || "Nimmi Assistant");
                 if (data.visual_config) {
                     setColor(data.visual_config.color || "#3b82f6");
-                    setBotLogo(data.visual_config.logo_url || "");
+                    let logoUrl = data.visual_config.logo_url || data.visual_config.botLogo || "";
+                    if (logoUrl && logoUrl.includes('/static/uploads/')) {
+                        const fileName = logoUrl.split('/').pop();
+                        logoUrl = `${API_URL}/static/uploads/${fileName}`;
+                    }
+                    setBotLogo(logoUrl);
                     setPosition(data.visual_config.position || "right");
                     setFontFamily(data.visual_config.font_family || "sans-serif");
                     setTextColor(data.visual_config.text_color || "#ffffff");
@@ -345,7 +378,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                     systemPrompt: data.system_prompt || "",
                     knowledgeBase: data.knowledge_base || "",
                     color: data.visual_config?.color || "#3b82f6",
-                    botLogo: data.visual_config?.logo_url || "",
+                    botLogo: data.visual_config?.logo_url || data.visual_config?.botLogo || "",
                     position: data.visual_config?.position || "right",
                     fontFamily: data.visual_config?.font_family || "sans-serif",
                     textColor: data.visual_config?.text_color || "#ffffff",
@@ -418,7 +451,8 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
             }
 
             setSaving(true);
-            const res = await fetch(`${API_URL}/api/bots/${id}`, {
+            const cleanId = id.trim();
+            const res = await fetch(`${API_URL}/api/bots/${cleanId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -430,7 +464,7 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                     ai_api_key: aiApiKey,
                     visual_config: {
                         color,
-                        logo_url: overrideLogo || botLogo,
+                        logo_url: botLogo,
                         position,
                         font_family: fontFamily,
                         text_color: textColor,
@@ -863,7 +897,14 @@ function BuilderContent({ params }: { params: Promise<{ id: string }> }) {
                                                 </div>
                                                 {botLogo && (
                                                     <div className="w-12 h-12 bg-white rounded-[16px] shadow-[4px_4px_10px_#d1d9e6,-4px_-4px_10px_#ffffff] border-4 border-white flex items-center justify-center p-2 shrink-0">
-                                                        <img src={botLogo} alt="Logo" className="object-contain max-w-full max-h-full" />
+                                                        <img 
+                                                            src={botLogo} 
+                                                            alt="Logo" 
+                                                            className="object-contain max-w-full max-h-full" 
+                                                            onError={(e) => {
+                                                                (e.target as HTMLImageElement).style.opacity = '0';
+                                                            }}
+                                                        />
                                                     </div>
                                                 )}
                                             </div>

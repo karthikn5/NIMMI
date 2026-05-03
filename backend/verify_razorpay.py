@@ -20,9 +20,9 @@ try:
     client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
     
     # Try to create a small test order
-    print("\nAttempting to create a test order (₹1)...")
+    print("\nAttempting to create a test order (INR 1)...")
     order = client.order.create({
-        "amount": 100, # 100 paise = ₹1
+        "amount": 100, # 100 paise = INR 1
         "currency": "INR",
         "receipt": "test_verification",
         "notes": {"info": "Verifying credentials"}
@@ -36,7 +36,9 @@ try:
         print(order)
 
 except Exception as e:
+    import traceback
     print(f"\n[ERROR] Authentication failed: {str(e)}")
+    # traceback.print_exc()
     print("\nPlease check:")
     print("1. Are you using the correct Secret key?")
     print("2. Is your account active (Live or Test mode)?")

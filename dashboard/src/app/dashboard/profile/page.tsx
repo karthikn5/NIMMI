@@ -33,7 +33,7 @@ export default function Profile() {
             try {
                 const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
                     ? "https://api.nimmiai.in"
-                    : (process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in");
+                    : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
                 const res = await fetch(`${apiUrl}/api/auth/profile?user_id=${userId}`);
                 const data = await res.json();
                 if (res.ok) {
@@ -61,7 +61,7 @@ export default function Profile() {
         try {
             const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
                 ? "https://api.nimmiai.in"
-                : (process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in");
+                : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
             const res = await fetch(`${apiUrl}/api/auth/profile?user_id=${userId}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },

@@ -11,9 +11,10 @@ import os
 import httpx
 from dotenv import load_dotenv
 from sqlalchemy.future import select
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
-from models import Bot, User, Message, Conversation
+from models import Bot, User, Message, Conversation, UserUsage, Subscription, Transaction
 from crawler import extract_text_from_url, extract_youtube_transcript
 import asyncio
 import logging
@@ -30,10 +31,14 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Nimmi AI Backend")
 
+# Register routers early
 from payments import router as payments_router
-app.include_router(payments_router)
+app.include_router(payments_router, prefix="/api/payments")
 
-@app.middleware("http")
+@app.get("/api/test")
+async def test_api():
+    return {"status": "ok", "message": "Backend is reachable"}
+
 async def log_requests(request: Request, call_next):
     origin = request.headers.get("origin")
     query_params = dict(request.query_params)
@@ -74,7 +79,7 @@ allowed_origins.extend([
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -102,7 +107,7 @@ async def on_startup():
 # Models
 class BotCreate(BaseModel):
     user_id: str # Temporary until real auth session
-    bot_name: str
+    name: str
     system_prompt: Optional[str] = "You are a helpful assistant."
     visual_config: Optional[dict] = {"color": "#3b82f6", "logo_url": "", "position": "right"}
     ai_model: Optional[str] = "gemini-flash-latest"
@@ -112,6 +117,7 @@ class ChatMessage(BaseModel):
     message: str
     visitor_session_id: str
     history: List[dict] = []
+    is_demo: Optional[bool] = False
 
 class VariableCapture(BaseModel):
     bot_id: str
@@ -200,6 +206,12 @@ async def signup(user_data: UserSignup, db: AsyncSession = Depends(get_db)):
         password_hash=hash_password(user_data.password)
     )
     db.add(new_user)
+    await db.flush() # Ensure new_user.id is available
+    
+    # Grant 1 FREE chatbot credit for new users
+    usage = UserUsage(user_id=new_user.id, total_credits=1, used_credits=0)
+    db.add(usage)
+    
     await db.commit()
     await db.refresh(new_user)
     return {"message": "Signup successful", "user_id": str(new_user.id), "name": new_user.name}
@@ -343,47 +355,171 @@ async def reset_password(data: PasswordResetSubmit, db: AsyncSession = Depends(g
     await db.commit()
     return {"message": "Password reset successful"}
 
+async def check_bot_subscription(bot_id: str, db: AsyncSession):
+    """Check if any active subscription exists for this specific bot."""
+    result = await db.execute(
+        select(Subscription).where(
+            Subscription.bot_id == bot_id,
+            Subscription.status == "active"
+        ).order_by(Subscription.end_date.desc())
+    )
+    subs = result.scalars().all()
+    now = datetime.utcnow()
+    for s in subs:
+        if s.end_date.replace(tzinfo=None) > now:
+            return s
+    return None
+
+@app.get("/api/usage")
+async def get_usage(user_id: str, db: AsyncSession = Depends(get_db)):
+    try:
+        user_uuid = uuid.UUID(user_id)
+        # Fetch usage
+        result = await db.execute(select(UserUsage).where(UserUsage.user_id == str(user_uuid)))
+        usage = result.scalars().first()
+        
+        # New Model: Credits are no longer the primary billing unit
+        # But we keep this for UI compatibility
+        if not usage:
+            usage = UserUsage(user_id=str(user_uuid), total_credits=0, used_credits=0)
+            db.add(usage)
+            await db.commit()
+            await db.refresh(usage)
+        
+        return {
+            "total_credits": usage.total_credits,
+            "used_credits": usage.used_credits,
+            "remaining_credits": 0 # Not used in per-bot model
+        }
+    except Exception as e:
+        logger.error(f"Error in get_usage: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/bots/create")
 async def create_bot(bot_data: BotCreate, db: AsyncSession = Depends(get_db)):
     try:
         user_uuid = uuid.UUID(bot_data.user_id)
+        # Bot creation is now FREE in the new model.
         new_bot = Bot(
             user_id=str(user_uuid),
-            bot_name=bot_data.bot_name,
+            bot_name=bot_data.name,
             system_prompt=bot_data.system_prompt,
             visual_config=bot_data.visual_config
         )
         db.add(new_bot)
         await db.commit()
-        # await db.refresh(new_bot)  # Skip refresh to avoid potential pooler schema sync issues
-        return {"message": "Bot created", "bot_id": str(new_bot.bot_id)}
+        return {"message": "Bot created", "id": str(new_bot.bot_id)}
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid User ID format")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid User ID format")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/bots/export")
+async def export_bot(bot_id: str, user_id: str, db: AsyncSession = Depends(get_db)):
+    try:
+        user_uuid = uuid.UUID(user_id)
+        bot_uuid = uuid.UUID(bot_id)
+        
+        # Check if bot exists and belongs to user
+        bot_result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid), Bot.user_id == str(user_uuid)))
+        bot = bot_result.scalars().first()
+        if not bot:
+            raise HTTPException(status_code=404, detail="Bot not found")
+        
+        # NEW MODEL: Check specific bot subscription
+        sub = await check_bot_subscription(str(bot_uuid), db)
+        if not sub:
+            raise HTTPException(status_code=402, detail="This bot does not have an active plan. Please subscribe to export.")
+            
+        # Update export status
+        bot.is_exported = True
+        bot.exported_at = datetime.utcnow()
+        await db.commit()
+        
+        return {"message": "Bot exported successfully", "bot_id": bot_id, "export_unlocked": True}
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid ID format")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/bots")
 async def list_bots(user_id: str, db: AsyncSession = Depends(get_db)):
     try:
-        user_uuid = uuid.UUID(user_id)
+        # Aggressively clean ID by taking first 36 chars (UUID length)
+        clean_id = user_id.strip()[:36]
+        user_uuid = uuid.UUID(clean_id)
+        
+        with open("debug_log.txt", "a") as f:
+            f.write(f"\n[{datetime.utcnow()}] Listing bots for user {clean_id}\n")
+            
         result = await db.execute(select(Bot).where(Bot.user_id == str(user_uuid)))
         bots = result.scalars().all()
+        
+        bot_ids = [str(bot.bot_id) for bot in bots]
+        logger.info(f"Listing bots for user {user_id}. Found {len(bots)} bots: {bot_ids}")
+        
+        # Batch fetch all active/recent subscriptions for these bots
+        sub_result = await db.execute(
+            select(Subscription)
+            .where(Subscription.bot_id.in_(bot_ids))
+            .order_by(Subscription.bot_id, Subscription.end_date.desc())
+        )
+        all_subs = sub_result.scalars().all()
+        logger.info(f"Found {len(all_subs)} total subscriptions for these bots")
+        
+        # Map bot_id to its latest subscription
+        sub_map = {}
+        now = datetime.utcnow()
+        with open("debug_log.txt", "a") as f:
+            f.write(f"Found {len(all_subs)} total subscriptions\n")
+            for s in all_subs:
+                bid = str(s.bot_id)
+                # Replace tzinfo for comparison with naive now
+                is_active = s.status == "active" and s.end_date.replace(tzinfo=None) > now
+                f.write(f"  Sub {s.id} for bot {bid}: status={s.status}, end={s.end_date}, active={is_active}\n")
+                if is_active and bid not in sub_map:
+                    sub_map[bid] = s
+        
+        bot_list = []
+        for bot in bots:
+            bid = str(bot.bot_id)
+            sub = sub_map.get(bid)
+            status = "Active" if sub else "Expired"
+            with open("debug_log.txt", "a") as f:
+                f.write(f"  Bot {bid} ('{bot.bot_name}') -> {status}\n")
+            
+            bot_list.append({
+                "id": bid,
+                "name": bot.bot_name,
+                "status": status,
+                "plan": sub.plan_name if sub else "None",
+                "expiry": sub.end_date.strftime("%b %d, %Y") if sub else "-",
+                "days_remaining": (sub.end_date.replace(tzinfo=None) - now).days if sub else 0,
+                "conversations": 0,
+                "lastActive": "Just now"
+            })
+        
+        logger.info(f"Returning bot list with {sum(1 for b in bot_list if b['status'] == 'Active')} active bots")
+        return bot_list
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid User ID format")
-    return [
-        {
-            "id": str(bot.bot_id),
-            "name": bot.bot_name,
-            "status": "Active" if bot.is_active else "Inactive",
-            "conversations": 0, # Placeholder
-            "lastActive": "Just now"
-        }
-        for bot in bots
-    ]
+    except Exception as e:
+        logger.error(f"Error listing bots: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/bots/{bot_id}/config")
 async def get_bot_config(bot_id: str, db: AsyncSession = Depends(get_db)):
     try:
         try:
-            bot_uuid = uuid.UUID(bot_id)
+            # Aggressively clean ID by taking first 36 chars
+            clean_bot_id = bot_id.strip()[:36]
+            bot_uuid = uuid.UUID(clean_bot_id)
             result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
         except (ValueError, AttributeError):
             raise HTTPException(status_code=400, detail="Invalid Bot ID format")
@@ -391,6 +527,9 @@ async def get_bot_config(bot_id: str, db: AsyncSession = Depends(get_db)):
         bot = result.scalars().first()
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
+        
+        # Check subscription
+        sub = await check_bot_subscription(str(bot_uuid), db)
         
         return {
             "bot_id": str(bot.bot_id),
@@ -403,7 +542,12 @@ async def get_bot_config(bot_id: str, db: AsyncSession = Depends(get_db)):
             "ai_model": bot.ai_model,
             "ai_api_key": bot.ai_api_key,
             "is_active": bot.is_active,
-            "export_unlocked": bot.export_unlocked,
+            "is_exported": (sub is not None) or bot.export_unlocked, # Unlocked if sub exists OR manually unlocked
+            "subscription": {
+                "active": sub is not None,
+                "plan": sub.plan_name if sub else "None",
+                "expiry": sub.end_date.strftime("%b %d, %Y") if sub else "-"
+            },
             "created_at": bot.created_at
         }
     except Exception as e:
@@ -473,15 +617,20 @@ async def update_bot_config(bot_id: str, config_data: dict, db: AsyncSession = D
 
 @app.patch("/api/bots/{bot_id}")
 async def update_bot(bot_id: str, bot_data: dict, db: AsyncSession = Depends(get_db)):
+    logger.info(f"PATCH request for Bot ID: '{bot_id}'")
     try:
         try:
-            bot_uuid = uuid.UUID(bot_id)
+            # Aggressively clean ID by taking first 36 chars
+            clean_bot_id = bot_id.strip()[:36]
+            bot_uuid = uuid.UUID(clean_bot_id)
             result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
         except (ValueError, AttributeError):
+            logger.error(f"Invalid Bot ID format in PATCH: '{bot_id}'")
             raise HTTPException(status_code=400, detail="Invalid Bot ID format")
             
         bot = result.scalars().first()
         if not bot:
+            logger.error(f"Bot not found in PATCH: {clean_bot_id}")
             raise HTTPException(status_code=404, detail="Bot not found")
         
         if "bot_name" in bot_data:
@@ -531,6 +680,10 @@ async def delete_bot(bot_id: str, db: AsyncSession = Depends(get_db)):
         except Exception as vec_err:
             logger.warning(f"Failed to delete vectors for bot {bot_id}: {vec_err}")
         
+        # Bot creation was free, so no need to decrement used_credits here
+        # unless we only want to track 'active' bot slots. 
+        # But the new model is 'Credit per Export', so creation/deletion is separate.
+            
         await db.delete(bot)
         await db.commit()
         return {"message": "Bot deleted successfully"}
@@ -701,6 +854,8 @@ async def upload_knowledge(bot_id: str, file: UploadFile = File(...), db: AsyncS
 
 @app.post("/api/chat/message")
 async def chat_message(chat: ChatMessage, db: AsyncSession = Depends(get_db)):
+    with open("chat_debug.log", "a") as f:
+        f.write(f"\n[{datetime.now()}] START chat_message: bot_id={chat.bot_id} is_demo={chat.is_demo}\n")
     try:
         bot_uuid = uuid.UUID(chat.bot_id)
         result = await db.execute(select(Bot).where(Bot.bot_id == str(bot_uuid)))
@@ -710,6 +865,18 @@ async def chat_message(chat: ChatMessage, db: AsyncSession = Depends(get_db)):
     bot = result.scalars().first()
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
+    
+    # 🔴 SUBSCRIPTION CHECK 🔴
+    # Skip if it's a demo request (trusted)
+    is_demo = getattr(chat, 'is_demo', False)
+    if not is_demo:
+        sub = await check_bot_subscription(str(bot_uuid), db)
+        if not sub:
+            return {
+                "answer": "Subscription Expired: This bot is currently inactive. Please renew your subscription to continue chatting.",
+                "bot_id": chat.bot_id,
+                "expired": True
+            }
     
     bot_name = bot.bot_name or "Assistant"
     user_system_prompt = bot.system_prompt or ""
@@ -772,6 +939,8 @@ Use ONLY the following knowledge to answer. If you don't know something from the
 @app.post("/api/chat/message/stream")
 async def chat_message_stream(chat: ChatMessage, db: AsyncSession = Depends(get_db)):
     """Streaming version of chat — returns SSE events with word-by-word response."""
+    with open("chat_debug.log", "a") as f:
+        f.write(f"\n[{datetime.now()}] START chat_message_stream: bot_id={chat.bot_id} is_demo={chat.is_demo}\n")
     logger.info(f"Received streaming request for Bot ID: {chat.bot_id} | Session: {chat.visitor_session_id}")
     try:
         bot_uuid = uuid.UUID(chat.bot_id)
@@ -784,13 +953,28 @@ async def chat_message_stream(chat: ChatMessage, db: AsyncSession = Depends(get_
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
     
+    # 🔴 SUBSCRIPTION CHECK 🔴
+    # Skip if it's a demo request (trusted)
+    is_demo = getattr(chat, 'is_demo', False)
+    if not is_demo:
+        sub = await check_bot_subscription(str(bot_uuid), db)
+        if not sub:
+            async def expired_generator():
+                yield "data: Subscription Expired: This bot is currently inactive. Please renew your subscription.\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(expired_generator(), media_type="text/event-stream")
+    
     bot_name = bot.bot_name or "Assistant"
     user_system_prompt = bot.system_prompt or ""
     
     # Semantic search via Pinecone
     knowledge_context = ""
     try:
+        with open("chat_debug.log", "a") as f:
+            f.write(f"[{datetime.now()}] Starting query_knowledge...\n")
         matches = await asyncio.to_thread(query_knowledge, str(bot_uuid), chat.message, 5)
+        with open("chat_debug.log", "a") as f:
+            f.write(f"[{datetime.now()}] query_knowledge finished: {len(matches)} matches\n")
         if matches:
             knowledge_context = "\n\n".join([m["text"] for m in matches])
         else:
@@ -824,6 +1008,8 @@ Adopt the persona fully. Be helpful, natural, and stay in character."""
     
     async def event_generator():
         try:
+            with open("chat_debug.log", "a") as f:
+                f.write(f"[{datetime.now()}] Starting event_generator for AI response...\n")
             for text_chunk in generate_ai_response_stream(
                 system_prompt,
                 knowledge_context,

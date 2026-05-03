@@ -12,28 +12,32 @@ interface ExportModalProps {
 export default function ExportModal({ botId, onClose }: ExportModalProps) {
     const [copied, setCopied] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<"html" | "react" | "nextjs">("html");
+    const [exporting, setExporting] = useState(false);
     const [isUnlocked, setIsUnlocked] = useState(false);
     const [checkingStatus, setCheckingStatus] = useState(true);
-    const [paying, setPaying] = useState(false);
+    const [subscription, setSubscription] = useState<any>(null);
 
-    const baseUrl = typeof window !== "undefined" && !window.location.hostname.includes("localhost")
-        ? window.location.origin
-        : "http://localhost:3000";
     const apiBase = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
         ? "https://api.nimmiai.in"
-        : (process.env.NEXT_PUBLIC_API_URL || "https://api.nimmiai.in");
-    const scriptUrl = `${baseUrl}/widget.js`;
+        : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
+    const scriptUrl = `${apiBase}/static/nimmi-widget.js?v=2.0`;
 
     useEffect(() => {
+        const userId = localStorage.getItem("nimmi_user_id");
+        if (!userId) return;
+
         const checkStatus = async () => {
             try {
-                const res = await fetch(`${apiBase}/api/bots/${botId}/config`);
-                const data = await res.json();
-                if (res.ok) {
-                    setIsUnlocked(data.export_unlocked);
+                const cleanUserId = userId.trim();
+                const configRes = await fetch(`${apiBase}/api/bots/${botId}/config?user_id=${cleanUserId}`);
+                
+                if (configRes.ok) {
+                    const configData = await configRes.json();
+                    setIsUnlocked(configData.is_exported);
+                    setSubscription(configData.subscription);
                 }
             } catch (err) {
-                console.error("Failed to check unlock status:", err);
+                console.error("Failed to check status:", err);
             } finally {
                 setCheckingStatus(false);
             }
@@ -41,78 +45,31 @@ export default function ExportModal({ botId, onClose }: ExportModalProps) {
         checkStatus();
     }, [botId, apiBase]);
 
-    const handlePay = async () => {
-        setPaying(true);
+    const handleExport = async () => {
+        const userId = localStorage.getItem("nimmi_user_id");
+        if (!userId) return;
+
+        setExporting(true);
         try {
-            // 1. Create Razorpay order
-            const res = await fetch(`${apiBase}/api/payments/create-order?bot_id=${botId}`, {
+            const res = await fetch(`${apiBase}/api/bots/export?bot_id=${botId}&user_id=${userId}`, {
                 method: 'POST'
             });
-            const order = await res.json();
+            const data = await res.json();
 
-            if (!res.ok) {
-                alert("Failed to initiate payment: " + (order.detail || "Unknown error"));
-                return;
-            }
-
-            if (order.already_unlocked) {
+            if (res.ok) {
                 setIsUnlocked(true);
-                return;
-            }
-
-            // 2. Load Razorpay script if not already loaded
-            if (!(window as any).Razorpay) {
-                await new Promise<void>((resolve, reject) => {
-                    const script = document.createElement('script');
-                    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-                    script.onload = () => resolve();
-                    script.onerror = () => reject(new Error("Failed to load Razorpay script"));
-                    document.body.appendChild(script);
-                });
-            }
-
-            // 3. Open Razorpay checkout modal
-            const options = {
-                key: order.key_id,
-                amount: order.amount,
-                currency: order.currency,
-                name: "Nimmi AI",
-                description: `Unlock Export – ${order.bot_name}`,
-                order_id: order.order_id,
-                handler: async (response: any) => {
-                    // 4. Verify payment on backend
-                    const verifyRes = await fetch(`${apiBase}/api/payments/verify`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            razorpay_order_id: response.razorpay_order_id,
-                            razorpay_payment_id: response.razorpay_payment_id,
-                            razorpay_signature: response.razorpay_signature,
-                            bot_id: botId,
-                        })
-                    });
-                    const verifyData = await verifyRes.json();
-                    if (verifyRes.ok && verifyData.success) {
-                        window.location.href = verifyData.redirect_url;
-                    } else {
-                        alert("Payment verification failed. Please contact support.");
-                        setPaying(false);
-                    }
-                },
-                prefill: {},
-                theme: { color: "#2563eb" },
-                modal: {
-                    ondismiss: () => { setPaying(false); }
+                alert("Bot plan verified! Export unlocked.");
+            } else {
+                alert("Verification failed: " + (data.detail || "Unknown error"));
+                if (res.status === 402) {
+                    window.location.href = "/dashboard/billing";
                 }
-            };
-
-            const rzp = new (window as any).Razorpay(options);
-            rzp.open();
-
+            }
         } catch (err) {
-            console.error("Payment error:", err);
-            alert("Payment failed to start. Please try again.");
-            setPaying(false);
+            console.error("Verification error:", err);
+            alert("Verification failed. Please try again.");
+        } finally {
+            setExporting(false);
         }
     };
 
@@ -236,7 +193,15 @@ export default function NimmiChatbot() {
                                 </button>
                             </div>
                             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-8 font-mono text-sm group relative overflow-hidden min-h-[300px] flex flex-col justify-center shadow-inner">
-                                {isUnlocked ? (
+                                {checkingStatus ? (
+                                    <div className="flex flex-col items-center justify-center space-y-6 text-center">
+                                        <div className="w-12 h-12 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin shadow-inner" />
+                                        <div className="space-y-2">
+                                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Checking Bot Status</h4>
+                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter italic">Verifying your active plan...</p>
+                                        </div>
+                                    </div>
+                                ) : isUnlocked ? (
                                     <motion.div
                                         initial={{ opacity: 0 }}
                                         animate={{ opacity: 1 }}
@@ -248,7 +213,7 @@ export default function NimmiChatbot() {
                                     </motion.div>
                                 ) : (
                                     <AnimatePresence mode="wait">
-                                        {!paying ? (
+                                        {!exporting ? (
                                             <motion.div
                                                 key="locked"
                                                 initial={{ opacity: 0, scale: 0.95 }}
@@ -268,9 +233,9 @@ export default function NimmiChatbot() {
                                                 </div>
 
                                                 <div className="space-y-2">
-                                                    <h4 className="text-xl font-black text-slate-900 tracking-tight uppercase">Deployment Access Required</h4>
+                                                    <h4 className="text-xl font-black text-slate-900 tracking-tight uppercase">Active Plan Required</h4>
                                                     <p className="text-[11px] text-slate-500 max-w-[280px] leading-relaxed mx-auto font-medium">
-                                                        To export this chatbot to your website, a one-time activation fee is required.
+                                                        This chatbot needs an active subscription plan to unlock export features and production deployment.
                                                     </p>
                                                 </div>
 
@@ -282,23 +247,23 @@ export default function NimmiChatbot() {
                                                     <div className="h-8 w-px bg-slate-200" />
                                                     <div className="flex flex-col items-center gap-1">
                                                         <Zap size={16} className="text-blue-600/30" />
-                                                        <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Instant</span>
+                                                        <span className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Unlocked</span>
                                                     </div>
                                                 </div>
 
                                                 <button
-                                                    onClick={handlePay}
+                                                    onClick={() => window.location.href = "/dashboard/billing"}
                                                     className="group relative px-10 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-xl shadow-blue-500/20 active:scale-95 overflow-hidden"
                                                 >
                                                     <div className="relative z-10 flex items-center gap-2">
-                                                        Pay ₹50 to Unlock License
+                                                        Get Active Plan
                                                     </div>
                                                     <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
                                                 </button>
                                             </motion.div>
                                         ) : (
                                             <motion.div
-                                                key="paying"
+                                                key="exporting"
                                                 initial={{ opacity: 0 }}
                                                 animate={{ opacity: 1 }}
                                                 exit={{ opacity: 0 }}
@@ -306,8 +271,8 @@ export default function NimmiChatbot() {
                                             >
                                                 <div className="w-16 h-16 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin shadow-inner" />
                                                 <div className="space-y-2">
-                                                    <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest">Secure Checkout</h4>
-                                                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">Redirecting to payment gateway...</p>
+                                                    <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest">Processing Export</h4>
+                                                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">Preparing your deployment code...</p>
                                                 </div>
                                             </motion.div>
                                         )}

@@ -365,7 +365,7 @@ export default function BillingPage() {
                                     )}
                                 </h3>
                                 <p className="text-white font-bold text-lg">
-                                    {subscription 
+                                    {(subscription || (usage?.subscription_tier && usage?.subscription_tier !== 'Free')) 
                                         ? `Welcome back, ${localStorage.getItem("nimmi_user_name")?.split(' ')[0] || 'Premium Member'}! 🚀`
                                         : "Free Member"}
                                 </p>
@@ -374,9 +374,12 @@ export default function BillingPage() {
                         <div className="mb-4">
                             <div className="flex items-center gap-3">
                                 <span className="text-4xl font-bold italic tracking-tight">
-                                    {subscription?.plan_name || "Free Tier"}
+                                    {subscription?.plan_name || 
+                                     (usage?.subscription_tier && usage?.subscription_tier !== 'Free' 
+                                        ? usage.subscription_tier 
+                                        : "Free Tier")}
                                 </span>
-                                {subscription && (
+                                {(subscription || (usage?.subscription_tier && usage?.subscription_tier !== 'Free')) && (
                                     <span className="px-3 py-1 bg-gradient-to-r from-yellow-500 to-amber-600 rounded-full text-[10px] font-black uppercase tracking-widest text-white shadow-lg">
                                         Active
                                     </span>
@@ -384,10 +387,14 @@ export default function BillingPage() {
                             </div>
                         </div>
                         <div className="flex items-center gap-2 text-zinc-400 text-sm font-medium">
-                            {subscription ? (
+                            {(subscription || (usage?.subscription_tier && usage?.subscription_tier !== 'Free')) ? (
                                 <>
                                     <ShieldCheck size={16} className="text-[#9d55ac]" />
-                                    <span>Premium Access until {formatDate(subscription.end_date)}</span>
+                                    <span>
+                                        {subscription 
+                                            ? `Premium Access until ${formatDate(subscription.end_date)}` 
+                                            : "Premium Subscription Active"}
+                                    </span>
                                 </>
                             ) : (
                                 <>

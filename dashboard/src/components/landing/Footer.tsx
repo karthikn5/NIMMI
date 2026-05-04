@@ -13,6 +13,9 @@ export default function Footer() {
           <p className="text-zinc-500 text-sm leading-relaxed mb-6">
             Empowering businesses in India with smart, custom-trained AI chatbots.
           </p>
+          <a href="mailto:support.nimmi@gmail.com" className="block text-sm font-semibold text-[#9d55ac] hover:underline mb-6">
+            support.nimmi@gmail.com
+          </a>
           <div className="flex gap-4">
              <Link href="https://www.instagram.com/nimmiai.in?igsh=MWwyenN6ZGwyZDEzYw%3D%3D&utm_source=qr" target="_blank" rel="noopener noreferrer" className="w-8 h-8 rounded-full bg-zinc-50 flex items-center justify-center text-zinc-400 hover:text-[#9d55ac] transition-colors cursor-pointer"><Instagram size={16} /></Link>
              <div className="w-8 h-8 rounded-full bg-zinc-50 flex items-center justify-center text-zinc-400 hover:text-[#9d55ac] transition-colors cursor-pointer"><Twitter size={16} /></div>

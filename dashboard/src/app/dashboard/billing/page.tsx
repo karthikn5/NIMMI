@@ -112,6 +112,25 @@ export default function BillingPage() {
                     setUsage(usageData);
                     localStorage.setItem(`usage_${userId}`, JSON.stringify(usageData));
                 }
+
+                // Fetch subscriptions to find the latest active one
+                try {
+                    const subRes = await fetch(`${apiUrl}/api/payments/subscriptions?user_id=${userId}`);
+                    if (subRes.ok) {
+                        const subsData = await subRes.json();
+                        // Find the first active subscription
+                        const activeSub = subsData.find((s: any) => s.status === "active");
+                        if (activeSub) {
+                            setSubscription(activeSub);
+                            localStorage.setItem(`sub_${userId}`, JSON.stringify(activeSub));
+                        } else {
+                            setSubscription(null);
+                            localStorage.removeItem(`sub_${userId}`);
+                        }
+                    }
+                } catch (subErr) {
+                    console.error("Sub fetch failed", subErr);
+                }
                 
                 if (historyRes.ok) {
                     const historyData = await historyRes.json();
@@ -331,20 +350,51 @@ export default function BillingPage() {
                             <Crown size={120} />
                         </div>
                         <div className="flex items-center gap-4 mb-8">
-                            <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center shadow-inner overflow-hidden">
+                            <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center shadow-inner overflow-hidden border border-white/20">
                                 <NextImage src="/icons/crown.png" alt="Crown" width={48} height={48} className="object-contain" />
                             </div>
                             <div>
-                                <h3 className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Current Status</h3>
-                                <p className="text-white font-bold">Active Membership</p>
+                                <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                                    Current Status
+                                    {subscription && (
+                                        <motion.span 
+                                            animate={{ scale: [1, 1.2, 1] }} 
+                                            transition={{ repeat: Infinity, duration: 2 }}
+                                            className="w-2 h-2 bg-green-500 rounded-full shadow-[0_0_10px_#22c55e]"
+                                        />
+                                    )}
+                                </h3>
+                                <p className="text-white font-bold text-lg">
+                                    {subscription 
+                                        ? `Welcome back, ${localStorage.getItem("nimmi_user_name")?.split(' ')[0] || 'Premium Member'}! 🚀`
+                                        : "Free Member"}
+                                </p>
                             </div>
                         </div>
                         <div className="mb-4">
-                            <span className="text-4xl font-bold italic tracking-tight">{subscription?.plan_name || "Free Tier"}</span>
+                            <div className="flex items-center gap-3">
+                                <span className="text-4xl font-bold italic tracking-tight">
+                                    {subscription?.plan_name || "Free Tier"}
+                                </span>
+                                {subscription && (
+                                    <span className="px-3 py-1 bg-gradient-to-r from-yellow-500 to-amber-600 rounded-full text-[10px] font-black uppercase tracking-widest text-white shadow-lg">
+                                        Active
+                                    </span>
+                                )}
+                            </div>
                         </div>
                         <div className="flex items-center gap-2 text-zinc-400 text-sm font-medium">
-                            <Clock size={16} />
-                            <span>{subscription ? `Renews on ${formatDate(subscription.end_date)}` : "Upgrade to unlock more features"}</span>
+                            {subscription ? (
+                                <>
+                                    <ShieldCheck size={16} className="text-[#9d55ac]" />
+                                    <span>Premium Access until {formatDate(subscription.end_date)}</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Sparkles size={16} className="text-yellow-500 animate-pulse" />
+                                    <span>Upgrade to unlock superpowers! ✨</span>
+                                </>
+                            )}
                         </div>
                     </motion.div>
                 </div>

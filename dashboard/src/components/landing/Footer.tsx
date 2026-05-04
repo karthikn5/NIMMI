@@ -1,6 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
-import { Twitter, Linkedin } from "lucide-react";
+import { Twitter, Linkedin, Instagram } from "lucide-react";
 
 export default function Footer() {
   return (
@@ -14,6 +14,7 @@ export default function Footer() {
             Empowering businesses in India with smart, custom-trained AI chatbots.
           </p>
           <div className="flex gap-4">
+             <Link href="https://www.instagram.com/nimmiai.in?igsh=MWwyenN6ZGwyZDEzYw%3D%3D&utm_source=qr" target="_blank" rel="noopener noreferrer" className="w-8 h-8 rounded-full bg-zinc-50 flex items-center justify-center text-zinc-400 hover:text-[#9d55ac] transition-colors cursor-pointer"><Instagram size={16} /></Link>
              <div className="w-8 h-8 rounded-full bg-zinc-50 flex items-center justify-center text-zinc-400 hover:text-[#9d55ac] transition-colors cursor-pointer"><Twitter size={16} /></div>
              <div className="w-8 h-8 rounded-full bg-zinc-50 flex items-center justify-center text-zinc-400 hover:text-[#9d55ac] transition-colors cursor-pointer"><Linkedin size={16} /></div>
           </div>
@@ -43,7 +44,7 @@ export default function Footer() {
           <h4 className="font-bold text-zinc-900 mb-6 uppercase text-xs tracking-widest">Company</h4>
           <ul className="space-y-4">
             <li><Link href="/" className="text-sm text-zinc-500 hover:text-[#9d55ac] transition-colors">About Us</Link></li>
-            <li><Link href="/" className="text-sm text-zinc-500 hover:text-[#9d55ac] transition-colors">Contact</Link></li>
+            <li><Link href="mailto:support.nimmi@gmail.com" className="text-sm text-zinc-500 hover:text-[#9d55ac] transition-colors">Contact</Link></li>
             <li><Link href="/" className="text-sm text-zinc-500 hover:text-[#9d55ac] transition-colors">Privacy Policy</Link></li>
             <li><Link href="/" className="text-sm text-zinc-500 hover:text-[#9d55ac] transition-colors">Terms of Service</Link></li>
           </ul>

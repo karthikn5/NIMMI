@@ -65,7 +65,7 @@ const plans = [
     price: "Contact",
     monthlyEquivalent: "Custom",
     description: "For large scale businesses",
-    buttonText: "Contact Us",
+    buttonText: "Talk to an Expert",
     badge: "Enterprise",
     highlighted: false,
     features: [
@@ -141,7 +141,7 @@ export default function Pricing() {
               </ul>
 
               <Link
-                href={plan.name === "Enterprise Plan" ? "#contact" : "/auth/signup"}
+                href={plan.name === "Enterprise Plan" ? "mailto:support.nimmi@gmail.com" : "/auth/signup"}
                 className={`w-full py-3.5 px-6 rounded-xl font-semibold text-center transition-all duration-200 flex items-center justify-center gap-2
                   ${
                     plan.highlighted
@@ -157,7 +157,7 @@ export default function Pricing() {
         </div>
         
         <p className="text-center text-zinc-400 text-sm mt-10">
-          Need a custom enterprise solution? <Link href="#contact" className="text-[#9d55ac] font-medium hover:underline">Contact us</Link>
+          Need a custom enterprise solution? <Link href="mailto:support.nimmi@gmail.com" className="text-[#9d55ac] font-medium hover:underline">Contact us</Link>
         </p>
       </div>
     </section>

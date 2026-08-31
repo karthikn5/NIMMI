@@ -45,6 +45,7 @@ import HttpRequestNode from "./nodes/HttpRequestNode";
 import WebhookNode from "./nodes/WebhookNode";
 import SlackNode from "./nodes/SlackNode";
 import GoogleSheetsNode from "./nodes/GoogleSheetsNode";
+import HandoverNode from "./nodes/HandoverNode";
 
 // Custom edge types
 import AnimatedEdge from "./edges/AnimatedEdge";
@@ -96,6 +97,7 @@ function FlowBuilderInner({
             webhook: WebhookNode,
             slack: SlackNode,
             googleSheets: GoogleSheetsNode,
+            handover: HandoverNode,
         }),
         []
     );
@@ -290,6 +292,8 @@ function getDefaultNodeData(type: string) {
             return { label: "Slack Notification", url: "", channel: "#general" };
         case "googleSheets":
             return { label: "Sheets Sync", spreadsheetId: "", sheetName: "Sheet1" };
+        case "handover":
+            return { label: "Human Handover", message: "Please wait while I connect you to a human agent." };
         case "end":
             return { label: "End", message: "Thank you for your response!" };
         default:

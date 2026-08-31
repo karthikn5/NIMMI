@@ -75,6 +75,8 @@ function ChatbotWidgetContent({
     backgroundImage, backgroundOpacity, assistantBubbleBg, assistantBubbleText,
     userBubbleBg, userBubbleText, borderRadius, inputBgColor, inputTextColor
 }: any) {
+    const [imgError, setImgError] = useState(false);
+
     return (
         <>
             <div
@@ -83,25 +85,17 @@ function ChatbotWidgetContent({
             >
                 <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center overflow-hidden backdrop-blur-md border border-white/10">
-                        {botLogo ? (
+                        {botLogo && !imgError ? (
                             <img 
                                 src={botLogo} 
                                 alt="Bot" 
                                 className="w-full h-full object-cover" 
-                                onError={(e) => {
-                                    const img = e.target as HTMLImageElement;
-                                    img.style.display = 'none';
-                                    const parent = img.parentElement;
-                                    if (parent && !parent.querySelector('.fallback-icon')) {
-                                        const div = document.createElement('div');
-                                        div.className = 'fallback-icon flex items-center justify-center w-full h-full bg-[#9d55ac] text-white text-[10px] font-black uppercase';
-                                        div.innerText = 'Bot';
-                                        parent.appendChild(div);
-                                    }
-                                }}
+                                onError={() => setImgError(true)}
                             />
                         ) : (
-                            <Bot size={20} />
+                            <div className="fallback-icon flex items-center justify-center w-full h-full bg-[#9d55ac] text-white text-[10px] font-black uppercase">
+                                <Bot size={20} />
+                            </div>
                         )}
                     </div>
                     <span className="drop-shadow-sm">{botName}</span>
@@ -155,6 +149,8 @@ function ChatbotWidgetContent({
 }
 
 function LauncherPreview({ color, showLauncherBg, launcherShape, botLogo, logoSize, showTail }: any) {
+    const [imgError, setImgError] = useState(false);
+
     return (
         <div
             className="w-16 h-16 shadow-[0_20px_50px_rgba(0,0,0,0.2)] flex items-center justify-center transition-all duration-500 relative ring-1 ring-white/10 group-hover:scale-110"
@@ -166,23 +162,17 @@ function LauncherPreview({ color, showLauncherBg, launcherShape, botLogo, logoSi
                 width: launcherShape === 'oval' ? '80px' : '64px',
             }}
         >
-            {botLogo ? (
+            {botLogo && !imgError ? (
                 <img 
                     src={botLogo} 
                     alt="Launcher" 
                     style={{ width: `${logoSize}px`, height: `${logoSize}px`, objectFit: 'contain' }} 
-                    onError={(e) => {
-                        const img = e.target as HTMLImageElement;
-                        img.style.display = 'none';
-                        const parent = img.parentElement;
-                        if (parent && !parent.querySelector('.fallback-launcher')) {
-                            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z"/></svg>`;
-                            parent.insertAdjacentHTML('beforeend', `<div class="fallback-launcher flex items-center justify-center w-full h-full">${svg}</div>`);
-                        }
-                    }}
+                    onError={() => setImgError(true)}
                 />
             ) : (
-                <MessageSquare size={30} className="text-white drop-shadow-md" />
+                <div className="fallback-launcher flex items-center justify-center w-full h-full">
+                    <MessageSquare size={30} className="text-white drop-shadow-md" />
+                </div>
             )}
             {showTail && (
                 <div

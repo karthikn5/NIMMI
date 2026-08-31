@@ -5,6 +5,7 @@ import { Plus, Bot, ExternalLink, Settings, Trash2, Clock, Zap, ChevronRight, La
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import NextImage from "next/image";
+import { io } from "socket.io-client";
 
 export default function Dashboard() {
     const [bots, setBots] = useState<any[]>([]);
@@ -13,6 +14,7 @@ export default function Dashboard() {
     const [userName, setUserName] = useState("");
     const [userEmail, setUserEmail] = useState("");
     const [usage, setUsage] = useState<any>(null);
+    const [handoffCount, setHandoffCount] = useState(0);
     const router = useRouter();
 
     useEffect(() => {
@@ -58,6 +60,15 @@ export default function Dashboard() {
                     setUsage(usageData);
                     localStorage.setItem(`usage_${userId}`, JSON.stringify(usageData));
                 }
+
+                // Fetch initial handoff count
+                const handoffsRes = await fetch(`${apiUrl}/api/handoffs/pending`);
+                if (handoffsRes.ok) {
+                    const handoffs = await handoffsRes.json();
+                    // Filter for human sessions only
+                    const count = (handoffs || []).filter((h: any) => h.session_id.startsWith('widget-session-human-')).length;
+                    setHandoffCount(count);
+                }
             } catch (err) {
                 console.error("Dashboard data load error:", err);
             } finally {
@@ -66,6 +77,26 @@ export default function Dashboard() {
         };
 
         fetchData();
+
+        // Real-time socket for handoff notifications
+        const apiUrl = typeof window !== "undefined" && (window.location.hostname.includes("nimmiai.in") || window.location.hostname.includes("railway.app"))
+            ? "https://api.nimmiai.in"
+            : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
+            
+        const socket = io(apiUrl, { transports: ["websocket"] });
+        
+        socket.on("connect", () => {
+            socket.emit("join", { room: `admin_${userId}` });
+        });
+
+        socket.on("handoff_requested", () => {
+            // Re-fetch count when a new handoff is requested
+            fetchData();
+        });
+
+        return () => {
+            socket.disconnect();
+        };
     }, [router]);
 
     const handleCreateBot = async () => {
@@ -168,28 +199,49 @@ export default function Dashboard() {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.2 }}
                         onClick={() => router.push('/dashboard/billing')}
-                        className="col-span-1 md:col-span-2 bg-white p-8 rounded-[2.5rem] border border-zinc-100 flex flex-col md:flex-row items-center gap-8 shadow-sm cursor-pointer hover:shadow-xl hover:shadow-purple-900/5 transition-all"
+                        className="col-span-1 bg-white p-8 rounded-[2.5rem] border border-zinc-100 flex flex-col items-center gap-6 shadow-sm cursor-pointer hover:shadow-xl hover:shadow-purple-900/5 transition-all text-center"
                     >
-                        <div className="w-24 h-24 bg-[#9d55ac]/5 rounded-3xl flex items-center justify-center shrink-0 border border-[#9d55ac]/10 shadow-inner">
-                            <Sparkles size={40} className="text-[#9d55ac]" />
+                        <div className="w-16 h-16 bg-[#9d55ac]/5 rounded-2xl flex items-center justify-center shrink-0 border border-[#9d55ac]/10 shadow-inner">
+                            <Sparkles size={24} className="text-[#9d55ac]" />
                         </div>
-                        <div className="flex-grow text-center md:text-left">
-                            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest mb-1">Active Subscriptions</h3>
-                            <div className="flex items-baseline justify-center md:justify-start gap-2 mb-2">
-                                <span className="text-6xl font-bold text-zinc-900 tracking-tighter">
+                        <div>
+                            <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Active Plans</h3>
+                            <div className="flex items-baseline justify-center gap-2">
+                                <span className="text-4xl font-bold text-zinc-900 tracking-tighter">
                                     {bots.filter(b => b.status === "Active").length}
                                 </span>
-                                <span className="text-zinc-400 font-bold text-xl">Managed Bots</span>
                             </div>
-                            <p className="text-zinc-500 text-xs font-bold uppercase tracking-wider">
-                                {bots.length} Total Bots Created
-                            </p>
                         </div>
-                        <button 
-                            className="px-6 py-4 bg-zinc-900 text-white rounded-2xl font-bold text-xs uppercase tracking-widest hover:bg-zinc-800 transition-colors shrink-0 shadow-lg shadow-purple-900/10"
-                        >
-                            Manage Billing
-                        </button>
+                    </motion.div>
+
+                    {/* Live Chat Handoff Card */}
+                    <motion.div 
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.2, delay: 0.1 }}
+                        onClick={() => router.push('/dashboard/live-chat')}
+                        className="col-span-1 bg-white p-8 rounded-[2.5rem] border border-zinc-100 flex flex-col items-center gap-6 shadow-sm cursor-pointer hover:shadow-xl hover:shadow-blue-900/5 transition-all text-center group relative"
+                    >
+                        {handoffCount > 0 && (
+                            <motion.div 
+                                initial={{ scale: 0 }}
+                                animate={{ scale: 1 }}
+                                className="absolute top-6 right-8 bg-red-500 text-white w-6 h-6 rounded-full text-[10px] font-black flex items-center justify-center shadow-lg shadow-red-500/40 animate-pulse border-2 border-white"
+                            >
+                                {handoffCount}
+                            </motion.div>
+                        )}
+                        <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center shrink-0 border border-blue-100 shadow-inner group-hover:scale-110 transition-transform">
+                            <MessageSquare size={24} className="text-blue-600" />
+                        </div>
+                        <div>
+                            <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Live Support</h3>
+                            <div className="flex items-baseline justify-center gap-2">
+                                <span className="text-4xl font-bold text-zinc-900 tracking-tighter">
+                                    {handoffCount > 0 ? handoffCount : "Live"}
+                                </span>
+                            </div>
+                        </div>
                     </motion.div>
 
                     <motion.div 

@@ -581,6 +581,36 @@ export default function PropertiesPanel({ node, onUpdate, onDelete, onClose }: P
                     </div>
                 );
 
+            case "handover":
+                return (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                        <div>
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 px-1">Label</label>
+                            <input
+                                type="text"
+                                value={formData.label || ""}
+                                onChange={(e) => handleChange("label", e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-500/5 transition-all shadow-sm"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 px-1">Transfer Message</label>
+                            <textarea
+                                rows={4}
+                                value={formData.message || ""}
+                                onChange={(e) => handleChange("message", e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-500/5 transition-all shadow-sm resize-none"
+                                placeholder="e.g. Please wait while I connect you to a human agent..."
+                            />
+                        </div>
+                        <div className="p-4 bg-purple-50/50 border border-purple-100 rounded-2xl shadow-sm">
+                            <p className="text-[10px] text-slate-500 font-bold leading-relaxed">
+                                This node will flag the conversation for human intervention and notify the bot owner.
+                            </p>
+                        </div>
+                    </div>
+                );
+
             default:
                 return null;
         }

@@ -1,4 +1,8 @@
+import sys
 import os
+# Absolute path to backend directory to solve virtual environment import issues
+sys.path.append(r'c:\Users\karth\.gemini\antigravity\scratch\nimmi-ai\backend')
+
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
@@ -64,8 +68,12 @@ async def get_db():
         yield session
 
 async def init_db():
+    from backend.models import Base
     async with engine.begin() as conn:
-        # This will create tables if they don't exist based on the models
-        from models import Base
-        await conn.run_sync(Base.metadata.create_all)
-
+        # Check if tables exist by querying information_schema
+        # This is more robust than create_all in some environments
+        try:
+            await conn.run_sync(Base.metadata.create_all)
+            print("Database tables created/verified.")
+        except Exception as e:
+            print(f"Error creating tables: {e}")

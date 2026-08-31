@@ -1,8 +1,15 @@
+import sys
+import os
+# Absolute path to project root to solve virtual environment import issues
+sys.path.append(r'c:\Users\karth\.gemini\antigravity\scratch\nimmi-ai')
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi_socketio import SocketManager
 from pydantic import BaseModel
 from typing import List, Optional
 import shutil
@@ -14,7 +21,7 @@ from sqlalchemy.future import select
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
-from models import Bot, User, Message, Conversation, UserUsage, Subscription, Transaction
+from backend.models import Bot, User, Message, Conversation, UserUsage, Subscription, Transaction
 from crawler import extract_text_from_url, extract_youtube_transcript
 import asyncio
 import logging
@@ -29,7 +36,23 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Nimmi AI Backend")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from database import init_db
+    # Run database initialization in background
+    try:
+        await init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Warning: Database initialization failed: {e}")
+    
+    logger.info("Application starting up...")
+    yield
+    logger.info("Application shutting down...")
+
+app = FastAPI(title="Nimmi AI Backend", lifespan=lifespan)
 
 # Register routers early
 from payments import router as payments_router
@@ -76,6 +99,77 @@ allowed_origins.extend([
 ])
 
 
+# Socket.io configuration
+logger.info("Initializing Socket.io...")
+sio_mgr = SocketManager(app=app, mount_location='/socket.io', cors_allowed_origins='*')
+
+# --- SOCKET EVENTS ---
+@sio_mgr.on("join")
+async def handle_join(sid, data):
+    room = data.get("room")
+    if room:
+        await sio_mgr.enter_room(sid, room)
+        print(f"DEBUG: Socket {sid} joined room: {room}")
+        logger.info(f"Socket {sid} joined room: {room}")
+
+@sio_mgr.on("message")
+async def handle_message(sid, data):
+    room = data.get("room")
+    message = data.get("message")
+    sender = data.get("sender")
+    print(f"DEBUG: Socket message from {sender} to room {room}: {message}")
+    if room and message:
+        # Save message to DB to persist chat history during live chat
+        try:
+            from database import async_session
+            from sqlalchemy import select
+            from backend.models import Conversation, Message, Bot
+            
+            async with async_session() as db:
+                result = await db.execute(
+                    select(Conversation)
+                    .where(Conversation.visitor_session_id == room)
+                    .order_by(Conversation.created_at.desc())
+                )
+                conv = result.scalars().first()
+                if conv:
+                    role = "assistant" if sender == "agent" else "user"
+                    new_msg = Message(
+                        conversation_id=conv.conversation_id,
+                        role=role,
+                        content=message
+                    )
+                    db.add(new_msg)
+                    await db.commit()
+
+                    # Notify admins of new message if handoff is pending
+                    if sender != "agent" and conv.handoff_status == "pending":
+                        bot_res = await db.execute(select(Bot).where(Bot.bot_id == conv.bot_id))
+                        bot = bot_res.scalars().first()
+                        if bot:
+                            admin_room = f"admin_{bot.user_id}"
+                            await sio_mgr.emit("handoff_requested", {
+                                "conversation_id": str(conv.conversation_id),
+                                "bot_id": bot.bot_id,
+                                "bot_name": bot.bot_name,
+                                "session_id": room,
+                                "message": message
+                            }, room=admin_room)
+        except Exception as e:
+            logger.error(f"Error saving socket message to DB: {e}")
+
+        # Broadcast to everyone in the room
+        await sio_mgr.emit("message", data, room=room)
+
+@sio_mgr.on("connect")
+async def handle_connect(sid, environ):
+    print(f"DEBUG: Socket connected: {sid}")
+
+@sio_mgr.on("disconnect")
+async def handle_disconnect(sid):
+    print(f"DEBUG: Socket disconnected: {sid}")
+# --- END SOCKET EVENTS ---
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -89,20 +183,6 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 # Static Files
 os.makedirs("static/uploads", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-@app.on_event("startup")
-async def on_startup():
-    from database import init_db
-    # Run database initialization in background to prevent hanging uvicorn startup
-    async def run_db_init():
-        try:
-            await init_db()
-            logger.info("Database initialized successfully")
-        except Exception as e:
-            logger.error(f"Warning: Database initialization failed: {e}")
-            
-    asyncio.create_task(run_db_init())
-    logger.info("Application starting up...")
 
 # Models
 class BotCreate(BaseModel):
@@ -249,8 +329,9 @@ async def social_login(user_data: SocialLogin, db: AsyncSession = Depends(get_db
             password_hash=None # No password for social login
         )
         db.add(user)
+        await db.flush()
         await db.commit()
-        await db.refresh(user)
+        # No need to refresh if we just need the ID and it's already populated or we use a lambda default
         logger.info(f"New social user created: {user_data.email}")
     else:
         # Update name if it wasn't set
@@ -695,7 +776,7 @@ async def delete_bot(bot_id: str, db: AsyncSession = Depends(get_db)):
             traceback.print_exc(file=f)
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-from utils import extract_text_from_pdf, extract_text_from_txt, generate_ai_response, generate_ai_response_stream
+from utils import extract_text_from_pdf, extract_text_from_txt, generate_ai_response, generate_ai_response_stream, FlowEngine
 from vector_store import upsert_knowledge, query_knowledge, delete_bot_knowledge, get_bot_vector_count
 
 @app.post("/api/bots/{bot_id}/logo")
@@ -867,7 +948,6 @@ async def chat_message(chat: ChatMessage, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Bot not found")
     
     # 🔴 SUBSCRIPTION CHECK 🔴
-    # Skip if it's a demo request (trusted)
     is_demo = getattr(chat, 'is_demo', False)
     if not is_demo:
         sub = await check_bot_subscription(str(bot_uuid), db)
@@ -877,9 +957,79 @@ async def chat_message(chat: ChatMessage, db: AsyncSession = Depends(get_db)):
                 "bot_id": chat.bot_id,
                 "expired": True
             }
+
+    # --- HANDOFF CHECK ---
+    conv_result = await db.execute(
+        select(Conversation).where(
+            Conversation.bot_id == str(bot_uuid),
+            Conversation.visitor_session_id == chat.visitor_session_id
+        )
+    )
+    conversation = conv_result.scalars().first()
+    
+    if conversation and conversation.handoff_status == "human":
+        # If human is already active, we don't call AI. 
+        # The message will be handled by Socket.io in real-time.
+        # But we return a message saying "Human is typing..." or similar if requested via REST.
+        return {
+            "answer": "A human agent is currently handling this chat.",
+            "bot_id": chat.bot_id,
+            "handoff_status": "human"
+        }
+    
+    # Check if user explicitly asked for a human (simple keyword check for now)
+    human_keywords = ["talk to human", "agent", "human", "speak to someone", "representative"]
+    if any(keyword in chat.message.lower() for keyword in human_keywords):
+        if not conversation:
+            conversation = Conversation(
+                bot_id=str(bot_uuid),
+                visitor_session_id=chat.visitor_session_id,
+                handoff_requested=True,
+                handoff_status="pending"
+            )
+            db.add(conversation)
+        else:
+            conversation.handoff_requested = True
+            conversation.handoff_status = "pending"
+        
+        await db.commit()
+        
+        # Notify via Socket.io room for the bot owner/dashboard
+        await app.sio.emit("handoff_requested", {
+            "bot_id": chat.bot_id,
+            "session_id": chat.visitor_session_id,
+            "message": chat.message
+        }, room=f"admin_{bot.user_id}")
+        
+        return {
+            "answer": "I've notified a human agent. They will join the chat shortly. Please wait.",
+            "bot_id": chat.bot_id,
+            "handoff_status": "pending"
+        }
+    # --- END HANDOFF CHECK ---
     
     bot_name = bot.bot_name or "Assistant"
     user_system_prompt = bot.system_prompt or ""
+
+    # --- FLOW ENGINE CHECK ---
+    if bot.flow_data and bot.flow_data.get("nodes"):
+        current_node_id = conversation.current_node_id if conversation else None
+        # Start flow if we have a current node OR if it's the first user message
+        is_first_user_message = not any(m.get('role') == 'user' for m in chat.history)
+        if current_node_id or is_first_user_message:
+            flow_messages, next_node_id, handoff_triggered = FlowEngine.process(bot.flow_data, current_node_id)
+            if flow_messages:
+                if not conversation:
+                    conversation = Conversation(bot_id=str(bot_uuid), visitor_session_id=chat.visitor_session_id, current_node_id=next_node_id)
+                    db.add(conversation)
+                else:
+                    conversation.current_node_id = next_node_id
+                if handoff_triggered:
+                    conversation.handoff_status = "pending"
+                    conversation.handoff_requested = True
+                    await app.sio.emit("handoff_requested", {"bot_id": chat.bot_id, "session_id": chat.visitor_session_id, "message": chat.message, "bot_name": bot.bot_name, "created_at": datetime.utcnow().isoformat()}, room=f"admin_{bot.user_id}")
+                await db.commit()
+                return {"answer": "\n".join(flow_messages), "bot_id": chat.bot_id}
     
     logger.info(f"Generating AI response for Bot: {bot.bot_id} ({bot_name})")
     logger.info(f"Query: {chat.message}")
@@ -966,21 +1116,78 @@ async def chat_message_stream(chat: ChatMessage, db: AsyncSession = Depends(get_
     
     bot_name = bot.bot_name or "Assistant"
     user_system_prompt = bot.system_prompt or ""
+
+    # --- FLOW ENGINE CHECK ---
+    conv_result = await db.execute(
+        select(Conversation).where(
+            Conversation.bot_id == str(bot_uuid),
+            Conversation.visitor_session_id == chat.visitor_session_id
+        )
+    )
+    conversation = conv_result.scalars().first()
     
-    # Semantic search via Pinecone
+    if conversation and conversation.handoff_status == "human":
+        async def human_mode_generator():
+            yield "data: A human agent is currently handling this chat.\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(human_mode_generator(), media_type="text/event-stream")
+
+    # If the bot has flow data and we are not in a human takeover
+    if bot.flow_data and bot.flow_data.get("nodes"):
+        current_node_id = conversation.current_node_id if conversation else None
+        
+        # Determine if we should run the flow
+        # Start flow if we have a current node OR if it's the first user message
+        is_first_user_message = not any(m.get('role') == 'user' for m in chat.history)
+        if current_node_id or is_first_user_message:
+            flow_messages, next_node_id, handoff_triggered = FlowEngine.process(bot.flow_data, current_node_id)
+            
+            if flow_messages:
+                # Update or create conversation
+                if not conversation:
+                    conversation = Conversation(
+                        bot_id=str(bot_uuid),
+                        visitor_session_id=chat.visitor_session_id,
+                        current_node_id=next_node_id
+                    )
+                    db.add(conversation)
+                else:
+                    conversation.current_node_id = next_node_id
+                
+                if handoff_triggered:
+                    conversation.handoff_status = "pending"
+                    conversation.handoff_requested = True
+                    # Notify admins via Socket.io
+                    await app.sio.emit("handoff_requested", {
+                        "bot_id": chat.bot_id,
+                        "session_id": chat.visitor_session_id,
+                        "message": chat.message,
+                        "bot_name": bot.bot_name,
+                        "created_at": datetime.utcnow().isoformat()
+                    }, room=f"admin_{bot.user_id}")
+                
+                await db.commit()
+                
+                async def flow_generator():
+                    for msg in flow_messages:
+                        yield f"data: {msg}\n\n"
+                    yield "data: [DONE]\n\n"
+                return StreamingResponse(flow_generator(), media_type="text/event-stream")
+
+    # STEP 1: Fast Knowledge Search
     knowledge_context = ""
     try:
-        with open("chat_debug.log", "a") as f:
-            f.write(f"[{datetime.now()}] Starting query_knowledge...\n")
-        matches = await asyncio.to_thread(query_knowledge, str(bot_uuid), chat.message, 5)
-        with open("chat_debug.log", "a") as f:
-            f.write(f"[{datetime.now()}] query_knowledge finished: {len(matches)} matches\n")
+        from vector_store import query_knowledge
+        # Strict 3s timeout for search to keep chat fast
+        matches = await asyncio.wait_for(query_knowledge(str(bot_uuid), chat.message, 3), timeout=3.0)
         if matches:
             knowledge_context = "\n\n".join([m["text"] for m in matches])
         else:
-            knowledge_context = (bot.knowledge_base or "")[:8000]
+            knowledge_context = (bot.knowledge_base or "")[:5000]
     except Exception:
-        knowledge_context = (bot.knowledge_base or "")[:8000]
+        knowledge_context = (bot.knowledge_base or "")[:5000]
+    
+    logger.info(f"[CHAT] Starting fast AI response for session: {chat.visitor_session_id}")
     
     # Persona system prompt
     is_first_message = len(chat.history) == 0
@@ -1285,6 +1492,136 @@ async def knowledge_stats(bot_id: str):
         return {"bot_id": bot_id, "vector_count": count, "indexed": count > 0}
     except Exception as e:
         return {"bot_id": bot_id, "vector_count": 0, "indexed": False, "error": str(e)}
+
+@app.get("/api/handoffs/pending")
+async def get_pending_handoffs(db: AsyncSession = Depends(get_db)):
+    """List all conversations waiting for a human agent."""
+    try:
+        # Simplified query without complex join to avoid potential hangs
+        result = await db.execute(
+            select(Conversation).where(Conversation.handoff_status.in_(["pending", "human"]))
+        )
+        conversations = result.scalars().all()
+        
+        handoffs = []
+        for conv in conversations:
+            # Fetch bot name separately if needed, or just use the ID for now to be safe
+            bot_result = await db.execute(select(Bot.bot_name).where(Bot.bot_id == conv.bot_id))
+            bot_name = bot_result.scalars().first() or "Unknown Bot"
+            
+            handoffs.append({
+                "conversation_id": str(conv.conversation_id),
+                "bot_id": conv.bot_id,
+                "bot_name": bot_name,
+                "session_id": conv.visitor_session_id,
+                "created_at": conv.created_at,
+                "captured_data": conv.captured_data
+            })
+        return handoffs
+    except Exception as e:
+        logger.error(f"Error fetching pending handoffs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ManualHandoffRequest(BaseModel):
+    bot_id: str
+    visitor_session_id: str
+
+@app.post("/api/chat/handoff")
+async def manual_handoff(request: ManualHandoffRequest, db: AsyncSession = Depends(get_db)):
+    """Manually trigger a handoff from the widget's Human toggle."""
+    try:
+        # Check if conversation already exists
+        result = await db.execute(
+            select(Conversation).where(
+                Conversation.bot_id == request.bot_id,
+                Conversation.visitor_session_id == request.visitor_session_id
+            )
+        )
+        conv = result.scalars().first()
+        
+        if not conv:
+            # Create a new conversation record if it doesn't exist
+            conv = Conversation(
+                bot_id=request.bot_id,
+                visitor_session_id=request.visitor_session_id,
+                handoff_status="pending",
+                handoff_requested=True
+            )
+            db.add(conv)
+        else:
+            # Update existing conversation
+            conv.handoff_status = "pending"
+            conv.handoff_requested = True
+            
+        await db.commit()
+        
+        # Notify admins via Socket.io
+        # Find the bot owner
+        bot_res = await db.execute(select(Bot).where(Bot.bot_id == request.bot_id))
+        bot = bot_res.scalars().first()
+        if bot:
+            admin_room = f"admin_{bot.user_id}"
+            await sio_mgr.emit("handoff_requested", {
+                "conversation_id": str(conv.conversation_id),
+                "bot_id": bot.bot_id,
+                "bot_name": bot.bot_name,
+                "session_id": request.visitor_session_id
+            }, room=admin_room)
+            
+        return {"status": "success", "message": "Handoff requested"}
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error in manual handoff: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/handoffs/{conversation_id}/accept")
+async def accept_handoff(conversation_id: str, agent_id: str, db: AsyncSession = Depends(get_db)):
+    """Agent accepts a handoff request."""
+    try:
+        result = await db.execute(
+            select(Conversation).where(Conversation.conversation_id == conversation_id)
+        )
+        conv = result.scalars().first()
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+            
+        conv.handoff_status = "human"
+        conv.agent_id = agent_id
+        await db.commit()
+        
+        # Notify the visitor via Socket.io that an agent has joined
+        await app.sio.emit("agent_joined", {
+            "conversation_id": conversation_id,
+            "agent_id": agent_id
+        }, room=conv.visitor_session_id)
+        
+        return {"status": "success", "message": "Handoff accepted"}
+    except Exception as e:
+        logger.error(f"Error accepting handoff: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/handoffs/{conversation_id}/messages")
+async def get_handoff_messages(conversation_id: str, db: AsyncSession = Depends(get_db)):
+    """Fetch previous messages for a conversation during handoff."""
+    try:
+        result = await db.execute(
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.timestamp.asc())
+        )
+        messages = result.scalars().all()
+        return [
+            {
+                "id": msg.id,
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat() if msg.timestamp else None
+            }
+            for msg in messages
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching messages for handoff: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

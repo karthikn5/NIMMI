@@ -1,8 +1,9 @@
 "use client";
 
 import { use, useEffect, useState, useRef, Suspense } from "react";
-import { Send, User, Bot, X, Maximize2, Minimize2, Paperclip, Smile } from "lucide-react";
+import { Send, User, Bot, X, Maximize2, Minimize2, Paperclip, Smile, Clock } from "lucide-react";
 import { useSearchParams } from "next/navigation";
+import { io } from "socket.io-client";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface Message {
@@ -15,17 +16,128 @@ interface Message {
 function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     const { botId } = use(params);
     const searchParams = useSearchParams();
-    const [messages, setMessages] = useState<Message[]>([]);
+    const [aiMessages, setAiMessages] = useState<Message[]>([]);
+    const [humanMessages, setHumanMessages] = useState<Message[]>([]);
     const [input, setInput] = useState("");
     const [loading, setLoading] = useState(false);
+    const [mode, setMode] = useState<"ai" | "human">("ai");
     const [botConfig, setBotConfig] = useState<any>(null);
+    const [isHumanActive, setIsHumanActive] = useState(false);
+    const socketRef = useRef<any>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    // Derived current messages based on mode
+    const messages = mode === "ai" ? aiMessages : humanMessages;
+    const setMessages = mode === "ai" ? setAiMessages : setHumanMessages;
+
+    const handleModeToggle = async (newMode: "ai" | "human") => {
+        if (newMode === mode) return;
+        setMode(newMode);
+
+        if (newMode === "human") {
+            const humanSessionId = "widget-session-human-" + botId;
+            try {
+                const response = await fetch(`${apiBase}/api/chat/handoff`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        bot_id: botId,
+                        visitor_session_id: humanSessionId
+                    })
+                });
+                
+                if (response.ok && humanMessages.length === 0) {
+                    setHumanMessages([{
+                        id: Date.now().toString(),
+                        text: "Connecting with human... have notified a human agent. They will join the chat shortly.",
+                        sender: "bot",
+                        timestamp: new Date()
+                    }]);
+                }
+                // Join the socket room immediately so messages are received
+                if (socketRef.current) {
+                    socketRef.current.emit("join", { room: humanSessionId });
+                }
+            } catch (err) {
+                console.error("Handoff request failed:", err);
+            }
+        }
+    };
 
     const apiBase = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
         ? 'http://localhost:8000'
         : 'https://api.nimmiai.in';
 
     useEffect(() => {
+        // Initialize Socket.io
+        const socket = io(apiBase, {
+            transports: ["websocket"],
+            upgrade: false
+        });
+        socketRef.current = socket;
+        const humanSessionId = "widget-session-human-" + botId;
+
+        socket.on("connect", () => {
+            socket.emit("join", { room: humanSessionId });
+        });
+
+        socket.on("agent_joined", (data: any) => {
+            setIsHumanActive(true);
+            addHumanMessageSafely({
+                id: `system-agent-joined-${Date.now()}`,
+                text: "A human agent has joined the chat.",
+                sender: 'bot',
+                timestamp: new Date()
+            });
+        });
+
+        socket.on("message", (data: any) => {
+            if (data.sender === "agent") {
+                addHumanMessageSafely({
+                    id: Date.now().toString(),
+                    text: data.message,
+                    sender: 'bot',
+                    timestamp: new Date()
+                });
+            }
+        });
+
+        return () => {
+            socket.disconnect();
+        };
+    }, [botId, apiBase]);
+
+    useEffect(() => {
+        let hasHistory = false;
+        const storageKey = `nimmi_chat_history_${botId}`;
+        const savedData = localStorage.getItem(storageKey);
+        
+        if (savedData) {
+            try {
+                const { messages: savedMessages, timestamp, mode: savedMode } = JSON.parse(savedData);
+                const now = Date.now();
+                const twentyFourHours = 24 * 60 * 60 * 1000;
+                
+                if (now - timestamp < twentyFourHours && savedMode === "human") {
+                    // Safety: Deduplicate messages by ID
+                    const uniqueMessages = (savedMessages || []).filter((msg: any, index: number, self: any[]) =>
+                        index === self.findIndex((m: any) => m.id === msg.id)
+                    );
+                    setHumanMessages(uniqueMessages.map((m: any) => ({
+                        ...m,
+                        timestamp: new Date(m.timestamp)
+                    })));
+                    setMode("human");
+                    setIsHumanActive(true);
+                    hasHistory = true;
+                } else {
+                    localStorage.removeItem(storageKey);
+                }
+            } catch (e) {
+                console.error("Failed to parse chat history", e);
+            }
+        }
+
         const fetchConfig = async () => {
             try {
                 const res = await fetch(`${apiBase}/api/bots/${botId}/config`);
@@ -33,8 +145,8 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                     const data = await res.json();
                     setBotConfig(data);
                     
-                    // Add welcome message if configured
-                    setMessages([{
+                    // ALWAYS initialize AI chat with a welcome message
+                    setAiMessages([{
                         id: 'welcome',
                         text: `Hi! I'm ${data.bot_name || 'Assistant'}. How can I help you today?`,
                         sender: 'bot',
@@ -49,42 +161,97 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     }, [botId, apiBase]);
 
     useEffect(() => {
+        if (mode === "human" && humanMessages.length > 0) {
+            const storageKey = `nimmi_chat_history_${botId}`;
+            localStorage.setItem(storageKey, JSON.stringify({
+                messages: humanMessages,
+                timestamp: Date.now(),
+                mode: "human"
+            }));
+        }
+    }, [humanMessages, mode, botId]);
+
+    useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
+
+    // Helper to add messages with ID safety
+    const addHumanMessageSafely = (newMsg: Message) => {
+        setHumanMessages(prev => {
+            if (prev.some(m => m.id === newMsg.id)) return prev;
+            return [...prev, newMsg];
+        });
+    };
 
     const handleSend = async () => {
         if (!input.trim() || loading) return;
 
+        const currentMode = mode;
+        const currentInput = input;
+
         const userMsg: Message = {
             id: Date.now().toString(),
-            text: input,
+            text: currentInput,
             sender: "user",
             timestamp: new Date()
         };
 
-        setMessages(prev => [...prev, userMsg]);
+        if (currentMode === "ai") setAiMessages(prev => [...prev, userMsg]);
+        else setHumanMessages(prev => [...prev, userMsg]);
+        
         setInput("");
-        setLoading(true);
 
+        const sessionId = currentMode === "ai" 
+            ? "widget-session-ai-" + botId 
+            : "widget-session-human-" + botId;
+
+        // If mode is human, ALWAYS send via WebSocket so messages are recorded in DB
+        // and the admin is notified (whether agent has joined or is still pending).
+        if (currentMode === "human") {
+            if (socketRef.current?.connected) {
+                socketRef.current.emit("message", {
+                    room: sessionId,
+                    message: currentInput,
+                    sender: "visitor"
+                });
+            }
+            return;
+        }
+
+        setLoading(true);
         const isDemo = searchParams.get('is_demo') === 'true';
         
+        // Prepare history INCLUDING the message we just sent
+        const updatedHistory = [...aiMessages, userMsg].map(m => ({ 
+            role: m.sender === 'user' ? 'user' : 'assistant', 
+            content: m.text 
+        }));
+
+        const botMsgId = (Date.now() + 1).toString();
+        setAiMessages(prev => [...prev, { 
+            id: botMsgId, 
+            text: "", 
+            sender: "bot", 
+            timestamp: new Date() 
+        }]);
+
         try {
+            // Debug: Log that we are starting the request
+            console.log("DEBUG: Starting fetch to", `${apiBase}/api/chat/message/stream`);
+            
             const res = await fetch(`${apiBase}/api/chat/message/stream`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     bot_id: botId,
-                    message: input,
-                    visitor_session_id: "widget-session-" + botId,
-                    history: messages.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text })),
+                    message: currentInput,
+                    visitor_session_id: sessionId,
+                    history: updatedHistory,
                     is_demo: isDemo
                 })
             });
 
             if (!res.ok) throw new Error("Failed to get response");
-
-            const botMsgId = (Date.now() + 1).toString();
-            setMessages(prev => [...prev, { id: botMsgId, text: "", sender: "bot", timestamp: new Date() }]);
 
             const reader = res.body?.getReader();
             const decoder = new TextDecoder();
@@ -103,16 +270,20 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                             const data = line.slice(6);
                             if (data === "[DONE]") break;
                             accumulatedText += data;
-                            setMessages(prev => prev.map(m => m.id === botMsgId ? { ...m, text: accumulatedText } : m));
+                            setAiMessages(prev => prev.map(m => m.id === botMsgId ? { ...m, text: accumulatedText } : m));
                         }
                     }
                 }
             }
-        } catch (err) {
+        } catch (err: any) {
             console.error("Chat error:", err);
-            setMessages(prev => [...prev, {
+            const errorMessage = err.name === 'AbortError' 
+                ? "The AI is taking a bit long to respond. Please try again in a moment."
+                : "I'm sorry, I encountered an error. Please try again.";
+                
+            setAiMessages(prev => [...prev, {
                 id: 'error',
-                text: "I'm sorry, I encountered an error. Please try again.",
+                text: errorMessage,
                 sender: 'bot',
                 timestamp: new Date()
             }]);
@@ -150,52 +321,61 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                     }}
                 />
             )}
-            {/* Header - Exact Builder Match */}
+            {/* Header - Perfected Alignment */}
             <header 
-                className="p-6 font-bold flex items-center justify-between shrink-0 shadow-lg relative z-10" 
+                className="p-4 font-bold flex items-center justify-between shrink-0 shadow-lg relative z-20 backdrop-blur-md rounded-t-2xl border-b border-white/10" 
                 style={{ 
                     backgroundColor: primaryColor,
                     color: visual.text_color || visual.textColor || "#ffffff",
-                    height: headerHeight !== "auto" ? headerHeight : "auto"
                 }}
             >
+                {/* Left: Identity */}
                 <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center overflow-hidden backdrop-blur-md border border-white/10">
-                        {(() => {
-                            let logoUrl = visual.logo_url || visual.botLogo;
-                            if (logoUrl && logoUrl.includes('/static/uploads/')) {
-                                const fileName = logoUrl.split('/').pop();
-                                logoUrl = `${apiBase}/static/uploads/${fileName}`;
-                            }
-                            return logoUrl ? (
-                                <img 
-                                    src={logoUrl} 
-                                    alt="Logo" 
-                                    className="w-full h-full object-cover" 
-                                    onError={(e) => {
-                                        const img = e.target as HTMLImageElement;
-                                        img.style.display = 'none';
-                                        const parent = img.parentElement;
-                                        if (parent && !parent.querySelector('.fallback-icon')) {
-                                            const div = document.createElement('div');
-                                            div.className = 'fallback-icon flex items-center justify-center w-full h-full bg-[#9d55ac] text-white text-[10px] font-black uppercase';
-                                            div.innerText = 'Bot';
-                                            parent.appendChild(div);
-                                        }
-                                    }}
-                                />
-                            ) : (
-                                <div className="flex items-center justify-center w-full h-full bg-[#9d55ac] text-white text-[10px] font-black uppercase">
-                                    Bot
-                                </div>
-                            );
-                        })()}
+                    <div className="relative">
+                        <img 
+                            src={visual.logo_url || visual.botLogo || "https://img.freepik.com/free-vector/cyborg-concept-illustration_114360-155.jpg"} 
+                            alt="bot" 
+                            className="w-10 h-10 rounded-full border-2 border-white/50 object-cover shadow-lg"
+                        />
+                        <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-white animate-pulse"></div>
                     </div>
-                    <span className="drop-shadow-sm text-base tracking-tight">{botConfig?.bot_name || "Nimmi Assistant"}</span>
+                    <div className="flex flex-col">
+                        <span className="font-bold text-white text-sm tracking-tight truncate max-w-[80px]">
+                            {botConfig?.bot_name || "Deepa"}
+                        </span>
+                        <div className="flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
+                            <p className="text-white/70 text-[8px] uppercase font-bold tracking-widest">Online</p>
+                        </div>
+                    </div>
                 </div>
-                <button onClick={() => window.parent.postMessage('close-nimmi-widget', '*')} className="p-1.5 hover:bg-white/10 rounded-lg transition-colors opacity-80 hover:opacity-100" style={{ color: visual.text_color || visual.textColor || "#ffffff" }}>
-                    <X size={20} />
-                </button>
+
+                {/* Right-aligned Group for Toggle and Close */}
+                <div className="flex items-center gap-3 ml-auto">
+                    {/* Mode Toggle */}
+                    <div className="flex bg-black/20 p-1 rounded-full border border-white/10 shadow-inner scale-90">
+                        <button 
+                            onClick={() => handleModeToggle('ai')}
+                            className={`px-3 py-1 rounded-full text-[9px] font-black uppercase transition-all duration-300 ${mode === 'ai' ? 'bg-white text-black shadow-md scale-105' : 'text-white/50 hover:text-white'}`}
+                        >
+                            AI
+                        </button>
+                        <button 
+                            onClick={() => handleModeToggle('human')}
+                            className={`px-3 py-1 rounded-full text-[9px] font-black uppercase transition-all duration-300 ${mode === 'human' ? 'bg-white text-black shadow-md scale-105' : 'text-white/50 hover:text-white'}`}
+                        >
+                            Human
+                        </button>
+                    </div>
+
+                    {/* Close Button */}
+                    <button 
+                        onClick={() => window.parent.postMessage('close-nimmi-widget', '*')}
+                        className="p-2 hover:bg-white/10 rounded-full text-white/70 hover:text-white transition-colors"
+                    >
+                        <X size={20} />
+                    </button>
+                </div>
             </header>
 
             {/* Messages */}
@@ -209,8 +389,8 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                             className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"} items-start gap-2`}
                         >
                             {msg.sender === "bot" && (
-                                <div className="w-7 h-7 rounded-full flex items-center justify-center text-white shrink-0 mt-1" style={{ backgroundColor: primaryColor }}>
-                                    <Bot size={14} />
+                                <div className="w-7 h-7 rounded-full flex items-center justify-center text-white shrink-0 mt-1" style={{ backgroundColor: mode === "human" ? "#16a34a" : primaryColor }}>
+                                    {mode === "human" ? <User size={14} /> : <Bot size={14} />}
                                 </div>
                             )}
                             <div
@@ -232,24 +412,32 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
             </main>
 
             {/* Input - Rectangular Style Match */}
-            <footer className="p-4 bg-zinc-900/80 border-t border-white/5 flex gap-2 backdrop-blur-md relative z-10">
-                <input
-                    type="text"
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyPress={(e) => e.key === "Enter" && handleSend()}
-                    placeholder="Type a message..."
-                    className="flex-1 rounded-xl border border-white/5 h-12 flex items-center px-4 text-sm shadow-inner outline-none"
-                    style={{ backgroundColor: visual.input_bg_color || visual.inputBgColor || "#ffffff", color: visual.input_text_color || visual.inputTextColor || "#000000" }}
-                />
-                <button
-                    onClick={handleSend}
-                    disabled={!input.trim() || loading}
-                    className="w-12 h-12 shrink-0 rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all disabled:opacity-50"
-                    style={{ backgroundColor: primaryColor, color: visual.text_color || visual.textColor || "#ffffff" }}
-                >
-                    <Send size={18} />
-                </button>
+            <footer className="p-4 bg-zinc-900/80 border-t border-white/5 flex flex-col gap-2 backdrop-blur-md relative z-10">
+                {mode === "human" && (
+                    <div className="text-[10px] text-white/40 flex items-center gap-1 mb-1 px-1">
+                        <Clock size={10} />
+                        <span>Chat history preserved for 24h</span>
+                    </div>
+                )}
+                <div className="flex gap-2 w-full">
+                    <input
+                        type="text"
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        onKeyPress={(e) => e.key === "Enter" && handleSend()}
+                        placeholder="Type a message..."
+                        className="flex-1 rounded-xl border border-white/5 h-12 flex items-center px-4 text-sm shadow-inner outline-none"
+                        style={{ backgroundColor: visual.input_bg_color || visual.inputBgColor || "#ffffff", color: visual.input_text_color || visual.inputTextColor || "#000000" }}
+                    />
+                    <button
+                        onClick={handleSend}
+                        disabled={!input.trim() || loading}
+                        className="w-12 h-12 shrink-0 rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all disabled:opacity-50"
+                        style={{ backgroundColor: primaryColor, color: visual.text_color || visual.textColor || "#ffffff" }}
+                    >
+                        <Send size={18} />
+                    </button>
+                </div>
             </footer>
 
             <style dangerouslySetInnerHTML={{ __html: `

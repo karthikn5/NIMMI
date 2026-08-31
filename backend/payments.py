@@ -1,3 +1,9 @@
+import sys
+import os
+# Absolute path to project root to solve virtual environment import issues
+sys.path.append(r'c:\Users\karth\.gemini\antigravity\scratch\nimmi-ai')
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import razorpay
 import os
 import hmac
@@ -9,7 +15,7 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from database import get_db
-from models import Bot, UserUsage, Subscription, Transaction
+from backend.models import Bot, UserUsage, Subscription, Transaction, User
 import uuid
 import logging
 from datetime import datetime, timedelta
@@ -150,6 +156,15 @@ async def verify_payment(request: Request, db: AsyncSession = Depends(get_db)):
         if bot:
             bot.export_unlocked = True
             bot.is_active = True
+
+        # Update the User's overall subscription tier
+        user_result = await db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalars().first()
+        if user:
+            # We set the user-level tier to the plan name (e.g., "6 Month Plan")
+            # If they have multiple bots with different plans, this will reflect the most recent purchase.
+            user.subscription_tier = plan_name
+            db.add(user)
         
         # Record transaction
         new_transaction = Transaction(

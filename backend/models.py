@@ -39,6 +39,10 @@ class Conversation(Base):
     bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"))
     visitor_session_id = Column(String, nullable=False)
     captured_data = Column(JSON, default={})
+    handoff_requested = Column(Boolean, default=False)
+    handoff_status = Column(String, default="ai") # ai, pending, human
+    agent_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    current_node_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class Message(Base):

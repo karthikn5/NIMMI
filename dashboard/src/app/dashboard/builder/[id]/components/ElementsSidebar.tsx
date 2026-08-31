@@ -5,7 +5,7 @@ import {
     Play, MessageSquare, Type, Mail, List, Calendar, Square,
     GripVertical, GitBranch, Hash, Image as ImageIcon, Video,
     Upload, Star, Clock, Variable, Globe, Sparkles, Phone, Link2, Slack, Table,
-    MousePointer2, ChevronDown, Search
+    MousePointer2, ChevronDown, Search, UserPlus
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -37,6 +37,7 @@ const categories = [
         label: "Logic & Flow",
         elements: [
             { type: "condition", label: "If Condition", description: "Branch based on input", icon: GitBranch, color: "purple" },
+            { type: "handover", label: "Talk to Human", description: "Transfer to live agent", icon: UserPlus, color: "purple" },
             { type: "delay", label: "Delay", description: "Wait for X seconds", icon: Clock, color: "white" },
             { type: "variable", label: "Set Variable", description: "Store data locally", icon: Variable, color: "blue" },
             { type: "end", label: "End Flow", description: "Terminate conversation", icon: Square, color: "red" },

@@ -57,11 +57,11 @@ def generate_ai_response(system_prompt, context, user_query, provider="google", 
         current_api_key = api_key or GEMINI_DEFAULT_KEY
         # Map invalid/old model names to valid ones
         model_mapping = {
-            "gemini-2.0-flash-001": "gemini-2.0-flash",
-            "gemini-1.5-pro": "gemini-1.5-pro",
-            "gemini-1.5-flash": "gemini-1.5-flash",
-            "gemini-3-flash-preview": "gemini-2.0-flash", # Redirect to 2.0 if 3 fails
-            "gemini-3-pro-preview": "gemini-1.5-pro",
+            "gemini-2.0-flash": "gemini-flash-lite-latest",
+            "gemini-1.5-pro": "gemini-pro-latest",
+            "gemini-1.5-flash": "gemini-flash-lite-latest",
+            "gemini-3-flash-preview": "gemini-flash-lite-latest",
+            "gemini-3-pro-preview": "gemini-pro-latest",
         }
         requested_model = (model_name or "gemini-flash-latest").replace("models/", "")
         primary_model = model_mapping.get(requested_model, requested_model)
@@ -151,7 +151,7 @@ Assistant:"""
         requested_model = (model_name or "gemini-flash-latest").replace("models/", "")
         primary_model = model_mapping.get(requested_model, requested_model)
 
-        models_to_try = [primary_model, "gemini-flash-latest", "gemini-pro-latest", "gemini-1.5-flash"]
+        models_to_try = ["gemini-flash-lite-latest", "gemini-flash-latest"]
 
         last_err = ""
         for m_name in models_to_try:
@@ -239,3 +239,57 @@ def extract_text_from_txt(file_stream) -> str:
         content = file_stream.read()
         return content.decode("utf-8") if isinstance(content, bytes) else content
     except: return "Error"
+
+class FlowEngine:
+    @staticmethod
+    def get_next_node(flow_data, current_node_id):
+        nodes = flow_data.get("nodes", [])
+        edges = flow_data.get("edges", [])
+        
+        # If no current node, start at entry point
+        if not current_node_id:
+            start_node = next((n for n in nodes if n["type"] == "start"), None)
+            if not start_node: return None
+            current_node_id = start_node["id"]
+            
+        # Find edge from current node
+        edge = next((e for e in edges if e["source"] == current_node_id), None)
+        if not edge: return None
+        
+        target_node = next((n for n in nodes if n["id"] == edge["target"]), None)
+        return target_node
+
+    @staticmethod
+    def process(flow_data, current_node_id):
+        """
+        Executes the flow until it reaches a node that requires user input or a handover.
+        Returns a list of messages to send and the new node_id.
+        """
+        messages = []
+        handoff_triggered = False
+        
+        node = FlowEngine.get_next_node(flow_data, current_node_id)
+        
+        while node:
+            current_node_id = node["id"]
+            node_type = node.get("type")
+            node_data = node.get("data", {})
+            
+            if node_type == "message":
+                messages.append(node_data.get("label", "Message"))
+                # Keep going to next node
+            elif node_type == "handover":
+                # This is the actual logic node
+                handoff_triggered = True
+                messages.append(node_data.get("message", "I've notified a human agent."))
+                break
+            elif node_type == "textInput" or node_type == "emailInput":
+                messages.append(node_data.get("label", "Please enter input:"))
+                # Stop here and wait for user
+                break
+            
+            # Find next node
+            node = FlowEngine.get_next_node(flow_data, current_node_id)
+            if not node: break
+            
+        return messages, current_node_id, handoff_triggered

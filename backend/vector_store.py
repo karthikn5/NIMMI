@@ -2,11 +2,17 @@
 Pinecone Vector Store — Chunking, Embedding & Semantic Search
 Handles all interactions with Pinecone for the RAG pipeline.
 """
+import sys
+import os
+# Absolute path to backend directory to solve virtual environment import issues
+sys.path.append(r'c:\Users\karth\.gemini\antigravity\scratch\nimmi-ai\backend')
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import os
 import logging
 import hashlib
 from typing import List, Dict, Optional
+import google.generativeai as genai
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -100,8 +106,13 @@ def generate_embedding(text: str) -> List[float]:
     Returns:
         A list of floats representing the text embedding.
     """
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY is not set")
+    
+    genai.configure(api_key=GEMINI_API_KEY, transport="rest")
+
     result = genai.embed_content(
-        model="models/embedding-001",
+        model="models/gemini-embedding-001",
         content=text,
         task_type="retrieval_document",
     )
@@ -114,12 +125,13 @@ def generate_query_embedding(query: str) -> List[float]:
     Generate an embedding optimized for search queries.
     Uses task_type="retrieval_query" for better semantic matching.
     """
-    import google.generativeai as genai
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY is not set")
 
     genai.configure(api_key=GEMINI_API_KEY, transport="rest")
 
     result = genai.embed_content(
-        model="models/embedding-001",
+        model="models/gemini-embedding-001",
         content=query,
         task_type="retrieval_query",
     )
@@ -190,7 +202,7 @@ def upsert_knowledge(bot_id: str, text: str, source_name: str = "upload") -> int
     return total_upserted
 
 
-def query_knowledge(bot_id: str, query: str, top_k: int = 5) -> List[Dict]:
+async def query_knowledge(bot_id: str, query: str, top_k: int = 5) -> List[Dict]:
     """
     Perform semantic search against a bot's knowledge base.
     
@@ -205,7 +217,11 @@ def query_knowledge(bot_id: str, query: str, top_k: int = 5) -> List[Dict]:
     index = _get_index()
 
     try:
-        query_embedding = generate_query_embedding(query)
+        # Use asyncio.wait_for to prevent infinite hang on slow vector search
+        query_embedding = await asyncio.wait_for(
+            asyncio.to_thread(generate_query_embedding, query),
+            timeout=10.0
+        )
 
         results = index.query(
             vector=query_embedding,

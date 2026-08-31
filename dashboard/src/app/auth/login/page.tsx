@@ -30,8 +30,8 @@ export default function Login() {
                     const res = await fetch(`${apiUrl}/api/auth/social`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ 
-                            email: user.email, 
+                        body: JSON.stringify({
+                            email: user.email,
                             name: user.user_metadata.full_name || user.user_metadata.name || "",
                             provider: "google"
                         })
@@ -120,11 +120,11 @@ export default function Login() {
                             transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
                             className="relative w-full h-full"
                         >
-                            <Image 
-                                src="/login-mascot-v3.png" 
-                                alt="Nimmi Mascot" 
-                                fill 
-                                className="object-contain drop-shadow-2xl mix-blend-multiply" 
+                            <Image
+                                src="/login-mascot-v3.png"
+                                alt="Nimmi Mascot"
+                                fill
+                                className="object-contain drop-shadow-2xl mix-blend-multiply"
                             />
                         </motion.div>
                     </div>

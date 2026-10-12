@@ -1,10 +1,23 @@
 import os
 import sys
 
-# Make both `backend.models` and the sibling modules importable however uvicorn is started.
+import types
+
+# Make both `backend.models` and direct sibling modules importable however uvicorn/gunicorn is started.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.dirname(_HERE))
-sys.path.append(_HERE)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+_PARENT = os.path.dirname(_HERE)
+if _PARENT not in sys.path:
+    sys.path.insert(0, _PARENT)
+
+# When running in containers (e.g. Railway) where code is copied directly to /app,
+# alias `backend` to this directory so `from backend.models import ...` resolves cleanly.
+if "backend" not in sys.modules:
+    backend_pkg = types.ModuleType("backend")
+    backend_pkg.__path__ = [_HERE]
+    sys.modules["backend"] = backend_pkg
+
 
 import logging
 from contextlib import asynccontextmanager

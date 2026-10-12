@@ -6,7 +6,10 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from backend.models import Bot, Subscription, Transaction, User
+try:
+    from backend.models import Bot, Subscription, Transaction, User
+except ImportError:
+    from models import Bot, Subscription, Transaction, User
 
 logger = logging.getLogger(__name__)
 

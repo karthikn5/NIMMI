@@ -11,8 +11,10 @@ from typing import Optional
 from sqlalchemy.future import select
 
 from auth import decode_token
-from database import async_session
-from backend.models import Bot, Conversation, IntegrationSettings, Message, TeamMember
+try:
+    from backend.models import Bot, Conversation, IntegrationSettings, Message, TeamMember
+except ImportError:
+    from models import Bot, Conversation, IntegrationSettings, Message, TeamMember
 
 logger = logging.getLogger(__name__)
 

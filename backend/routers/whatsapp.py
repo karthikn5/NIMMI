@@ -25,7 +25,10 @@ from sqlalchemy.future import select
 
 import assist
 from database import async_session, get_db
-from backend.models import Bot, Conversation, IntegrationSettings, Message
+try:
+    from backend.models import Bot, Conversation, IntegrationSettings, Message
+except ImportError:
+    from models import Bot, Conversation, IntegrationSettings, Message
 from notify import channels
 from notify.events import fire_and_forget, handoff_requested, lead_captured
 from realtime import notify_owner

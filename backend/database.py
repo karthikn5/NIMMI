@@ -71,7 +71,10 @@ async def get_db():
         yield session
 
 async def init_db():
-    from backend.models import Base
+    try:
+        from backend.models import Base
+    except ImportError:
+        from models import Base
     async with engine.begin() as conn:
         # Check if tables exist by querying information_schema
         # This is more robust than create_all in some environments

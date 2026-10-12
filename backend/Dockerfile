@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
+RUN ln -s /app /app/backend
 
 # Remove .env if it exists
 RUN rm -f .env .env.local .env.railway

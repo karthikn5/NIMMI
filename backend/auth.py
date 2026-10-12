@@ -20,7 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from database import get_db
-from backend.models import Bot, TeamMember, User
+try:
+    from backend.models import Bot, TeamMember, User
+except ImportError:
+    from models import Bot, TeamMember, User
 
 logger = logging.getLogger(__name__)
 

@@ -16,26 +16,26 @@ interface ConditionNodeProps {
 export default function ConditionNode({ data, selected }: ConditionNodeProps) {
     return (
         <div
-            className={`w-64 rounded-[24px] bg-white border border-slate-200 overflow-hidden shadow-xl transition-all ${selected ? "ring-4 ring-plum-data/20 border-plum-data scale-105" : ""
+            className={`w-64 rounded-lg bg-white border border-line-strong overflow-hidden shadow-[0_1px_3px_rgba(28,23,25,0.08)] transition-all ${selected ? "ring-2 ring-plum/20 border-plum" : ""
                 }`}
         >
             <Handle
                 type="target"
                 position={Position.Top}
-                className="!w-4 !h-4 !bg-plum-data !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+                className="!w-3 !h-3 !bg-stone-400 !border-2 !border-white transition-transform hover:scale-125"
             />
-            <div className="px-4 py-3 bg-plum-tint border-b border-plum-tint/50 flex items-center gap-2">
+            <div className="px-4 py-3 bg-stone-50/70 border-b border-line flex items-center gap-2">
                 <GitBranch size={14} className="text-plum" />
-                <span className="text-[10px] font-black text-plum-hover uppercase tracking-widest">{data.label}</span>
+                <span className="text-[12px] font-medium text-ink">{data.label}</span>
             </div>
             <div className="p-5 space-y-3">
                 <div className="flex items-center gap-2">
-                    <div className="px-2 py-1 bg-slate-100 rounded-lg text-[10px] font-mono font-bold text-slate-500 uppercase tracking-tighter">IF</div>
-                    <span className="text-xs font-black text-slate-700 uppercase tracking-tighter">{data.variable || "variable"}</span>
+                    <div className="px-2 py-1 bg-slate-100 rounded-lg text-[10px] font-mono font-normal text-slate-500">IF</div>
+                    <span className="text-xs font-medium text-slate-700">{data.variable || "variable"}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                    <div className="px-2 py-1 bg-slate-100 rounded-lg text-[10px] font-bold text-slate-500 uppercase tracking-tighter">{data.operator || "equals"}</div>
-                    <span className="text-xs font-black text-slate-700">{data.value || "value"}</span>
+                    <div className="px-2 py-1 bg-slate-100 rounded-lg text-[10px] font-normal text-slate-500">{data.operator || "equals"}</div>
+                    <span className="text-xs font-medium text-slate-700">{data.value || "value"}</span>
                 </div>
             </div>
 
@@ -45,18 +45,18 @@ export default function ConditionNode({ data, selected }: ConditionNodeProps) {
                         type="source"
                         position={Position.Bottom}
                         id="true"
-                        className="!left-auto !relative !translate-x-0 !w-4 !h-4 !bg-emerald-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+                        className="!left-auto !relative !translate-x-0 !w-3 !h-3 !bg-emerald-500 !border-2 !border-white !shadow-sm transition-transform hover:scale-125"
                     />
-                    <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest mt-1">TRUE</span>
+                    <span className="text-[9px] font-medium text-emerald-600 mt-1">TRUE</span>
                 </div>
                 <div className="relative flex flex-col items-center">
                     <Handle
                         type="source"
                         position={Position.Bottom}
                         id="false"
-                        className="!left-auto !relative !translate-x-0 !w-4 !h-4 !bg-rose-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+                        className="!left-auto !relative !translate-x-0 !w-3 !h-3 !bg-rose-500 !border-2 !border-white !shadow-sm transition-transform hover:scale-125"
                     />
-                    <span className="text-[9px] font-black text-rose-600 uppercase tracking-widest mt-1">FALSE</span>
+                    <span className="text-[9px] font-medium text-rose-600 mt-1">FALSE</span>
                 </div>
             </div>
         </div>

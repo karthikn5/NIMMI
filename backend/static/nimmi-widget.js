@@ -30,8 +30,28 @@
         console.warn('Nimmi Widget: failed to fetch config, using defaults');
     }
 
+    // Where the chat appears: every page, only some, or all but some; optionally not on phones.
+    const here = (location.pathname.replace(/\/+$/, '') || '/').toLowerCase();
+    const onPath = (pattern) => {
+        let p = String(pattern || '').trim().toLowerCase();
+        if (!p) return false;
+        try { if (/^https?:\/\//.test(p)) p = new URL(p).pathname; } catch (e) {}
+        if (!p.startsWith('/')) p = '/' + p;
+        if (p.endsWith('*')) {
+            const base = p.slice(0, -1).replace(/\/+$/, '');
+            return here === (base || '/') || here.startsWith(base + '/');
+        }
+        return here === (p.replace(/\/+$/, '') || '/');
+    };
+    const pageRule = visual.page_rule || 'all';
+    const listed = (Array.isArray(visual.page_paths) ? visual.page_paths : []).some(onPath);
+    if ((pageRule === 'only' && !listed) || (pageRule === 'except' && listed)) return;
+    if (visual.hide_on_mobile === true && window.innerWidth <= 480) return;
+
     // Process visual config
     const color = visual.color || '#9d55ac';
+    const labelText = String(visual.launcher_label || '').trim().slice(0, 30);
+    const labelColor = visual.text_color || '#ffffff';
     const position = visual.position || 'right';
     const showLauncherBg = (visual.show_launcher_bg !== undefined ? visual.show_launcher_bg : visual.showLauncherBg) !== false;
     const launcherShape = visual.launcher_shape || visual.launcherShape || 'circle';
@@ -40,6 +60,14 @@
     const rightPadding = visual.right_padding !== undefined ? visual.right_padding : (visual.rightPadding !== undefined ? visual.rightPadding : 20);
     const bottomPadding = visual.bottom_padding !== undefined ? visual.bottom_padding : (visual.bottomPadding !== undefined ? visual.bottomPadding : 20);
     const borderRadiusVal = visual.border_radius !== undefined ? visual.border_radius : (visual.borderRadius !== undefined ? visual.borderRadius : 24);
+    const clamp = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.min(Math.max(n, lo), hi) : d; };
+    const windowWidth = clamp(visual.window_width, 320, 480, 400);
+    const windowHeight = clamp(visual.window_height, 460, 760, 600);
+    // A short message beside the launcher, and opening the chat by itself; both optional.
+    const greeting = String(visual.launcher_greeting || '').trim();
+    const greetingDelay = clamp(visual.greeting_delay, 0, 60, 3);
+    const autoOpenDelay = clamp(visual.auto_open_delay, 1, 120, 0);
+    const sideCSS = position === 'left' ? `left: ${rightPadding}px;` : `right: ${rightPadding}px;`;
     
     // Process logo URL logic
     let logoUrl = visual.logo_url || visual.botLogo;
@@ -75,7 +103,7 @@
     const shadowCSS = (showLauncherBg && launcherShape !== 'none') ? 'box-shadow: 0 4px 20px rgba(0,0,0,0.2);' : '';
 
     // Tail CSS
-    const tailCSS = showTail ? `
+    const tailCSS = showTail && !labelText ? `
         #nimmi-launcher::after {
             content: '';
             position: absolute;
@@ -116,6 +144,18 @@
         #nimmi-launcher:hover {
             transform: scale(1.1);
         }
+        #nimmi-launcher.labelled {
+            width: auto;
+            height: 52px;
+            padding: 0 20px 0 14px;
+            gap: 8px;
+            border-radius: 999px;
+            color: ${showLauncherBg ? labelColor : color};
+            font: 600 15px/1 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            white-space: nowrap;
+        }
+        #nimmi-launcher.labelled:hover { transform: translateY(-2px); }
+        #nimmi-launcher.labelled img, #nimmi-launcher.labelled svg.fallback { width: 26px; height: 26px; max-width: none; max-height: none; }
         #nimmi-launcher img {
             max-width: 80%;
             max-height: 80%;
@@ -135,8 +175,9 @@
             position: fixed;
             bottom: ${bottomPadding + 76}px;
             ${windowPositionCSS}
-            width: 400px;
-            height: 600px;
+            width: ${windowWidth}px;
+            height: ${windowHeight}px;
+            max-height: calc(100vh - ${bottomPadding + 96}px);
             background: white;
             border-radius: ${borderRadiusVal}px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.15);
@@ -154,6 +195,32 @@
             transform: translateY(0);
             opacity: 1;
         }
+        #nimmi-greeting {
+            position: fixed;
+            bottom: ${bottomPadding + 76}px;
+            ${sideCSS}
+            max-width: 260px;
+            padding: 12px 36px 12px 14px;
+            background: #fff;
+            color: #1c1917;
+            font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            border-radius: 14px;
+            border: 1px solid rgba(0,0,0,0.06);
+            box-shadow: 0 8px 28px rgba(0,0,0,0.14);
+            z-index: 999998;
+            cursor: pointer;
+            display: none;
+            opacity: 0;
+            transform: translateY(8px);
+            transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+        #nimmi-greeting.show { opacity: 1; transform: none; }
+        #nimmi-greeting button {
+            position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
+            border: 0; border-radius: 6px; background: transparent; color: #78716c;
+            font-size: 18px; line-height: 1; cursor: pointer;
+        }
+        #nimmi-greeting button:hover { background: #f5f5f4; color: #1c1917; }
         iframe {
             width: 100%;
             height: 100%;
@@ -180,6 +247,13 @@
     } else {
         launcher.innerHTML = `<svg class="fallback" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12c0 1.821.487 3.53 1.338 5L2.5 21.5l4.5-.838A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2zm0 18c-1.476 0-2.886-.313-4.156-.872l-2.618.487.487-2.618A7.955 7.955 0 014 12c0-4.411 3.589-8 8-8s8 3.589 8 8-3.589 8-8 8z"/></svg>`;
     }
+    if (labelText) {
+        launcher.classList.add('labelled');
+        const span = document.createElement('span');
+        span.textContent = labelText;
+        launcher.appendChild(span);
+        launcher.setAttribute('aria-label', labelText);
+    }
     shadow.appendChild(launcher);
 
     // Chat Window
@@ -198,11 +272,31 @@
     chatWindow.appendChild(iframe);
     shadow.appendChild(chatWindow);
 
-    // Toggle Logic
+    // Greeting bubble (text only, never HTML)
+    const remember = (key) => { try { sessionStorage.setItem(`${key}_${botId}`, '1'); } catch (e) {} };
+    const remembered = (key) => { try { return sessionStorage.getItem(`${key}_${botId}`) === '1'; } catch (e) { return false; } };
+    const bubble = document.createElement('div');
+    bubble.id = 'nimmi-greeting';
+    bubble.setAttribute('role', 'status');
+    const bubbleText = document.createElement('span');
+    bubbleText.textContent = greeting;
+    const bubbleClose = document.createElement('button');
+    bubbleClose.type = 'button';
+    bubbleClose.setAttribute('aria-label', 'Dismiss');
+    bubbleClose.textContent = '×';
+    bubble.append(bubbleText, bubbleClose);
+    shadow.appendChild(bubble);
+    const hideGreeting = () => {
+        bubble.classList.remove('show');
+        setTimeout(() => { bubble.style.display = 'none'; }, 250);
+    };
+
+    // Open and close
     let isOpen = false;
-    launcher.onclick = () => {
-        isOpen = !isOpen;
-        if (isOpen) {
+    const setOpen = (open) => {
+        isOpen = open;
+        if (open) {
+            hideGreeting();
             chatWindow.style.display = 'flex';
             setTimeout(() => chatWindow.classList.add('open'), 10);
         } else {
@@ -212,11 +306,28 @@
             }, 300);
         }
     };
+    launcher.onclick = () => setOpen(!isOpen);
+    bubble.onclick = () => setOpen(true);
+    bubbleClose.onclick = (e) => { e.stopPropagation(); remember('nimmi_greeting_closed'); hideGreeting(); };
+
+    if (greeting && !remembered('nimmi_greeting_closed')) {
+        setTimeout(() => {
+            if (isOpen) return;
+            bubble.style.display = 'block';
+            setTimeout(() => bubble.classList.add('show'), 10);
+        }, greetingDelay * 1000);
+    }
+    // Opening by itself takes over a phone screen, so only on larger screens, once per visit.
+    if (autoOpenDelay && window.innerWidth > 480 && !remembered('nimmi_auto_opened')) {
+        setTimeout(() => {
+            if (isOpen) return;
+            remember('nimmi_auto_opened');
+            setOpen(true);
+        }, autoOpenDelay * 1000);
+    }
 
     // Listen for messages from iframe (e.g. close request)
     window.addEventListener('message', (event) => {
-        if (event.data === 'close-nimmi-widget') {
-            launcher.click();
-        }
+        if (event.data === 'close-nimmi-widget') setOpen(false);
     });
 })();

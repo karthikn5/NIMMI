@@ -27,36 +27,14 @@ export default function AnimatedEdge({
         <>
             <path
                 id={id}
-                style={{ ...style, strokeWidth: 3, stroke: "#3b82f633" }}
+                style={{ ...style, strokeWidth: 1.5, stroke: "#b8b1a9" }}
                 className="react-flow__edge-path"
                 d={edgePath}
                 markerEnd={markerEnd}
             />
-            <path
-                d={edgePath}
-                fill="none"
-                stroke="#3b82f6"
-                strokeWidth={2}
-                strokeDasharray="5, 5"
-                className="react-flow__edge-path"
-            >
-                <animate
-                    attributeName="stroke-dashoffset"
-                    from="100"
-                    to="0"
-                    dur="2s"
-                    repeatCount="indefinite"
-                />
+            <path d={edgePath} fill="none" stroke="#550a64" strokeOpacity={0.45} strokeWidth={1.5} strokeDasharray="4 8" className="react-flow__edge-path">
+                <animate attributeName="stroke-dashoffset" from="48" to="0" dur="2.4s" repeatCount="indefinite" />
             </path>
-            {/* Gradient Glow */}
-            <path
-                d={edgePath}
-                fill="none"
-                stroke="#326cb5"
-                strokeWidth={4}
-                opacity={0.2}
-                className="react-flow__edge-path"
-            />
         </>
     );
 }

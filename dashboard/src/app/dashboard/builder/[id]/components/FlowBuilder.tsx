@@ -21,7 +21,9 @@ import ReactFlow, {
     BackgroundVariant,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import { Play, Save, Trash2, Maximize2, Minimize2 } from "lucide-react";
+import { Trash2, Maximize2 } from "lucide-react";
+import { FlowChecks, FlowTemplates } from "./FlowAssist";
+import { checkFlow } from "./flowKit";
 
 // Custom node types
 import StartNode from "./nodes/StartNode";
@@ -72,7 +74,7 @@ function FlowBuilderInner({
     onNodeSelect,
 }: FlowBuilderProps) {
     const reactFlowWrapper = useRef<HTMLDivElement>(null);
-    const { screenToFlowPosition, fitView } = useReactFlow();
+    const { screenToFlowPosition, fitView, setCenter } = useReactFlow();
 
     const nodeTypes = useMemo(
         () => ({
@@ -110,6 +112,23 @@ function FlowBuilderInner({
     );
 
     const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+    const issues = useMemo(() => checkFlow(nodes, edges), [nodes, edges]);
+    const empty = nodes.length <= 1;
+
+    // Jump to a block from the checks list, and open its settings.
+    const focusNode = useCallback((nodeId: string) => {
+        const n = nodes.find((x) => x.id === nodeId);
+        if (!n) return;
+        setCenter(n.position.x + 128, n.position.y + 60, { zoom: 1, duration: 400 });
+        setSelectedNode(n);
+        onNodeSelect(n);
+        onNodesChange(nodes.map((x) => ({ type: "select" as const, id: x.id, selected: x.id === nodeId })));
+    }, [nodes, setCenter, onNodeSelect, onNodesChange]);
+
+    const applyTemplate = useCallback((flow: { nodes: Node[]; edges: Edge[] }) => {
+        onSave(flow.nodes, flow.edges);
+        setTimeout(() => fitView({ padding: 0.2, duration: 400 }), 50);
+    }, [onSave, fitView]);
 
     // Filter out start node for deletion logic if needed
     // const canDelete = selectedNode && selectedNode.type !== "start";
@@ -158,10 +177,6 @@ function FlowBuilderInner({
         [screenToFlowPosition, onNodesChange]
     );
 
-    const handleSave = () => {
-        onSave(nodes, edges);
-    };
-
     const handleDeleteSelected = () => {
         if (selectedNode) {
             onNodesChange([{ type: 'remove', id: selectedNode.id }]);
@@ -173,7 +188,7 @@ function FlowBuilderInner({
     };
 
     return (
-        <div ref={reactFlowWrapper} className="w-full h-full bg-white rounded-[32px] overflow-hidden border border-slate-200 group relative shadow-inner">
+        <div ref={reactFlowWrapper} className="w-full h-full bg-white rounded-lg overflow-hidden border border-line group relative">
             <ReactFlow
                 nodes={nodes}
                 edges={edges}
@@ -189,53 +204,55 @@ function FlowBuilderInner({
                 connectionMode={ConnectionMode.Loose}
                 fitView
                 fitViewOptions={{ padding: 0.2 }}
-                className="bg-slate-50"
+                className="bg-[#fbfaf8]"
             >
-                <Background color="#cbd5e1" gap={20} variant={BackgroundVariant.Dots} size={1} />
+                <Background color="#d6d1ca" gap={20} variant={BackgroundVariant.Dots} size={1} />
                 <MiniMap
                     position="bottom-right"
                     style={{
                         background: '#ffffff',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '20px',
+                        border: '1px solid #e8e5e0',
+                        borderRadius: '8px',
                         overflow: 'hidden',
                         width: 150,
                         height: 100,
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
+                        boxShadow: 'none'
                     }}
                     nodeColor={(n) => {
-                        if (n.type === 'start') return '#22c55e';
-                        if (n.type === 'end') return '#ef4444';
-                        if (n.type === 'condition') return '#7a2f88';
-                        return '#3b82f6';
+                        if (n.type === 'start') return '#550a64';
+                        return '#a8a29e';
                     }}
                     maskColor="rgba(241, 245, 249, 0.6)"
                 />
                 <Controls
-                    className="!bg-white !border-slate-200 !rounded-2xl overflow-hidden shadow-xl !flex !flex-col !gap-1 !p-1"
+                    className="!bg-white !border !border-line !rounded-md overflow-hidden !shadow-none"
                     showInteractive={false}
                 />
+                {!empty && (
+                    <Panel position="top-left">
+                        <FlowChecks issues={issues} onPick={focusNode} />
+                    </Panel>
+                )}
+                {empty && (
+                    <Panel position="top-center" className="!mt-24">
+                        <FlowTemplates onUse={applyTemplate} />
+                    </Panel>
+                )}
                 <Panel position="top-right" className="flex gap-2">
-                    <button
-                        onClick={() => fitView()}
-                        className="p-2.5 bg-white border border-slate-200 rounded-xl text-slate-400 hover:text-slate-900 hover:bg-slate-50 transition-all shadow-sm active:scale-95"
-                        title="Fit View"
-                    >
-                        <Maximize2 size={18} strokeWidth={2.5} />
-                    </button>
                     {selectedNode && selectedNode.type !== "start" && (
                         <button
                             onClick={handleDeleteSelected}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-red-600 hover:text-white transition-all shadow-sm active:scale-95"
+                            className="inline-flex items-center gap-1.5 h-8 px-3 bg-white border border-line-strong rounded-md text-[13px] text-signal hover:bg-red-50 hover:border-red-200"
                         >
-                            <Trash2 size={16} strokeWidth={2.5} /> Delete
+                            <Trash2 size={14} /> Delete block
                         </button>
                     )}
                     <button
-                        onClick={handleSave}
-                        className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-blue-700 transition-all shadow-[0_4px_12px_rgba(37,99,235,0.2)] active:scale-95 border border-blue-500"
+                        onClick={() => fitView({ padding: 0.2 })}
+                        className="inline-flex items-center gap-1.5 h-8 px-3 bg-white border border-line-strong rounded-md text-[13px] text-stone-600 hover:text-ink hover:bg-stone-50"
+                        title="Fit the whole flow on screen"
                     >
-                        <Save size={16} strokeWidth={2.5} /> Save Flow
+                        <Maximize2 size={14} /> Fit
                     </button>
                 </Panel>
             </ReactFlow>

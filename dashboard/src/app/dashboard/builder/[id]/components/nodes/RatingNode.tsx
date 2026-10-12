@@ -14,17 +14,17 @@ interface RatingNodeProps {
 export default function RatingNode({ data, selected }: RatingNodeProps) {
     return (
         <div
-            className={`w-64 rounded-[24px] bg-white border border-slate-200 overflow-hidden shadow-xl transition-all ${selected ? "ring-4 ring-yellow-500/20 border-yellow-500 scale-105" : ""
+            className={`w-64 rounded-lg bg-white border border-line-strong overflow-hidden shadow-[0_1px_3px_rgba(28,23,25,0.08)] transition-all ${selected ? "ring-2 ring-plum/20 border-plum" : ""
                 }`}
         >
             <Handle
                 type="target"
                 position={Position.Top}
-                className="!w-4 !h-4 !bg-yellow-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+                className="!w-3 !h-3 !bg-stone-400 !border-2 !border-white transition-transform hover:scale-125"
             />
-            <div className="px-4 py-3 bg-yellow-50 border-b border-yellow-100/50 flex items-center gap-2">
-                <Star size={14} className="text-yellow-600 font-bold" />
-                <span className="text-[10px] font-black text-yellow-700 uppercase tracking-widest">{data.label} {data.required && <span className="text-red-500">*</span>}</span>
+            <div className="px-4 py-3 bg-stone-50/70 border-b border-line flex items-center gap-2">
+                <Star size={14} className="text-yellow-600 font-normal" />
+                <span className="text-[12px] font-medium text-ink">{data.label} {data.required && <span className="text-red-500">*</span>}</span>
             </div>
             <div className="p-5 flex justify-center gap-2">
                 {[1, 2, 3, 4, 5].map((i) => (
@@ -34,7 +34,7 @@ export default function RatingNode({ data, selected }: RatingNodeProps) {
             <Handle
                 type="source"
                 position={Position.Bottom}
-                className="!w-4 !h-4 !bg-yellow-500 !border-[3px] !border-white !shadow-sm transition-transform hover:scale-125"
+                className="!w-3 !h-3 !bg-stone-400 !border-2 !border-white transition-transform hover:scale-125"
             />
         </div>
     );

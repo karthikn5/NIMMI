@@ -2,11 +2,12 @@
 
 import { use, useCallback, useEffect, useRef, useState, Suspense } from "react";
 import { authHeaders } from "@/lib/api";
-import { Send, User, Bot, X, Clock, Paperclip, Phone } from "lucide-react";
+import { Send, User, Bot, X, Clock, Paperclip, Phone, ThumbsUp, ThumbsDown } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { io, type Socket } from "socket.io-client";
 import { motion, AnimatePresence } from "framer-motion";
 import { Flow, evaluate, questionFor, validate, variableName, type FlowNode, type InputType } from "./flow";
+import { isLight } from "@/lib/color";
 
 interface Message {
     id: string;
@@ -14,6 +15,9 @@ interface Message {
     sender: "user" | "bot";
     timestamp: Date;
     media?: { type: "image" | "video"; url: string };
+    /** For AI answers: the question it answered, and the visitor's rating of it. */
+    question?: string;
+    rated?: "up" | "down";
 }
 
 /** What the visitor is being asked right now by the flow. */
@@ -56,6 +60,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     const [mode, setMode] = useState<"ai" | "human">("ai");
     const [botConfig, setBotConfig] = useState<any>(null);
     const [pending, setPending] = useState<Pending | null>(null);
+    const [flowDone, setFlowDone] = useState(false); // no flow, or it has finished: free chat
     const [callback, setCallback] = useState<{ open: boolean; phone: string; consent: boolean; state: "idle" | "sending" | "done" | "error"; error: string }>(
         { open: false, phone: "", consent: false, state: "idle", error: "" });
     const socketRef = useRef<Socket | null>(null);
@@ -136,7 +141,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
 
     const run = useCallback(async (node: FlowNode | null): Promise<void> => {
         const flow = flowRef.current;
-        if (!node || !flow) { setPending(null); return; } // flow finished: free chat with the assistant
+        if (!node || !flow) { setPending(null); setFlowDone(true); return; } // flow finished: free chat with the assistant
         const d = node.data || {};
         switch (node.type) {
             case "message":
@@ -225,6 +230,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                 await sleep(400);
                 say(d.message || "Thank you!");
                 setPending(null);
+                setFlowDone(true);
                 return;
             default: // start and anything unknown: just move on
                 return run(flow.next(node.id));
@@ -323,7 +329,11 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
         const flow = new Flow(nodes, edges);
         flowRef.current = flow;
         if (flow.hasSteps) run(flow.start());
-        else say(`Hi! I'm ${botConfig.bot_name || "your assistant"}. How can I help you today?`);
+        else {
+            setFlowDone(true);
+            say(String(botConfig.visual_config?.welcome_message || "").trim()
+                || `Hi! I'm ${botConfig.bot_name || "your assistant"}. How can I help you today?`);
+        }
     }, [botConfig, run, say]);
 
     useEffect(() => {
@@ -338,9 +348,19 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages, pending]);
 
+    // A visitor's rating of an answer; unhelpful ones reach the business's Questions page.
+    const rate = (msg: Message, helpful: boolean) => {
+        setAiMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, rated: helpful ? "up" : "down" } : m)));
+        fetch(`${apiBase}/api/chat/feedback`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ bot_id: botId, visitor_session_id: aiSession, question: msg.question, helpful }),
+        }).catch(() => {});
+    };
+
     // ── Free chat ──────────────────────────────────────────────────
-    const handleSend = async () => {
-        const text = input.trim();
+    const handleSend = async (preset?: string) => {
+        const text = (preset ?? input).trim();
         if (!text || loading) return;
         setInput("");
 
@@ -362,7 +382,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
         const userMsg: Message = { id: uid(), text, sender: "user", timestamp: new Date() };
         const history = [...aiMessages, userMsg].filter((m) => m.text).map((m) => ({ role: m.sender === "user" ? "user" : "assistant", content: m.text }));
         const botMsgId = uid();
-        setAiMessages((prev) => [...prev, userMsg, { id: botMsgId, text: "", sender: "bot", timestamp: new Date() }]);
+        setAiMessages((prev) => [...prev, userMsg, { id: botMsgId, text: "", sender: "bot", timestamp: new Date(), question: text }]);
         setLoading(true);
 
         try {
@@ -405,13 +425,22 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     const fontFamily = visual.font_family || visual.fontFamily || "Inter, sans-serif";
     const borderRadius = visual.border_radius ? `${visual.border_radius}px` : (visual.borderRadius ? `${visual.borderRadius}px` : "24px");
     const chatBg = visual.chat_bg_color || visual.chatBgColor || "#f8fafc";
+    const chatLight = isLight(chatBg);
     const background = visual.background_image || visual.backgroundImage;
     const googleFontName = fontFamily.replace(/'/g, "").split(",")[0].replace(/ /g, "+");
     const fontUrl = `https://fonts.googleapis.com/css2?family=${googleFontName}:wght@400;700&display=swap`;
 
     const placeholder = mode === "ai" && pending?.kind === "input"
         ? (pending.node.data?.placeholder || "Type your answer…")
-        : "Type a message...";
+        : (visual.input_placeholder || "Type a message...");
+    // Suggested questions, shown until the visitor sends their first message.
+    const starters: string[] = (Array.isArray(visual.starters) ? visual.starters : [])
+        .map((q: unknown) => String(q).trim()).filter(Boolean).slice(0, 4);
+    const showStarters = mode === "ai" && flowDone && !pending && starters.length > 0 && !aiMessages.some((m) => m.sender === "user");
+    // Footer: dark glass by default; a chosen colour gets text that reads on it.
+    const footerBg: string = visual.footer_bg_color || "";
+    const footerLight = !!footerBg && isLight(footerBg);
+    const onFooter = (light: string, dark: string) => (footerLight ? light : dark);
     const chip = "px-3 py-1.5 rounded-full text-xs border transition-colors hover:opacity-80";
 
     return (
@@ -428,7 +457,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                 />
             )}
 
-            <header className="p-4 font-bold flex items-center justify-between shrink-0 shadow-lg relative z-20 border-b border-white/10"
+            <header className="p-4 flex flex-col justify-center gap-3 shrink-0 shadow-lg relative z-20 border-b border-white/10"
                     style={{
                         backgroundColor: primaryColor,
                         color: textColor,
@@ -442,31 +471,30 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                         alt=""
                         className="w-10 h-10 rounded-full border-2 border-white/50 object-cover shrink-0"
                     />
-                    <div className="flex flex-col min-w-0">
+                    <div className="flex flex-col min-w-0 flex-1">
                         <span className="font-bold text-sm tracking-tight truncate">{botConfig?.bot_name || "Assistant"}</span>
-                        <span className="text-[10px] opacity-70 font-medium">{mode === "human" ? "Chatting with our team" : "Usually replies instantly"}</span>
+                        <span className="text-[11px] opacity-75 font-medium truncate">{mode === "human" ? "Chatting with our team" : (visual.subtitle || "Usually replies instantly")}</span>
                     </div>
+                    <button onClick={() => window.parent.postMessage("close-nimmi-widget", "*")} aria-label="Close chat"
+                            className="p-2 -mr-1 hover:bg-white/10 rounded-full opacity-70 hover:opacity-100 transition-opacity shrink-0">
+                        <X size={18} />
+                    </button>
                 </div>
-
-                <div className="flex items-center gap-2 ml-auto">
-                    <div role="radiogroup" aria-label="Chat with" className="flex bg-black/20 p-0.5 rounded-full border border-white/10">
+                {visual.show_human_toggle !== false && (
+                    <div role="radiogroup" aria-label="Chat with" className="grid grid-cols-2 bg-black/20 p-0.5 rounded-full border border-white/10">
                         {(["ai", "human"] as const).map((m) => (
                             <button
                                 key={m}
                                 role="radio"
                                 aria-checked={mode === m}
                                 onClick={() => handleModeToggle(m)}
-                                className={`px-3 py-1 rounded-full text-[10px] font-semibold transition-colors ${mode === m ? "bg-white text-black" : "opacity-70 hover:opacity-100"}`}
+                                className={`py-1 rounded-full text-[11px] font-semibold transition-colors ${mode === m ? "bg-white text-black" : "opacity-75 hover:opacity-100"}`}
                             >
-                                {m === "ai" ? "Assistant" : "Person"}
+                                {m === "ai" ? "Assistant" : "Talk to a person"}
                             </button>
                         ))}
                     </div>
-                    <button onClick={() => window.parent.postMessage("close-nimmi-widget", "*")} aria-label="Close chat"
-                            className="p-2 hover:bg-white/10 rounded-full opacity-70 hover:opacity-100 transition-opacity">
-                        <X size={18} />
-                    </button>
-                </div>
+                )}
             </header>
 
             <main className="flex-1 overflow-y-auto p-5 space-y-3 custom-scrollbar relative z-10">
@@ -489,8 +517,9 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                                     ? <img src={msg.media.url} alt="" className="max-w-[80%] rounded-xl" />
                                     : <video src={msg.media.url} controls className="max-w-[80%] rounded-xl" />
                             ) : (
+                                <div className="flex flex-col gap-1 max-w-[85%] min-w-0">
                                 <div
-                                    className="px-4 py-3 text-[13px] leading-relaxed max-w-[85%] whitespace-pre-wrap shadow-sm"
+                                    className="px-4 py-3 text-[13px] leading-relaxed whitespace-pre-wrap shadow-sm"
                                     style={{
                                         borderRadius,
                                         backgroundColor: msg.sender === "user" ? (visual.user_bubble_bg || visual.userBubbleBg || primaryColor) : (visual.assistant_bubble_bg || visual.assistantBubbleBg || "#E5E7EB"),
@@ -501,10 +530,32 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                                 >
                                     {msg.text || (loading ? <span className="flex gap-1 py-1 animate-pulse"><span className="w-1 h-1 bg-slate-400 rounded-full" /><span className="w-1 h-1 bg-slate-400 rounded-full" /><span className="w-1 h-1 bg-slate-400 rounded-full" /></span> : "")}
                                 </div>
+                                {visual.answer_feedback && mode === "ai" && msg.question && msg.text && !(loading && msg.id === aiMessages[aiMessages.length - 1]?.id) && (
+                                    <div className={`flex items-center gap-1 px-1 text-[11px] ${chatLight ? "text-stone-500" : "text-white/60"}`}>
+                                        {msg.rated ? (
+                                            <span>{msg.rated === "up" ? "Thanks for letting us know." : "Thanks. We'll use this to improve."}</span>
+                                        ) : (
+                                            <>
+                                                <span className="mr-0.5">Helpful?</span>
+                                                <button onClick={() => rate(msg, true)} aria-label="Helpful" className="p-1 rounded hover:bg-black/5"><ThumbsUp size={12} /></button>
+                                                <button onClick={() => rate(msg, false)} aria-label="Not helpful" className="p-1 rounded hover:bg-black/5"><ThumbsDown size={12} /></button>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+                                </div>
                             )}
                         </motion.div>
                     ))}
                 </AnimatePresence>
+
+                {showStarters && (
+                    <div className="flex flex-wrap gap-2 pl-9">
+                        {starters.map((q) => (
+                            <button key={q} onClick={() => handleSend(q)} className={chip} style={{ borderColor: primaryColor, color: primaryColor }}>{q}</button>
+                        ))}
+                    </div>
+                )}
 
                 {mode === "ai" && pending && pending.kind !== "input" && (
                     <div className="flex flex-wrap gap-2 pl-9">
@@ -535,23 +586,24 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                 <div ref={messagesEndRef} />
             </main>
 
-            <footer className="p-4 bg-zinc-900/80 border-t border-white/5 flex flex-col gap-2 backdrop-blur-md relative z-10">
+            <footer className={`p-4 border-t flex flex-col gap-2 relative z-10 ${footerBg ? onFooter("border-black/5", "border-white/5") : "bg-zinc-900/80 border-white/5 backdrop-blur-md"}`}
+                    style={footerBg ? { backgroundColor: footerBg } : undefined}>
                 {mode === "human" && (
-                    <div className="text-[10px] text-white/40 flex items-center gap-1 px-1">
+                    <div className={`text-[10px] flex items-center gap-1 px-1 ${onFooter("text-stone-400", "text-white/40")}`}>
                         <Clock size={10} />
                         <span>Chat history is kept for 24 hours</span>
                     </div>
                 )}
                 {botConfig?.callbacks_enabled && mode === "ai" && !pending && (
                     callback.state === "done" ? (
-                        <p className="text-[11px] text-white/70 px-1">Thanks. We&apos;ll call you shortly.</p>
+                        <p className={`text-[11px] px-1 ${onFooter("text-stone-600", "text-white/70")}`}>Thanks. We&apos;ll call you shortly.</p>
                     ) : !callback.open ? (
-                        <button onClick={() => setCallback({ ...callback, open: true })} className="self-start text-[11px] text-white/70 hover:text-white underline underline-offset-2 px-1">
+                        <button onClick={() => setCallback({ ...callback, open: true })} className={`self-start text-[11px] underline underline-offset-2 px-1 ${onFooter("text-stone-600 hover:text-stone-900", "text-white/70 hover:text-white")}`}>
                             Prefer a call? Ask us to call you back
                         </button>
                     ) : (
                         <form
-                            className="flex flex-col gap-2 p-3 rounded-xl bg-white/5 border border-white/10"
+                            className={`flex flex-col gap-2 p-3 rounded-xl border ${onFooter("bg-black/[0.03] border-black/10", "bg-white/5 border-white/10")}`}
                             onSubmit={async (e) => {
                                 e.preventDefault();
                                 setCallback({ ...callback, state: "sending", error: "" });
@@ -572,22 +624,22 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                             <input
                                 type="tel" inputMode="tel" required placeholder="Your phone number" value={callback.phone}
                                 onChange={(e) => setCallback({ ...callback, phone: e.target.value })}
-                                className="h-10 rounded-lg px-3 text-sm outline-none bg-white text-black"
+                                className={`h-10 rounded-lg px-3 text-sm outline-none bg-white text-black ${onFooter("border border-black/10", "")}`}
                                 aria-label="Your phone number"
                             />
-                            <label className="flex items-start gap-2 text-[11px] text-white/80 leading-snug">
+                            <label className={`flex items-start gap-2 text-[11px] leading-snug ${onFooter("text-stone-700", "text-white/80")}`}>
                                 <input type="checkbox" required checked={callback.consent}
                                        onChange={(e) => setCallback({ ...callback, consent: e.target.checked })} className="mt-0.5" />
                                 <span>I agree to receive a call from {botConfig?.bot_name || "this business"} about my enquiry. The call may be recorded.</span>
                             </label>
-                            {callback.state === "error" && <p className="text-[11px] text-red-300">{callback.error}</p>}
+                            {callback.state === "error" && <p className={`text-[11px] ${onFooter("text-red-600", "text-red-300")}`}>{callback.error}</p>}
                             <div className="flex gap-2">
                                 <button type="submit" disabled={callback.state === "sending" || !callback.consent}
                                         className="flex-1 h-9 rounded-lg text-xs font-semibold disabled:opacity-50"
                                         style={{ backgroundColor: primaryColor, color: textColor }}>
                                     {callback.state === "sending" ? "Requesting…" : "Call me"}
                                 </button>
-                                <button type="button" onClick={() => setCallback({ ...callback, open: false })} className="h-9 px-3 rounded-lg text-xs text-white/70 hover:text-white">
+                                <button type="button" onClick={() => setCallback({ ...callback, open: false })} className={`h-9 px-3 rounded-lg text-xs ${onFooter("text-stone-600 hover:text-stone-900", "text-white/70 hover:text-white")}`}>
                                     Cancel
                                 </button>
                             </div>
@@ -602,7 +654,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                         onChange={(e) => setInput(e.target.value)}
                         placeholder={placeholder}
                         aria-label="Message"
-                        className="flex-1 rounded-xl border border-white/5 h-12 px-4 text-sm outline-none"
+                        className={`flex-1 rounded-xl border h-12 px-4 text-sm outline-none ${onFooter("border-black/10", "border-white/5")}`}
                         style={{ backgroundColor: visual.input_bg_color || visual.inputBgColor || "#ffffff", color: visual.input_text_color || visual.inputTextColor || "#000000" }}
                     />
                     <button

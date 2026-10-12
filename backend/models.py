@@ -27,6 +27,7 @@ class Bot(Base):
     ai_provider = Column(String, default="google") # google, openai, groq
     ai_model = Column(String, default="gemini-3-flash-preview")
     ai_api_key = Column(String, nullable=True)
+    behaviour = Column(JSON, nullable=True)  # reply settings from the builder; see behaviour.py
     is_active = Column(Boolean, default=True)
     export_unlocked = Column(Boolean, default=False)
     is_exported = Column(Boolean, default=False)

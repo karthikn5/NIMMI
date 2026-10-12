@@ -17,6 +17,7 @@ from database import async_session, get_db
 from backend.models import Bot, Conversation, Message
 from netsafe import UnsafeUrl, assert_public_url
 import assist
+import behaviour
 from notify.events import handoff_requested, fire_and_forget, lead_captured
 from phone import extract_contact
 from realtime import notify_owner
@@ -27,7 +28,8 @@ from vector_store import query_knowledge
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chat"])
 
-HUMAN_KEYWORDS = ["talk to human", "agent", "human", "speak to someone", "representative"]
+HUMAN_KEYWORDS = ["talk to human", "agent", "human", "speak to someone", "representative",
+                  "talk to a person", "speak to a person", "real person", "talk to someone", "customer care"]
 EXPIRED_TEXT = "Subscription Expired: This bot is currently inactive. Please renew your subscription to continue chatting."
 
 
@@ -150,11 +152,12 @@ INTRODUCTION RULE:
 
 STRICT RULES:
 1. NEVER mention technical terms like "RAG", "AI model", "knowledge base", "context", or "database".
-2. NO HALLUCINATION: Only answer using the "INTERNAL KNOWLEDGE" provided. If the information is not there, say "I'm sorry, I don't have that information in my current knowledge base."
+2. NO HALLUCINATION: Only answer using the "INTERNAL KNOWLEDGE" provided. If the information is not there, say "{behaviour.fallback(bot.behaviour)}"
 3. CORRECT SPACING: Ensure you use proper spacing between words.
 4. BE CONCISE: Don't repeat your name in every sentence.
 
 {bot.system_prompt or ""}
+{behaviour.rules(bot.behaviour)}
 
 Adopt the persona fully. Be helpful, natural, and stay in character."""
 
@@ -204,6 +207,26 @@ async def _pre_ai(chat: ChatMessage, bot: Bot, db: AsyncSession):
         db.add(conv)
         await db.commit()
     return conv, None, {}
+
+
+class AnswerFeedback(BaseModel):
+    bot_id: str
+    visitor_session_id: str
+    question: str
+    helpful: bool
+
+
+@router.post("/chat/feedback")
+async def answer_feedback(data: AnswerFeedback, db: AsyncSession = Depends(get_db)):
+    """A visitor rated an answer. Unhelpful ones go to Questions, so the business can answer them properly."""
+    bot = await _load_bot(data.bot_id, db)
+    conv = (await db.execute(select(Conversation).where(
+        Conversation.bot_id == bot.bot_id, Conversation.visitor_session_id == data.visitor_session_id))).scalars().first()
+    if not conv:  # only people who actually chatted can rate
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if not data.helpful and data.question.strip():
+        await assist.record_gap(bot.bot_id, data.question.strip()[:300], "chat", conv.conversation_id)
+    return {"ok": True}
 
 
 @router.post("/chat/message")

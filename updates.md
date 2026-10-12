@@ -146,6 +146,29 @@ Cheap to build, and they make setup take minutes instead of hours.
 
 Zoho CRM (very popular in India), HubSpot, Salesforce, Freshsales and Freshdesk, Pipedrive, Shopify, WooCommerce, Razorpay, Google Calendar and Cal.com, Slack, Microsoft Teams, Notion, Zapier and Make app listings, and Tally exports.
 
+
+## 13. Chat builder: next options
+
+Built already (October 2026):
+- Design: theme presets, contrast checks, welcome message, suggested questions, status line, person switch on or off, footer colour, launcher label ("Chat with us"), greeting bubble, auto-open on desktop, window size, page rules (every page, only some, all except some) and hiding on phones.
+- Knowledge: sources as a list with refresh and remove, whole-site reading (up to 25 linked pages), "Update search" after edits, live test chat.
+- Flow: a branch for each choice, checks for problems (unconnected blocks, empty messages, missing links and branches), and three starter templates.
+- Behaviour: reply length, language, asking for contact details, offering a person, a custom "when it doesn't know" line, and visitor answer ratings that feed Questions.
+- Leads: a table with search and CSV export.
+
+Still worth adding:
+
+- **Pre-chat form:** ask for a name and phone number before the chat starts, as an option.
+- **Re-crawl on a schedule:** refresh website sources weekly so prices stay current.
+- **Follow the visitor's light or dark mode.**
+- **Widget text in Indian languages:** buttons and placeholders in Hindi, Tamil and others, not only the replies.
+- **Unread badge and sound** when a reply arrives while the chat is closed.
+- **Voice note input** in the website chat (Sarvam speech-to-text is already connected).
+- **Draft and publish:** edit without changing the live assistant, with version history and undo.
+- **Copy design to another assistant**, useful for agencies.
+- **Allowed websites:** only your own domains can load your assistant.
+- **Remove "Powered by Nimmi"** on paid plans, once plan limits are enforced.
+
 ---
 
 ## Recommended build order: top 10

@@ -11,9 +11,11 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+import behaviour
+import knowledge_sources
 import supa
 from auth import AuthContext, get_ctx, get_optional_ctx, get_owned_bot, require_manager
-from crawler import extract_text_from_url, extract_youtube_transcript
+from crawler import crawl_site, extract_text_from_url, extract_youtube_transcript
 from database import get_db
 import templates
 from backend.models import Bot, CallbackSettings, Conversation, Subscription, UserUsage, VoiceAgent
@@ -41,6 +43,7 @@ class BotCreate(BaseModel):
 class KnowledgeCrawlRequest(BaseModel):
     bot_id: str
     url: str
+    pages: int = 1  # websites: also read up to this many linked pages on the same site
 
 
 @router.get("/usage")
@@ -167,6 +170,7 @@ async def get_bot_config(bot_id: str, ctx: Optional[AuthContext] = Depends(get_o
             # Show only that a key exists; never send it back to the browser.
             "ai_api_key": "",
             "has_ai_api_key": bool(bot.ai_api_key),
+            "behaviour": behaviour.clean(bot.behaviour),
         })
     return config
 
@@ -216,6 +220,8 @@ async def update_bot(bot_id: str, bot_data: dict, ctx: AuthContext = Depends(req
             setattr(bot, field, bot_data[field])
     if bot_data.get("ai_api_key"):
         bot.ai_api_key = bot_data["ai_api_key"]
+    if "behaviour" in bot_data:
+        bot.behaviour = behaviour.clean(bot_data["behaviour"])
     await db.commit()
     return {"message": "Bot updated"}
 
@@ -294,7 +300,7 @@ async def upload_knowledge(bot_id: str, file: UploadFile = File(...), ctx: AuthC
     if not text or text == "Error":
         raise HTTPException(status_code=400, detail="Could not extract text from file")
 
-    bot.knowledge_base = f"{bot.knowledge_base}\n\n{text}" if bot.knowledge_base else text
+    bot.knowledge_base = knowledge_sources.put(bot.knowledge_base, f"file: {file.filename or 'document'}", text)
     await db.commit()
     chunks = await _index(bot, text, file.filename or "upload")
     return {"message": "Knowledge updated", "bot_id": bot.bot_id, "filename": file.filename,
@@ -308,13 +314,26 @@ async def crawl_website(data: KnowledgeCrawlRequest, ctx: AuthContext = Depends(
         url = await assert_public_url(data.url)
     except UnsafeUrl as e:
         return {"error": str(e)}
-    text = await extract_text_from_url(url)
-    if text.startswith("Error"):
-        return {"error": text}
-    bot.knowledge_base = f"{bot.knowledge_base or ''}\n\n--- Source: {url} ---\n{text}"
+    if data.pages > 1:
+        try:
+            pages = await crawl_site(url, min(data.pages, 25))
+        except Exception as e:
+            return {"error": f"Couldn't read {url}: {e}"}
+    else:
+        text = await extract_text_from_url(url)
+        if text.startswith("Error"):
+            return {"error": text}
+        pages = [(url, text)]
+    if not pages:
+        return {"error": "No readable text found on that page."}
+    for page_url, text in pages:
+        bot.knowledge_base = knowledge_sources.put(bot.knowledge_base, page_url, text)
     await db.commit()
-    chunks = await _index(bot, text, url)
-    return {"status": "success", "message": f"Crawled {len(text)} characters from {url}", "chunks_indexed": chunks}
+    chunks = 0
+    for page_url, text in pages:
+        chunks += await _index(bot, text, page_url)
+    total = sum(len(t) for _, t in pages)
+    return {"status": "success", "pages": len(pages), "message": f"Read {len(pages)} page(s), {total} characters", "chunks_indexed": chunks}
 
 
 @router.post("/knowledge/youtube")
@@ -323,10 +342,34 @@ async def crawl_youtube(data: KnowledgeCrawlRequest, ctx: AuthContext = Depends(
     text = await extract_youtube_transcript(data.url)
     if text.startswith("Error"):
         return {"error": text}
-    bot.knowledge_base = f"{bot.knowledge_base or ''}\n\n--- YouTube Source ---\n{text}"
+    bot.knowledge_base = knowledge_sources.put(bot.knowledge_base, data.url.strip(), text)
     await db.commit()
     chunks = await _index(bot, text, data.url)
     return {"status": "success", "message": f"Extracted {len(text)} characters from YouTube", "chunks_indexed": chunks}
+
+
+@router.get("/bots/{bot_id}/knowledge/sources")
+async def list_sources(bot_id: str, ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depends(get_db)):
+    bot = await get_owned_bot(bot_id, ctx, db)
+    return {"sources": knowledge_sources.listing(bot.knowledge_base or "")}
+
+
+@router.delete("/bots/{bot_id}/knowledge/sources")
+async def remove_source(bot_id: str, name: str, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    """Remove one website, video or file from the knowledge, then rebuild the search index without it."""
+    bot = await get_owned_bot(bot_id, ctx, db)
+    text, removed = knowledge_sources.remove(bot.knowledge_base or "", name)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Source not found")
+    bot.knowledge_base = text
+    await db.commit()
+    try:
+        await asyncio.to_thread(delete_bot_knowledge, bot.bot_id)
+    except Exception as e:
+        logger.warning(f"Clearing vectors for {bot.bot_id} failed: {e}")
+    if text.strip():
+        await _index(bot, text, "reindex")
+    return {"sources": knowledge_sources.listing(text), "knowledge_base": text}
 
 
 @router.post("/bots/{bot_id}/knowledge/reindex")

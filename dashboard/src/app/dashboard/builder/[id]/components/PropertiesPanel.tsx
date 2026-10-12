@@ -92,8 +92,8 @@ export default function PropertiesPanel({ node, onUpdate, onDelete, onClose }: P
             case "datePicker":
             case "numberInput":
             case "phoneInput":
-                const focusColor = node.type === "numberInput" ? "focus:border-orange-500 focus:ring-orange-500/5" : (node.type === "phoneInput" ? "focus:border-green-500 focus:ring-green-500/5" : "focus:border-purple-500 focus:ring-purple-500/5");
-                const toggleBg = node.type === "numberInput" ? "bg-orange-500" : (node.type === "phoneInput" ? "bg-emerald-500" : "bg-purple-500");
+                const focusColor = node.type === "numberInput" ? "focus:border-orange-500 focus:ring-orange-500/5" : (node.type === "phoneInput" ? "focus:border-green-500 focus:ring-green-500/5" : "focus:border-plum-data focus:ring-plum-data/5");
+                const toggleBg = node.type === "numberInput" ? "bg-orange-500" : (node.type === "phoneInput" ? "bg-emerald-500" : "bg-plum-data");
 
                 return (
                     <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
@@ -107,6 +107,16 @@ export default function PropertiesPanel({ node, onUpdate, onDelete, onClose }: P
                             />
                         </div>
                         <div>
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 px-1">Question</label>
+                            <textarea
+                                rows={2}
+                                value={formData.message || ""}
+                                onChange={(e) => handleChange("message", e.target.value)}
+                                className={`w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none transition-all shadow-sm resize-none ${focusColor}`}
+                                placeholder={node.type === "phoneInput" ? "What's the best number to reach you on?" : "What the assistant asks the visitor"}
+                            />
+                        </div>
+                        <div>
                             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 px-1">Placeholder</label>
                             <input
                                 type="text"
@@ -115,6 +125,22 @@ export default function PropertiesPanel({ node, onUpdate, onDelete, onClose }: P
                                 className={`w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none transition-all shadow-sm ${focusColor}`}
                             />
                         </div>
+                        {node.type === "phoneInput" && (
+                            <div className="flex items-center justify-between gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100 shadow-sm">
+                                <div>
+                                    <span className="text-[11px] font-black text-slate-900 uppercase tracking-wider">Offer a call back</span>
+                                    <p className="text-[10px] text-slate-500 font-bold mt-1 leading-relaxed">
+                                        Asks &quot;Would you like us to call you now?&quot; and rings them if they say yes. Needs call-backs turned on in Voice.
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={() => handleChange("offerCallback", formData.offerCallback === false)}
+                                    className={`w-12 h-6 shrink-0 rounded-full transition-all relative ${formData.offerCallback !== false ? toggleBg : "bg-slate-200"}`}
+                                >
+                                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform shadow-sm ${formData.offerCallback !== false ? "left-7" : "left-1"}`} />
+                                </button>
+                            </div>
+                        )}
                         <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 shadow-sm">
                             <span className="text-[11px] font-black text-slate-900 uppercase tracking-wider">Required Field</span>
                             <button
@@ -380,7 +406,7 @@ export default function PropertiesPanel({ node, onUpdate, onDelete, onClose }: P
                                     placeholder="https://hooks.slack.com/services/..."
                                     value={formData.url || ""}
                                     onChange={(e) => handleChange("url", e.target.value)}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-500/5 transition-all shadow-sm"
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-plum-data focus:ring-4 focus:ring-plum-data/5 transition-all shadow-sm"
                                 />
                             </div>
                         </div>
@@ -391,13 +417,13 @@ export default function PropertiesPanel({ node, onUpdate, onDelete, onClose }: P
                                 placeholder="#leads"
                                 value={formData.channel || ""}
                                 onChange={(e) => handleChange("channel", e.target.value)}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-500/5 transition-all shadow-sm"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-plum-data focus:ring-4 focus:ring-plum-data/5 transition-all shadow-sm"
                             />
                         </div>
-                        <div className="p-4 bg-purple-50/50 border border-purple-100 rounded-2xl shadow-sm">
+                        <div className="p-4 bg-plum-tint/50 border border-plum-tint rounded-2xl shadow-sm">
                             <div className="flex items-center gap-2 mb-1">
-                                <Slack size={12} className="text-purple-600" />
-                                <p className="text-[10px] text-purple-700 font-black uppercase tracking-widest">Slack Alert</p>
+                                <Slack size={12} className="text-plum" />
+                                <p className="text-[10px] text-plum-hover font-black uppercase tracking-widest">Slack Alert</p>
                             </div>
                             <p className="text-[10px] text-slate-500 font-bold leading-relaxed">
                                 A formatted alert with all captured variables will be sent to this Slack channel.
@@ -504,12 +530,12 @@ export default function PropertiesPanel({ node, onUpdate, onDelete, onClose }: P
                                 type="text"
                                 value={formData.label || ""}
                                 onChange={(e) => handleChange("label", e.target.value)}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-500/5 transition-all shadow-sm"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-plum-data focus:ring-4 focus:ring-plum-data/5 transition-all shadow-sm"
                             />
                         </div>
                         <div className="pt-4 border-t border-slate-100">
                             <div className="flex items-center gap-2 mb-4 px-1">
-                                <GitBranch size={14} className="text-purple-600" />
+                                <GitBranch size={14} className="text-plum" />
                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Rules Definition</p>
                             </div>
                             <div className="space-y-4">
@@ -520,7 +546,7 @@ export default function PropertiesPanel({ node, onUpdate, onDelete, onClose }: P
                                         placeholder="e.g. user_choice"
                                         value={formData.variable || ""}
                                         onChange={(e) => handleChange("variable", e.target.value)}
-                                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-mono font-bold text-slate-900 outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-500/5 transition-all shadow-sm"
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-mono font-bold text-slate-900 outline-none focus:border-plum-data focus:ring-4 focus:ring-plum-data/5 transition-all shadow-sm"
                                     />
                                 </div>
                                 <div>
@@ -529,7 +555,7 @@ export default function PropertiesPanel({ node, onUpdate, onDelete, onClose }: P
                                         <select
                                             value={formData.operator || "equals"}
                                             onChange={(e) => handleChange("operator", e.target.value)}
-                                            className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-500/5 transition-all shadow-sm appearance-none cursor-pointer"
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-plum-data focus:ring-4 focus:ring-plum-data/5 transition-all shadow-sm appearance-none cursor-pointer"
                                         >
                                             <option value="equals">Equals</option>
                                             <option value="contains">Contains</option>
@@ -548,7 +574,7 @@ export default function PropertiesPanel({ node, onUpdate, onDelete, onClose }: P
                                         placeholder="Value to compare..."
                                         value={formData.value || ""}
                                         onChange={(e) => handleChange("value", e.target.value)}
-                                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-500/5 transition-all shadow-sm"
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-plum-data focus:ring-4 focus:ring-plum-data/5 transition-all shadow-sm"
                                     />
                                 </div>
                             </div>
@@ -590,7 +616,7 @@ export default function PropertiesPanel({ node, onUpdate, onDelete, onClose }: P
                                 type="text"
                                 value={formData.label || ""}
                                 onChange={(e) => handleChange("label", e.target.value)}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-500/5 transition-all shadow-sm"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-plum-data focus:ring-4 focus:ring-plum-data/5 transition-all shadow-sm"
                             />
                         </div>
                         <div>
@@ -599,11 +625,11 @@ export default function PropertiesPanel({ node, onUpdate, onDelete, onClose }: P
                                 rows={4}
                                 value={formData.message || ""}
                                 onChange={(e) => handleChange("message", e.target.value)}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-500/5 transition-all shadow-sm resize-none"
+                                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-plum-data focus:ring-4 focus:ring-plum-data/5 transition-all shadow-sm resize-none"
                                 placeholder="e.g. Please wait while I connect you to a human agent..."
                             />
                         </div>
-                        <div className="p-4 bg-purple-50/50 border border-purple-100 rounded-2xl shadow-sm">
+                        <div className="p-4 bg-plum-tint/50 border border-plum-tint rounded-2xl shadow-sm">
                             <p className="text-[10px] text-slate-500 font-bold leading-relaxed">
                                 This node will flag the conversation for human intervention and notify the bot owner.
                             </p>

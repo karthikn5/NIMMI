@@ -1,211 +1,135 @@
 "use client";
 
-import { Bot, User, Mail, Save, LogOut, ArrowLeft, Crown } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import AppHeader from "@/components/AppHeader";
+import { Button, Card, Input, SettingRow, Skeleton, ToastProvider, useToast } from "@/components/ui";
+import { apiJson, clearSession, currentUserId } from "@/lib/api";
+import { formatDate } from "@/lib/voice/api";
 
-interface UserProfile {
-    user_id: string;
-    email: string;
-    name: string;
-    subscription_tier: string;
-    created_at: string | null;
+type Profile = { user_id: string; email: string; name: string; has_password: boolean; created_at: string | null };
+
+export default function ProfilePage() {
+    return (
+        <ToastProvider>
+            <ProfileView />
+        </ToastProvider>
+    );
 }
 
-export default function Profile() {
-    const [profile, setProfile] = useState<UserProfile | null>(null);
-    const [formData, setFormData] = useState({ name: "", email: "" });
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [error, setError] = useState("");
-    const [success, setSuccess] = useState("");
+function ProfileView() {
     const router = useRouter();
+    const toast = useToast();
+    const [profile, setProfile] = useState<Profile | null>(null);
+    const [form, setForm] = useState({ name: "", email: "" });
+    const [saving, setSaving] = useState(false);
+    const [pw, setPw] = useState({ current: "", next: "" });
+    const [changing, setChanging] = useState(false);
 
     useEffect(() => {
-        const userId = localStorage.getItem("nimmi_user_id");
-        if (!userId) {
+        if (!currentUserId()) {
             router.push("/auth/login");
             return;
         }
+        apiJson<Profile>("/api/auth/profile")
+            .then((p) => { setProfile(p); setForm({ name: p.name, email: p.email }); })
+            .catch((e) => toast((e as Error).message));
+    }, [router, toast]);
 
-        const fetchProfile = async () => {
-            try {
-                const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
-                    ? "https://api.nimmiai.in"
-                    : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
-                const res = await fetch(`${apiUrl}/api/auth/profile?user_id=${userId}`);
-                const data = await res.json();
-                if (res.ok) {
-                    setProfile(data);
-                    setFormData({ name: data.name, email: data.email });
-                } else {
-                    setError(data.detail || "Failed to load profile");
-                }
-            } catch (err) {
-                setError("Could not connect to backend");
-            } finally {
-                setLoading(false);
-            }
-        };
+    const dirty = profile && (form.name !== profile.name || form.email !== profile.email);
 
-        fetchProfile();
-    }, [router]);
-
-    const handleSave = async () => {
-        const userId = localStorage.getItem("nimmi_user_id");
+    const save = async (e: React.FormEvent) => {
+        e.preventDefault();
         setSaving(true);
-        setError("");
-        setSuccess("");
-
         try {
-            const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
-                ? "https://api.nimmiai.in"
-                : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
-            const res = await fetch(`${apiUrl}/api/auth/profile?user_id=${userId}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    name: formData.name,
-                    email: formData.email
-                })
-            });
-
-            const data = await res.json();
-
-            if (res.ok) {
-                setSuccess("Profile updated successfully!");
-                localStorage.setItem("nimmi_user_name", formData.name);
-                // Update profile state
-                setProfile(prev => prev ? { ...prev, name: formData.name, email: formData.email } : null);
-            } else {
-                setError(data.detail || "Failed to update profile");
-            }
+            const res = await apiJson<{ name: string; email: string }>("/api/auth/profile", { method: "PATCH", json: form });
+            setProfile((p) => (p ? { ...p, ...res } : p));
+            try {
+                localStorage.setItem("nimmi_user_name", res.name);
+                localStorage.setItem("nimmi_user_email", res.email);
+            } catch { /* storage blocked */ }
+            toast("Saved");
         } catch (err) {
-            setError("Could not connect to backend");
+            toast((err as Error).message);
         } finally {
             setSaving(false);
         }
     };
 
-    const handleLogout = () => {
-        localStorage.removeItem("nimmi_user_id");
-        localStorage.removeItem("nimmi_user_name");
+    const changePassword = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setChanging(true);
+        try {
+            await apiJson("/api/auth/change-password", { method: "POST", json: { current_password: pw.current, new_password: pw.next } });
+            setPw({ current: "", next: "" });
+            setProfile((p) => (p ? { ...p, has_password: true } : p));
+            toast("Password changed");
+        } catch (err) {
+            toast((err as Error).message);
+        } finally {
+            setChanging(false);
+        }
+    };
+
+    const signOut = () => {
+        clearSession();
         router.push("/auth/login");
     };
 
-    if (loading) {
-        return (
-            <div className="min-h-screen bg-[#050505] flex items-center justify-center text-white">
-                <div className="text-white/50">Loading profile...</div>
-            </div>
-        );
-    }
-
     return (
-        <div className="min-h-screen bg-[#050505] text-white p-6">
-            <div className="max-w-2xl mx-auto">
-                {/* Header */}
-                <div className="flex items-center gap-4 mb-10">
-                    <Link href="/dashboard" className="p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-colors">
-                        <ArrowLeft size={20} />
-                    </Link>
-                    <div>
-                        <h1 className="text-3xl font-bold">Profile Settings</h1>
-                        <p className="text-white/50 mt-1">Manage your account details</p>
-                    </div>
-                </div>
+        <div className="min-h-screen bg-paper text-ink">
+            <AppHeader userName={profile?.name} />
+            <main className="max-w-3xl mx-auto px-4 sm:px-6 py-8 pb-24">
+                <h1 className="text-2xl font-semibold tracking-tight">Profile</h1>
+                <p className="text-sm text-stone-500 mt-1">
+                    {profile?.created_at ? `Member since ${formatDate(profile.created_at)}.` : "Your account details."}
+                </p>
 
-                {/* Profile Card */}
-                <div className="bg-zinc-900/50 border border-white/10 rounded-3xl p-8 backdrop-blur-xl">
-                    {/* Avatar Section */}
-                    <div className="flex items-center gap-6 mb-10 pb-8 border-b border-white/10">
-                        <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center text-3xl font-bold">
-                            {formData.name ? formData.name[0].toUpperCase() : "U"}
-                        </div>
-                        <div>
-                            <h2 className="text-2xl font-bold">{formData.name || "User"}</h2>
-                            <div className="flex items-center gap-2 mt-2">
-                                <Crown size={16} className="text-yellow-500" />
-                                <span className="text-white/60 text-sm">{profile?.subscription_tier || "Free"} Plan</span>
+                {!profile ? <Skeleton className="h-64 mt-8" /> : (
+                    <>
+                        <form onSubmit={save}>
+                            <Card className="px-5 py-1 mt-8">
+                                <SettingRow label="Name" htmlFor="name">
+                                    <Input id="name" autoComplete="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                                </SettingRow>
+                                <SettingRow label="Email" htmlFor="email" hint="You sign in with this email. Lead alerts go here unless you set another address in Integrations.">
+                                    <Input id="email" type="email" autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+                                </SettingRow>
+                            </Card>
+                            <div className="flex justify-end mt-3">
+                                <Button type="submit" variant="primary" disabled={!dirty || saving}>{saving ? "Saving…" : "Save changes"}</Button>
                             </div>
-                        </div>
-                    </div>
+                        </form>
 
-                    {/* Messages */}
-                    {error && (
-                        <div className="bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-xl text-sm mb-6">
-                            {error}
-                        </div>
-                    )}
-                    {success && (
-                        <div className="bg-green-500/10 border border-green-500/20 text-green-500 p-4 rounded-xl text-sm mb-6">
-                            {success}
-                        </div>
-                    )}
-
-                    {/* Form */}
-                    <div className="space-y-6">
-                        <div className="space-y-2">
-                            <label className="text-sm font-bold text-white/50 uppercase tracking-widest pl-1">Full Name</label>
-                            <div className="relative">
-                                <User className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20" size={20} />
-                                <input
-                                    type="text"
-                                    value={formData.name}
-                                    onChange={e => setFormData({ ...formData, name: e.target.value })}
-                                    placeholder="Your name"
-                                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 outline-none focus:border-blue-500 transition-all font-medium"
-                                />
+                        <form onSubmit={changePassword} className="mt-10">
+                            <h2 className="text-[15px] font-semibold mb-4">{profile.has_password ? "Change password" : "Set a password"}</h2>
+                            <Card className="px-5 py-1">
+                                {profile.has_password && (
+                                    <SettingRow label="Current password" htmlFor="current">
+                                        <Input id="current" type="password" autoComplete="current-password" required
+                                               value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} />
+                                    </SettingRow>
+                                )}
+                                <SettingRow label="New password" htmlFor="new" hint={profile.has_password ? "At least 8 characters." : "You signed up with Google. A password lets you sign in with your email too."}>
+                                    <Input id="new" type="password" autoComplete="new-password" required minLength={8}
+                                           value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} />
+                                </SettingRow>
+                            </Card>
+                            <div className="flex justify-end mt-3">
+                                <Button type="submit" disabled={changing || pw.next.length < 8}>{changing ? "Saving…" : "Update password"}</Button>
                             </div>
-                        </div>
+                        </form>
 
-                        <div className="space-y-2">
-                            <label className="text-sm font-bold text-white/50 uppercase tracking-widest pl-1">Email Address</label>
-                            <div className="relative">
-                                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20" size={20} />
-                                <input
-                                    type="email"
-                                    value={formData.email}
-                                    onChange={e => setFormData({ ...formData, email: e.target.value })}
-                                    placeholder="your@email.com"
-                                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 outline-none focus:border-blue-500 transition-all font-medium"
-                                />
+                        <div className="mt-10 flex items-center justify-between gap-4 px-5 py-4 bg-white border border-line rounded-lg">
+                            <div>
+                                <p className="text-sm font-medium">Sign out</p>
+                                <p className="text-[13px] text-stone-500 mt-0.5">Signs you out on this browser.</p>
                             </div>
+                            <Button onClick={signOut}>Sign out</Button>
                         </div>
-
-                        {/* Member Since */}
-                        {profile?.created_at && (
-                            <div className="pt-4 text-sm text-white/40">
-                                Member since {new Date(profile.created_at).toLocaleDateString('en-US', {
-                                    year: 'numeric',
-                                    month: 'long',
-                                    day: 'numeric'
-                                })}
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex gap-4 mt-10">
-                        <button
-                            onClick={handleSave}
-                            disabled={saving}
-                            className="flex-1 py-4 bg-blue-600 rounded-2xl font-bold hover:bg-blue-500 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                        >
-                            <Save size={20} />
-                            {saving ? "Saving..." : "Save Changes"}
-                        </button>
-                        <button
-                            onClick={handleLogout}
-                            className="px-6 py-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-2xl font-bold hover:bg-red-500/20 transition-all flex items-center gap-2"
-                        >
-                            <LogOut size={20} />
-                            Logout
-                        </button>
-                    </div>
-                </div>
-            </div>
+                    </>
+                )}
+            </main>
         </div>
     );
 }

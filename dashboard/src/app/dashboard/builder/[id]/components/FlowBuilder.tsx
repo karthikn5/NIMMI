@@ -165,6 +165,8 @@ function FlowBuilderInner({
     const handleDeleteSelected = () => {
         if (selectedNode) {
             onNodesChange([{ type: 'remove', id: selectedNode.id }]);
+            onEdgesChange(edges.filter((e) => e.source === selectedNode.id || e.target === selectedNode.id)
+                .map((e) => ({ type: 'remove' as const, id: e.id })));
             setSelectedNode(null);
             onNodeSelect(null);
         }
@@ -204,7 +206,7 @@ function FlowBuilderInner({
                     nodeColor={(n) => {
                         if (n.type === 'start') return '#22c55e';
                         if (n.type === 'end') return '#ef4444';
-                        if (n.type === 'condition') return '#a855f7';
+                        if (n.type === 'condition') return '#7a2f88';
                         return '#3b82f6';
                     }}
                     maskColor="rgba(241, 245, 249, 0.6)"

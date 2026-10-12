@@ -1,348 +1,360 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { MessageSquare, User, Clock, Check, Send, ArrowLeft, ShieldAlert } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { io } from "socket.io-client";
-import { motion, AnimatePresence } from "framer-motion";
+import { ArrowLeft, BookmarkPlus, MessageCircle, Globe, Send, Settings } from "lucide-react";
+import AppHeader from "@/components/AppHeader";
+import { Button, EmptyState, Segmented, Skeleton, Status, ToastProvider, cn, useToast } from "@/components/ui";
+import { LiveChatSettings, type SavedReply, type WorkspaceSettings } from "@/components/livechat/LiveChatSettings";
+import { apiJson, currentUserId, getToken } from "@/lib/api";
+import { liveSocket, refreshWaiting } from "@/lib/liveChat";
+import { useApi } from "@/lib/useApi";
+import { formatWhen } from "@/lib/voice/api";
 
-export default function LiveChat() {
-    const [handoffs, setHandoffs] = useState<any[]>([]);
-    const [selectedChat, setSelectedChat] = useState<any>(null);
-    const [messages, setMessages] = useState<any[]>([]);
-    const [input, setInput] = useState("");
-    const [loading, setLoading] = useState(true);
-    const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
-    const socketRef = useRef<any>(null);
+type Lead = { score: number; label: "hot" | "warm" | "cold"; reasons: string[] };
+type Handoff = {
+    conversation_id: string;
+    bot_id: string;
+    bot_name: string;
+    session_id: string;
+    status: "pending" | "human";
+    agent_id: string | null;
+    created_at: string;
+    captured_data: Record<string, string> | null;
+    channel?: "web" | "whatsapp";
+    lead?: Lead;
+};
+type Msg = { text: string; sender: "user" | "agent" | "system" | "note"; at: Date; author?: string | null };
+
+const LEAD_TONE = { hot: "bad", warm: "warn", cold: "neutral" } as const;
+const isLiveSession = (s: string) => s.startsWith("widget-session-human-") || s.startsWith("wa:");
+
+export default function LiveChatPage() {
+    return (
+        <ToastProvider>
+            <LiveChat />
+        </ToastProvider>
+    );
+}
+
+function LiveChat() {
     const router = useRouter();
+    const toast = useToast();
+    const [handoffs, setHandoffs] = useState<Handoff[] | null>(null);
+    const [selected, setSelected] = useState<Handoff | null>(null);
+    const [messages, setMessages] = useState<Msg[]>([]);
+    const [unread, setUnread] = useState<Record<string, number>>({});
+    const [input, setInput] = useState("");
+    const [mode, setMode] = useState<"reply" | "note">("reply");
+    const [showSettings, setShowSettings] = useState(false);
+    const [picker, setPicker] = useState(false);
+    const replies = useApi<SavedReply[]>("/api/workspace/replies");
+    const workspace = useApi<WorkspaceSettings>("/api/workspace/settings");
+    const selectedRef = useRef<Handoff | null>(null);
+    const bottom = useRef<HTMLDivElement>(null);
+    const box = useRef<HTMLTextAreaElement>(null);
+    const me = useRef<string | null>(null);
 
-    const apiUrl = typeof window !== "undefined" && (window.location.hostname.includes("nimmiai.in") || window.location.hostname.includes("railway.app"))
-        ? "https://api.nimmiai.in"
-        : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
+    useEffect(() => { selectedRef.current = selected; }, [selected]);
+    useEffect(() => { bottom.current?.scrollIntoView({ block: "end" }); }, [messages]);
 
-    const selectedChatRef = useRef<any>(null);
+    const load = useCallback(async () => {
+        try {
+            const list = await apiJson<Handoff[]>("/api/handoffs/pending");
+            setHandoffs(list.filter((h) => isLiveSession(h.session_id)));
+        } catch (e) {
+            toast((e as Error).message);
+            setHandoffs((h) => h ?? []);
+        }
+    }, [toast]);
+
     useEffect(() => {
-        selectedChatRef.current = selectedChat;
-    }, [selectedChat]);
-
-    useEffect(() => {
-        const userId = localStorage.getItem("nimmi_user_id");
-        if (!userId) {
-            router.push("/auth/signup");
+        me.current = currentUserId();
+        if (!me.current) {
+            router.push("/auth/login");
             return;
         }
-
-        // Initialize Socket.io
-        const socket = io(apiUrl, {
-            transports: ["websocket"],
-            upgrade: false
-        });
-        socketRef.current = socket;
-
-        socket.on("connect", () => {
-            console.log("Connected to WebSocket");
-            // Join admin room
-            socket.emit("join", { room: `admin_${userId}` });
-        });
-
-        socket.on("handoff_requested", (data: any) => {
-            console.log("New handoff requested:", data);
-            fetchHandoffs();
-        });
-
-        socket.on("message", (data: any) => {
-            console.log("DEBUG: Socket message received:", data);
-            
-            // Increment unread count if it's not the selected chat and it's from a visitor
-            if (data.sender === 'visitor' || data.sender === 'user') {
-                if (!selectedChatRef.current || (data.room !== selectedChatRef.current.session_id)) {
-                    setUnreadCounts(prev => ({
-                        ...prev,
-                        [data.room]: (prev[data.room] || 0) + 1
-                    }));
-                }
+        load();
+        const socket = liveSocket();
+        if (!socket) return;
+        const onHandoff = () => load();
+        const onMessage = (data: { room: string; message: string; sender: string }) => {
+            const fromVisitor = data.sender !== "agent";
+            if (selectedRef.current?.session_id === data.room) {
+                setMessages((m) => [...m, { text: data.message, sender: fromVisitor ? "user" : "agent", at: new Date() }]);
+            } else if (fromVisitor) {
+                setUnread((u) => ({ ...u, [data.room]: (u[data.room] || 0) + 1 }));
             }
-
-            // If the message is for the currently selected chat
-            if (selectedChatRef.current && (data.room === selectedChatRef.current.session_id)) {
-                setMessages(prev => {
-                    // Map sender 'visitor' or 'user' to 'user' for UI display
-                    const displaySender = (data.sender === 'visitor' || data.sender === 'user') ? 'user' : 'agent';
-                    
-                    return [...prev, {
-                        text: data.message,
-                        sender: displaySender,
-                        timestamp: new Date()
-                    }];
-                });
+        };
+        const onNote = (data: { conversation_id: string; content: string; author: string | null }) => {
+            if (selectedRef.current?.conversation_id === data.conversation_id) {
+                setMessages((m) => m.some((x) => x.sender === "note" && x.text === data.content && Date.now() - x.at.getTime() < 3000)
+                    ? m : [...m, { text: data.content, sender: "note", at: new Date(), author: data.author }]);
             }
-        });
-
-        fetchHandoffs();
-
+        };
+        socket.on("handoff_requested", onHandoff);
+        socket.on("message", onMessage);
+        socket.on("note_added", onNote);
         return () => {
-            socket.disconnect();
+            socket.off("handoff_requested", onHandoff);
+            socket.off("message", onMessage);
+            socket.off("note_added", onNote);
         };
-    }, [router]);
+    }, [router, load]);
 
-    const fetchHandoffs = async () => {
-        // Set a safety timeout to stop loading spinner after 5 seconds no matter what
-        const timeout = setTimeout(() => setLoading(false), 5000);
-        
+    const open = async (h: Handoff) => {
         try {
-            const res = await fetch(`${apiUrl}/api/handoffs/pending`);
-            if (res.ok) {
-                const data = await res.json();
-                // Filter for human sessions only to avoid duplicates from AI mode
-                const humanHandoffs = data.filter((h: any) => 
-                    h.session_id.startsWith('widget-session-human-')
-                );
-                setHandoffs(humanHandoffs);
-            }
-        } catch (err) {
-            console.error("Failed to fetch handoffs:", err);
-        } finally {
-            clearTimeout(timeout);
-            setLoading(false);
+            await apiJson(`/api/handoffs/${h.conversation_id}/accept`, { method: "POST" });
+        } catch (e) {
+            toast((e as Error).message);
+            return;
         }
+        setSelected({ ...h, status: "human", agent_id: me.current });
+        setUnread((u) => ({ ...u, [h.session_id]: 0 }));
+        setMode("reply");
+        liveSocket()?.emit("join", { room: h.session_id, token: getToken() });
+        try {
+            const history = await apiJson<{ content: string; role: string; timestamp: string | null; author: string | null }[]>(`/api/handoffs/${h.conversation_id}/messages`);
+            setMessages([
+                ...history.map((m) => ({
+                    text: m.content, author: m.author, at: m.timestamp ? new Date(m.timestamp) : new Date(),
+                    sender: (m.role === "user" ? "user" : m.role === "note" ? "note" : "agent") as Msg["sender"],
+                })),
+                { text: "You joined the conversation", sender: "system", at: new Date() },
+            ]);
+        } catch {
+            setMessages([{ text: "You joined the conversation", sender: "system", at: new Date() }]);
+        }
+        refreshWaiting();
     };
 
-    const handleAccept = async (handoff: any) => {
-        const userId = localStorage.getItem("nimmi_user_id");
-        try {
-            const res = await fetch(`${apiUrl}/api/handoffs/${handoff.conversation_id}/accept?agent_id=${userId}`, {
-                method: "POST"
-            });
-            if (res.ok) {
-                setSelectedChat(handoff);
-                // Reset unread count for this session
-                setUnreadCounts(prev => ({
-                    ...prev,
-                    [handoff.session_id]: 0
-                }));
-                
-                // Fetch previous conversation history
-                try {
-                    const msgsRes = await fetch(`${apiUrl}/api/handoffs/${handoff.conversation_id}/messages`);
-                    if (msgsRes.ok) {
-                        const history = await msgsRes.json();
-                        const formattedHistory = history.map((m: any) => ({
-                            text: m.content,
-                            sender: m.role === "user" ? "user" : "agent", // bot messages mapped to agent side temporarily or could be separate
-                            timestamp: new Date(m.timestamp)
-                        }));
-                        setMessages([
-                            ...formattedHistory,
-                            {
-                                text: "SYSTEM: You have joined the conversation.",
-                                sender: "system",
-                                timestamp: new Date()
-                            }
-                        ]);
-                    } else {
-                        setMessages([{
-                            text: "SYSTEM: You have joined the conversation.",
-                            sender: "system",
-                            timestamp: new Date()
-                        }]);
-                    }
-                } catch (e) {
-                    setMessages([{
-                        text: "SYSTEM: You have joined the conversation.",
-                        sender: "system",
-                        timestamp: new Date()
-                    }]);
-                }
-                
-                // Join the visitor's room
-                socketRef.current.emit("join", { room: handoff.session_id });
+    const send = async () => {
+        const text = input.trim();
+        if (!text || !selected) return;
+        if (mode === "note") {
+            try {
+                const note = await apiJson<{ content: string; author: string | null }>(`/api/handoffs/${selected.conversation_id}/notes`, { method: "POST", json: { text } });
+                setMessages((m) => [...m, { text: note.content, sender: "note", at: new Date(), author: note.author }]);
+                setInput("");
+            } catch (e) {
+                toast((e as Error).message);
             }
-        } catch (err) {
-            console.error("Failed to accept handoff:", err);
+            return;
         }
-    };
-
-    const sendMessage = () => {
-        if (!input.trim() || !selectedChat) return;
-
-        const data = {
-            room: selectedChat.session_id,
-            message: input,
-            sender: "agent"
-        };
-
-        socketRef.current.emit("message", data);
+        liveSocket()?.emit("message", { room: selected.session_id, message: text, sender: "agent" });
         setInput("");
     };
 
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center min-h-screen bg-[#faf9f7]">
-                <div className="w-12 h-12 border-4 border-[#9d55ac]/10 border-t-[#9d55ac] rounded-full animate-spin" />
-            </div>
-        );
-    }
+    const resolve = async () => {
+        if (!selected) return;
+        try {
+            await apiJson(`/api/handoffs/${selected.conversation_id}/close`, { method: "POST" });
+            toast("Resolved. The assistant takes over from here.");
+            setSelected(null);
+            setMessages([]);
+            load();
+            refreshWaiting();
+        } catch (e) {
+            toast((e as Error).message);
+        }
+    };
+
+    // "/" at the start of the reply opens saved replies, filtered by what follows.
+    const slash = input.startsWith("/") ? input.slice(1).toLowerCase() : null;
+    const matches = useMemo(() => {
+        const q = slash ?? "";
+        return (replies.data ?? []).filter((r) => !q || r.title.toLowerCase().includes(q) || r.body.toLowerCase().includes(q)).slice(0, 8);
+    }, [replies.data, slash]);
+    const showPicker = (picker || slash !== null) && mode === "reply";
+    const applyReply = (r: SavedReply) => {
+        const name = (selected?.captured_data?.name || selected?.captured_data?.Name || "").split(" ")[0];
+        setInput(r.body.replace(/\{\{\s*name\s*\}\}/gi, name || "there"));
+        setPicker(false);
+        requestAnimationFrame(() => box.current?.focus());
+    };
+
+    const details = Object.entries(selected?.captured_data ?? {}).filter(([k]) => k !== "channel");
+    const ws = workspace.data;
 
     return (
-        <div className="min-h-screen bg-[#faf9f7] flex flex-col">
-            {/* Header */}
-            <header className="bg-white border-b border-zinc-200 px-8 py-6 flex items-center justify-between shadow-sm">
-                <div className="flex items-center gap-4">
-                    <button onClick={() => router.push("/dashboard")} className="p-2 hover:bg-zinc-50 rounded-xl transition-colors">
-                        <ArrowLeft size={20} className="text-zinc-400" />
-                    </button>
+        <div className="min-h-screen bg-paper text-ink flex flex-col">
+            <AppHeader />
+            <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 flex flex-col">
+                <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                     <div>
-                        <h1 className="text-xl font-black text-zinc-900 uppercase tracking-tight">Live Chat Agent</h1>
-                        <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Human-in-the-loop takeover</p>
+                        <h1 className="text-2xl font-semibold tracking-tight">Live chat</h1>
+                        <p className="text-sm text-stone-500 mt-1">People who asked for a person on your website or WhatsApp. Reply here; they see it where they wrote.</p>
                     </div>
-                </div>
-                <div className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-600 rounded-full border border-green-100">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                    <span className="text-[10px] font-black uppercase tracking-widest">Agent Online</span>
-                </div>
-            </header>
-
-            <main className="flex-grow flex overflow-hidden">
-                {/* Sidebar: Pending Handoffs */}
-                <div className="w-96 border-r border-zinc-200 bg-white flex flex-col">
-                    <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
-                        <h2 className="text-sm font-black text-zinc-400 uppercase tracking-widest">Pending Requests ({handoffs.length})</h2>
-                        {Object.values(unreadCounts).reduce((a, b) => a + b, 0) > 0 && (
-                            <motion.div 
-                                initial={{ scale: 0 }}
-                                animate={{ scale: 1 }}
-                                className="bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg shadow-red-500/20 animate-pulse"
-                            >
-                                {Object.values(unreadCounts).reduce((a, b) => a + b, 0)} NEW
-                            </motion.div>
+                    <div className="flex items-center gap-3">
+                        {ws && (
+                            <Status tone={ws.open_now ? "good" : "warn"}>
+                                {ws.business_hours.enabled ? (ws.open_now ? "Open now" : `Closed, back ${ws.next_open}`) : "Always open"}
+                            </Status>
                         )}
-                    </div>
-                    <div className="flex-grow overflow-y-auto p-4 space-y-4">
-                        <AnimatePresence>
-                            {handoffs.map((handoff) => (
-                                <motion.div
-                                    key={handoff.conversation_id}
-                                    initial={{ opacity: 0, x: -20 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    exit={{ opacity: 0, x: -20 }}
-                                    onClick={() => handleAccept(handoff)}
-                                    className={`p-6 rounded-3xl border cursor-pointer transition-all ${
-                                        selectedChat?.conversation_id === handoff.conversation_id
-                                            ? "bg-zinc-900 border-zinc-900 shadow-xl shadow-zinc-900/20"
-                                            : "bg-white border-zinc-100 hover:border-[#9d55ac] hover:shadow-lg"
-                                    }`}
-                                >
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div className="relative">
-                                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                                                selectedChat?.conversation_id === handoff.conversation_id ? "bg-white/10" : "bg-purple-50"
-                                            }`}>
-                                                <User size={20} className={selectedChat?.conversation_id === handoff.conversation_id ? "text-white" : "text-[#9d55ac]"} />
-                                            </div>
-                                            {unreadCounts[handoff.session_id] > 0 && (
-                                                <motion.div 
-                                                    initial={{ scale: 0 }}
-                                                    animate={{ scale: 1 }}
-                                                    className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center border border-white animate-pulse"
-                                                >
-                                                    {unreadCounts[handoff.session_id]}
-                                                </motion.div>
-                                            )}
-                                        </div>
-                                        <span className={`text-[9px] font-black uppercase tracking-widest ${
-                                            selectedChat?.conversation_id === handoff.conversation_id ? "text-zinc-500" : "text-zinc-300"
-                                        }`}>
-                                            {new Date(handoff.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                        </span>
-                                    </div>
-                                    <h3 className={`text-sm font-bold mb-1 ${
-                                        selectedChat?.conversation_id === handoff.conversation_id ? "text-white" : "text-zinc-900"
-                                    }`}>{handoff.bot_name}</h3>
-                                    <p className={`text-[10px] font-medium truncate ${
-                                        selectedChat?.conversation_id === handoff.conversation_id ? "text-zinc-400" : "text-zinc-500"
-                                    }`}>
-                                        ID: {handoff.session_id.slice(0, 12)}...
-                                    </p>
-                                </motion.div>
-                            ))}
-                        </AnimatePresence>
-                        {handoffs.length === 0 && (
-                            <div className="text-center py-20">
-                                <ShieldAlert size={40} className="text-zinc-200 mx-auto mb-4" />
-                                <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">No pending handoffs</p>
-                            </div>
-                        )}
+                        <Button size="sm" onClick={() => setShowSettings(true)}><Settings size={14} /> Settings</Button>
                     </div>
                 </div>
 
-                {/* Chat Area */}
-                <div className="flex-grow flex flex-col bg-[#faf9f7]">
-                    {selectedChat ? (
-                        <>
-                            {/* Chat Header */}
-                            <div className="bg-white border-b border-zinc-100 p-6 flex items-center justify-between">
-                                <div className="flex items-center gap-4">
-                                    <div className="w-12 h-12 bg-zinc-900 rounded-2xl flex items-center justify-center text-white">
-                                        <MessageSquare size={24} />
-                                    </div>
-                                    <div>
-                                        <h3 className="text-sm font-bold text-zinc-900">{selectedChat.bot_name} - Live Session</h3>
-                                        <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Active with Visitor {selectedChat.session_id.slice(0, 8)}</p>
-                                    </div>
-                                </div>
-                                <button className="px-4 py-2 bg-zinc-50 text-zinc-400 rounded-xl hover:text-red-500 transition-colors">
-                                    <Check size={18} />
-                                </button>
-                            </div>
-
-                            {/* Messages */}
-                            <div className="flex-grow overflow-y-auto p-8 space-y-6">
-                                {messages.map((msg, i) => (
-                                    <div key={i} className={`flex ${msg.sender === 'agent' ? 'justify-end' : 'justify-start'}`}>
-                                        <div className={`max-w-[70%] p-5 rounded-[2rem] text-sm font-medium shadow-sm ${
-                                            msg.sender === 'agent' 
-                                                ? "bg-zinc-900 text-white rounded-tr-none" 
-                                                : msg.sender === 'system'
-                                                    ? "bg-zinc-100 text-zinc-400 text-[10px] uppercase tracking-widest font-black text-center w-full"
-                                                    : "bg-white text-zinc-900 rounded-tl-none border border-zinc-100"
-                                        }`}>
-                                            {msg.text}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            {/* Input */}
-                            <div className="p-8">
-                                <div className="max-w-4xl mx-auto relative">
-                                    <input
-                                        type="text"
-                                        value={input}
-                                        onChange={(e) => setInput(e.target.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                                        placeholder="Type a message to the visitor..."
-                                        className="w-full bg-white border border-zinc-200 rounded-[2.5rem] pl-8 pr-20 py-6 text-sm font-medium focus:border-[#9d55ac] focus:ring-4 focus:ring-[#9d55ac]/5 outline-none shadow-xl shadow-zinc-900/5 transition-all"
-                                    />
-                                    <button
-                                        onClick={sendMessage}
-                                        className="absolute right-3 top-1/2 -translate-y-1/2 w-14 h-14 bg-zinc-900 text-white rounded-full flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-lg"
-                                    >
-                                        <Send size={20} />
-                                    </button>
-                                </div>
-                            </div>
-                        </>
-                    ) : (
-                        <div className="flex-grow flex flex-col items-center justify-center">
-                            <div className="w-24 h-24 bg-white rounded-[2rem] shadow-xl flex items-center justify-center mb-8 border border-zinc-100">
-                                <MessageSquare size={40} className="text-zinc-200" />
-                            </div>
-                            <h2 className="text-xl font-bold text-zinc-900 mb-2">Select a conversation</h2>
-                            <p className="text-zinc-400 text-sm font-medium">Pick a pending request from the left to start chatting.</p>
+                <div className="flex-1 min-h-[560px] grid md:grid-cols-[300px_minmax(0,1fr)] bg-white border border-line rounded-lg overflow-hidden">
+                    {/* Inbox */}
+                    <aside className={cn("border-r border-line flex flex-col min-h-0", selected && "hidden md:flex")}>
+                        <div className="px-4 py-3 border-b border-line text-[13px] text-stone-500">
+                            {handoffs ? `${handoffs.length} ${handoffs.length === 1 ? "conversation" : "conversations"}` : "Loading…"}
                         </div>
-                    )}
+                        <ul className="flex-1 overflow-y-auto">
+                            {handoffs === null && <li className="p-4 space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12" />)}</li>}
+                            {handoffs?.length === 0 && (
+                                <li><EmptyState title="Nobody is waiting" body="When someone asks for a person, on your website or WhatsApp, they show up here." /></li>
+                            )}
+                            {handoffs?.map((h) => {
+                                const name = h.captured_data?.name || h.captured_data?.Name;
+                                const takenByOther = h.status === "human" && h.agent_id && h.agent_id !== me.current;
+                                const wa = h.channel === "whatsapp" || h.session_id.startsWith("wa:");
+                                const ChannelIcon = wa ? MessageCircle : Globe;
+                                return (
+                                    <li key={h.conversation_id}>
+                                        <button
+                                            onClick={() => open(h)}
+                                            className={cn(
+                                                "w-full text-left px-4 py-3 border-b border-line transition-colors",
+                                                selected?.conversation_id === h.conversation_id ? "bg-plum-tint" : "hover:bg-stone-50",
+                                            )}
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <ChannelIcon size={13} className="text-stone-400 shrink-0" aria-label={wa ? "WhatsApp" : "Website"} />
+                                                <span className="text-sm font-medium truncate flex-1">{name || (wa ? `+${h.session_id.slice(3)}` : `Visitor ${h.session_id.slice(-5)}`)}</span>
+                                                {(unread[h.session_id] || 0) > 0 && (
+                                                    <span className="min-w-5 h-5 px-1.5 rounded-full bg-signal text-white text-[11px] tabular-nums inline-flex items-center justify-center">
+                                                        {unread[h.session_id]}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="flex items-center justify-between gap-2 mt-1">
+                                                <span className="text-xs text-stone-500 truncate">{h.bot_name}</span>
+                                                <span className="text-xs text-stone-400 whitespace-nowrap">{formatWhen(h.created_at)}</span>
+                                            </div>
+                                            <div className="mt-1.5 flex items-center gap-3">
+                                                {h.status === "pending"
+                                                    ? <Status tone="bad">Waiting</Status>
+                                                    : <Status tone="neutral">{takenByOther ? "With a teammate" : "With you"}</Status>}
+                                                {h.lead && h.lead.label !== "cold" && (
+                                                    <span title={h.lead.reasons.join(", ")}><Status tone={LEAD_TONE[h.lead.label]}>{h.lead.label === "hot" ? "Hot lead" : "Warm lead"}</Status></span>
+                                                )}
+                                            </div>
+                                        </button>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    </aside>
+
+                    {/* Conversation */}
+                    <section className={cn("flex flex-col min-h-0", !selected && "hidden md:flex")}>
+                        {selected ? (
+                            <>
+                                <div className="flex items-center gap-3 px-4 py-3 border-b border-line">
+                                    <button onClick={() => setSelected(null)} className="md:hidden p-1 -ml-1 text-stone-500" aria-label="Back to conversations">
+                                        <ArrowLeft size={18} />
+                                    </button>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="text-sm font-medium truncate">{selected.captured_data?.name || selected.captured_data?.Name || (selected.session_id.startsWith("wa:") ? `+${selected.session_id.slice(3)}` : `Visitor ${selected.session_id.slice(-5)}`)}</p>
+                                        <p className="text-xs text-stone-500 truncate">{selected.bot_name} · {selected.session_id.startsWith("wa:") ? "WhatsApp" : "Website chat"}</p>
+                                    </div>
+                                    <Button size="sm" onClick={resolve}>Resolve</Button>
+                                </div>
+
+                                {details.length > 0 && (
+                                    <dl className="flex flex-wrap gap-x-6 gap-y-1 px-4 py-2.5 border-b border-line bg-stone-50/60 text-xs">
+                                        {details.map(([k, v]) => (
+                                            <div key={k} className="flex gap-1.5"><dt className="text-stone-500">{k}</dt><dd>{v}</dd></div>
+                                        ))}
+                                    </dl>
+                                )}
+
+                                <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3" aria-live="polite">
+                                    {messages.map((m, i) => m.sender === "system" ? (
+                                        <p key={i} className="text-center text-xs text-stone-400">{m.text}</p>
+                                    ) : m.sender === "note" ? (
+                                        <div key={i} className="mx-auto max-w-[85%] px-3.5 py-2 rounded-md bg-amber-50 border border-amber-200 text-sm leading-relaxed whitespace-pre-wrap">
+                                            <span className="block text-[11px] text-amber-800 mb-0.5">Note{m.author ? ` from ${m.author}` : ""} · only your team sees this</span>
+                                            {m.text}
+                                        </div>
+                                    ) : (
+                                        <div key={i} className={cn("flex", m.sender === "agent" ? "justify-end" : "justify-start")}>
+                                            <div className={cn(
+                                                "max-w-[75%] px-3.5 py-2 rounded-lg text-sm leading-relaxed whitespace-pre-wrap",
+                                                m.sender === "agent" ? "bg-plum text-white rounded-br-sm" : "bg-stone-100 text-ink rounded-bl-sm",
+                                            )}>
+                                                {m.text}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <div ref={bottom} />
+                                </div>
+
+                                <div className="relative border-t border-line">
+                                    {showPicker && (
+                                        <div className="absolute bottom-full left-3 right-3 mb-2 max-h-64 overflow-y-auto bg-white border border-line rounded-lg shadow-[0_12px_40px_rgba(28,23,25,0.14)] z-10">
+                                            {matches.length === 0 ? (
+                                                <p className="px-3 py-3 text-[13px] text-stone-500">
+                                                    {replies.data?.length ? "No saved reply matches." : "No saved replies yet. Add them in Settings."}
+                                                </p>
+                                            ) : matches.map((r) => (
+                                                <button key={r.id} type="button" onClick={() => applyReply(r)}
+                                                        className="w-full text-left px-3 py-2 hover:bg-stone-50 border-t border-line first:border-t-0">
+                                                    <span className="block text-[13px] font-medium">{r.title}</span>
+                                                    <span className="block text-xs text-stone-500 truncate">{r.body}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <div className="flex items-center gap-2 px-3 pt-2.5">
+                                        <Segmented label="Message type" value={mode} onChange={(v) => { setMode(v); setPicker(false); }}
+                                                   options={[{ value: "reply", label: "Reply" }, { value: "note", label: "Internal note" }]} />
+                                        {mode === "reply" && (
+                                            <button type="button" onClick={() => setPicker((p) => !p)} aria-expanded={showPicker}
+                                                    className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[13px] text-stone-600 hover:bg-stone-100">
+                                                <BookmarkPlus size={13} /> Saved replies
+                                            </button>
+                                        )}
+                                    </div>
+                                    <form onSubmit={(e) => { e.preventDefault(); send(); }} className="flex items-end gap-2 p-3">
+                                        <textarea
+                                            ref={box}
+                                            value={input}
+                                            onChange={(e) => setInput(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Escape") setPicker(false);
+                                                if (e.key === "Enter" && !e.shiftKey) {
+                                                    e.preventDefault();
+                                                    if (showPicker && slash !== null && matches[0]) applyReply(matches[0]);
+                                                    else send();
+                                                }
+                                            }}
+                                            placeholder={mode === "note" ? "Add a note for your team. The customer won't see it." : "Write a reply, or type / for saved replies."}
+                                            rows={1}
+                                            aria-label={mode === "note" ? "Internal note" : "Reply"}
+                                            className={cn(
+                                                "flex-1 resize-none max-h-32 border rounded-md px-3 py-2 text-sm placeholder:text-stone-400 focus:outline-none focus:ring-2",
+                                                mode === "note" ? "bg-amber-50 border-amber-200 focus:border-amber-400 focus:ring-amber-200/40"
+                                                    : "bg-white border-line-strong focus:border-plum focus:ring-plum/15",
+                                            )}
+                                        />
+                                        <Button type="submit" variant="primary" aria-label={mode === "note" ? "Add note" : "Send"} disabled={!input.trim()}><Send size={15} /></Button>
+                                    </form>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="flex-1 flex items-center justify-center p-8">
+                                <EmptyState title="Pick a conversation" body="Choose someone from the list to read their chat and reply." />
+                            </div>
+                        )}
+                    </section>
                 </div>
             </main>
+
+            <LiveChatSettings open={showSettings} onClose={() => setShowSettings(false)}
+                              onSaved={(s) => workspace.setData(s)} replies={replies.data} onRepliesChange={replies.reload} />
         </div>
     );
 }

@@ -8,6 +8,13 @@ import Image from "next/image";
 import { useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { motion } from "framer-motion";
+import { apiBase, saveSession } from "@/lib/api";
+
+/** Where to go after signing in: the page that sent you here, or the dashboard. */
+function nextPath() {
+    const next = new URLSearchParams(window.location.search).get("next");
+    return next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+}
 
 export default function Login() {
     const [formData, setFormData] = useState({ email: "", password: "" });
@@ -31,17 +38,16 @@ export default function Login() {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
-                            email: user.email,
+                            access_token: session.access_token,
                             name: user.user_metadata.full_name || user.user_metadata.name || "",
-                            provider: "google"
                         })
                     });
                     const data = await res.json();
                     if (res.ok) {
-                        localStorage.setItem("nimmi_user_id", data.user_id);
-                        localStorage.setItem("nimmi_user_name", data.name || "");
-                        localStorage.setItem("nimmi_user_email", user.email!);
-                        router.push("/dashboard");
+                        saveSession(data);
+                        router.push(nextPath());
+                    } else {
+                        setError(data.detail || "Google sign-in failed. Please try again.");
                     }
                 } catch (err) {
                     console.error("OAuth Sync Error:", err);
@@ -66,20 +72,15 @@ export default function Login() {
         setLoading(true);
         setError("");
         try {
-            const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
-                ? "https://api.nimmiai.in"
-                : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
-            const res = await fetch(`${apiUrl}/api/auth/login`, {
+            const res = await fetch(`${apiBase()}/api/auth/login`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ email: formData.email, password: formData.password })
             });
             const data = await res.json();
             if (res.ok) {
-                localStorage.setItem("nimmi_user_id", data.user_id);
-                localStorage.setItem("nimmi_user_name", data.name || "");
-                localStorage.setItem("nimmi_user_email", formData.email);
-                router.push("/dashboard");
+                saveSession(data);
+                router.push(nextPath());
             } else {
                 setError(data.detail || "Invalid email or password");
             }
@@ -160,7 +161,10 @@ export default function Login() {
 
                             {/* Password */}
                             <div className="space-y-2">
-                                <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest ml-1">Password</label>
+                                <div className="flex items-center justify-between">
+                                    <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest ml-1">Password</label>
+                                    <Link href="/auth/forgot-password" className="text-xs font-semibold text-[#550a64] hover:underline underline-offset-4">Forgot password?</Link>
+                                </div>
                                 <div className="relative group">
                                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 group-focus-within:text-[#9d55ac] transition-colors" size={20} />
                                     <input

@@ -9,6 +9,7 @@ sys.path.append(r'c:\Users\karth\.gemini\antigravity\scratch\nimmi-ai\backend')
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import os
+import asyncio
 import logging
 import hashlib
 from typing import List, Dict, Optional
@@ -214,16 +215,16 @@ async def query_knowledge(bot_id: str, query: str, top_k: int = 5) -> List[Dict]
     Returns:
         List of dicts with 'text', 'score', and 'source' fields.
     """
-    index = _get_index()
-
     try:
-        # Use asyncio.wait_for to prevent infinite hang on slow vector search
+        # Connecting, embedding and querying are blocking calls: keep them off the event loop.
+        index = await asyncio.to_thread(_get_index)
         query_embedding = await asyncio.wait_for(
             asyncio.to_thread(generate_query_embedding, query),
             timeout=10.0
         )
 
-        results = index.query(
+        results = await asyncio.to_thread(
+            index.query,
             vector=query_embedding,
             top_k=top_k,
             include_metadata=True,
@@ -245,6 +246,14 @@ async def query_knowledge(bot_id: str, query: str, top_k: int = 5) -> List[Dict]
     except Exception as e:
         logger.error(f"[VectorStore] Query error for bot {bot_id}: {e}")
         return []
+
+
+async def warm_up() -> None:
+    """Open the Pinecone connection at startup so the first visitor doesn't wait for it."""
+    try:
+        await asyncio.to_thread(_get_index)
+    except Exception as e:
+        logger.warning(f"[VectorStore] Warm-up skipped: {e}")
 
 
 def delete_bot_knowledge(bot_id: str) -> bool:

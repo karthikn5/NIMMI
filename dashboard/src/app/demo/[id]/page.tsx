@@ -42,23 +42,25 @@ function DemoContent({ params }: { params: Promise<{ id: string }> }) {
         };
         fetchConfig();
 
-        // Load widget script
-        const script = document.createElement("script");
-        script.src = "/widget.js";
-        script.setAttribute("data-bot-id", id);
+        // Load the same embed script customers paste on their sites, so the demo is the real widget.
         const scriptApiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
             ? "https://api.nimmiai.in"
             : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
+        const w = window as Window & { __NIMMI_WIDGET_LOADED__?: boolean };
+        w.__NIMMI_WIDGET_LOADED__ = false;
+        const script = document.createElement("script");
+        script.src = `${scriptApiUrl}/static/nimmi-widget.js?v=${Date.now()}`;
+        script.setAttribute("data-bot-id", id);
         script.setAttribute("data-api-url", scriptApiUrl);
+        script.setAttribute("data-dashboard-url", window.location.origin);
         script.setAttribute("data-is-demo", "true");
         script.async = true;
         document.body.appendChild(script);
 
         return () => {
-            document.body.removeChild(script);
-            // Clean up injected widget elements if any
-            const container = document.getElementById("nimmi-widget-container");
-            if (container) container.remove();
+            script.remove();
+            document.getElementById("nimmi-widget-container")?.remove();
+            w.__NIMMI_WIDGET_LOADED__ = false;
         };
     }, [id]);
 

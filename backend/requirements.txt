@@ -22,3 +22,5 @@ pinecone
 sse-starlette
 fastapi-socketio
 python-socketio
+PyJWT
+websockets

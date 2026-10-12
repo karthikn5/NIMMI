@@ -8,6 +8,13 @@ import Image from "next/image";
 import { useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { motion } from "framer-motion";
+import { apiBase, saveSession } from "@/lib/api";
+
+/** Where to go after signing in: the page that sent you here, or the dashboard. */
+function nextPath() {
+    const next = new URLSearchParams(window.location.search).get("next");
+    return next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+}
 
 export default function Signup() {
     const [formData, setFormData] = useState({ name: "", email: "", password: "" });
@@ -31,17 +38,16 @@ export default function Signup() {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
-                            email: user.email,
+                            access_token: session.access_token,
                             name: user.user_metadata.full_name || user.user_metadata.name || "",
-                            provider: "google"
                         })
                     });
                     const data = await res.json();
                     if (res.ok) {
-                        localStorage.setItem("nimmi_user_id", data.user_id);
-                        localStorage.setItem("nimmi_user_name", data.name || "");
-                        localStorage.setItem("nimmi_user_email", user.email!);
-                        router.push("/dashboard");
+                        saveSession(data);
+                        router.push(nextPath());
+                    } else {
+                        setError(data.detail || "Google sign-in failed. Please try again.");
                     }
                 } catch (err) {
                     console.error("OAuth Sync Error:", err);
@@ -66,20 +72,15 @@ export default function Signup() {
         setLoading(true);
         setError("");
         try {
-            const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
-                ? "https://api.nimmiai.in"
-                : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
-            const res = await fetch(`${apiUrl}/api/auth/signup`, {
+            const res = await fetch(`${apiBase()}/api/auth/signup`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name: formData.name, email: formData.email, password: formData.password })
             });
             const data = await res.json();
             if (res.ok) {
-                localStorage.setItem("nimmi_user_id", data.user_id);
-                localStorage.setItem("nimmi_user_name", data.name || formData.name);
-                localStorage.setItem("nimmi_user_email", formData.email);
-                router.push("/dashboard");
+                saveSession(data);
+                router.push(nextPath());
             } else {
                 setError(data.detail || "Signup failed");
             }
@@ -181,6 +182,7 @@ export default function Signup() {
                                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400 group-focus-within:text-[#9d55ac] transition-colors" size={20} />
                                     <input
                                         type={showPassword ? "text" : "password"}
+                                        minLength={8}
                                         required
                                         placeholder="••••••••"
                                         value={formData.password}

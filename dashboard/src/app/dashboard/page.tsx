@@ -1,361 +1,442 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Plus, Bot, ExternalLink, Settings, Trash2, Clock, Zap, ChevronRight, LayoutGrid, MessageSquare, PlusCircle, Sparkles, ArrowRight } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
-import NextImage from "next/image";
-import { io } from "socket.io-client";
+import { ArrowRight, ExternalLink, Plus, Search, Trash2 } from "lucide-react";
+import AppHeader from "@/components/AppHeader";
+import {
+    Button, Card, Dialog, EmptyState, Input, Segmented, Skeleton, Status, ToastProvider, cn, useToast,
+} from "@/components/ui";
+import { activeOwnerId, apiFetch, apiJson, currentUserId, getWorkspace } from "@/lib/api";
+import { useWaitingCount } from "@/lib/liveChat";
 
-export default function Dashboard() {
-    const [bots, setBots] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [creatingBot, setCreatingBot] = useState(false);
-    const [userName, setUserName] = useState("");
-    const [userEmail, setUserEmail] = useState("");
-    const [usage, setUsage] = useState<any>(null);
-    const [handoffCount, setHandoffCount] = useState(0);
+type Bot = {
+    id: string;
+    name: string;
+    status: "Active" | "Expired";
+    plan: string;
+    expiry: string;
+    days_remaining: number;
+};
+
+type Filter = "all" | "active" | "unplanned";
+
+export default function DashboardPage() {
+    return (
+        <ToastProvider>
+            <Dashboard />
+        </ToastProvider>
+    );
+}
+
+function greeting() {
+    const h = new Date().getHours();
+    return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+}
+
+const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Backend plan names vary ("1 Month", "6 Month Plan"); always end in one "plan". */
+const planLabel = (plan: string) => (/plan$/i.test(plan.trim()) ? plan.trim() : `${plan.trim()} plan`);
+
+function readCache<T>(key: string): T | null {
+    try {
+        const raw = localStorage.getItem(key);
+        return raw ? (JSON.parse(raw) as T) : null;
+    } catch {
+        return null;
+    }
+}
+
+function Dashboard() {
     const router = useRouter();
+    const toast = useToast();
+    const [userId, setUserId] = useState<string | null>(null);
+    const [bots, setBots] = useState<Bot[] | null>(null);
+    const [fullName, setFullName] = useState("");
+    const [firstName, setFirstName] = useState("");
+    const waiting = useWaitingCount();
+    const [openQuestions, setOpenQuestions] = useState<number | null>(null);
+    const [loadError, setLoadError] = useState(false);
+    const [canManage, setCanManage] = useState(true);
+
+    const [filter, setFilter] = useState<Filter>("all");
+    const [query, setQuery] = useState("");
+    const [creating, setCreating] = useState(false);
+    const [deleting, setDeleting] = useState<Bot | null>(null);
+
+    const fetchBots = useCallback(async (uid: string) => {
+        try {
+            const data = await apiJson<Bot[]>("/api/bots");
+            setBots(data);
+            setLoadError(false);
+            try { localStorage.setItem(`bots_${uid}`, JSON.stringify(data)); } catch { /* ignore */ }
+        } catch {
+            setLoadError(true);
+            setBots((prev) => prev ?? []);
+        }
+    }, []);
 
     useEffect(() => {
-        let userId = localStorage.getItem("nimmi_user_id");
-        if (!userId) {
+        const uid = currentUserId();
+        if (!uid) {
             router.push("/auth/signup");
             return;
         }
-        userId = userId.trim();
+        const owner = activeOwnerId() || uid;
+        setUserId(owner);
 
-        // ⚡ Speed Optimization: Load from cache first
-        const cachedBots = localStorage.getItem(`bots_${userId}`);
-        const cachedUsage = localStorage.getItem(`usage_${userId}`);
-        if (cachedBots) setBots(JSON.parse(cachedBots));
-        if (cachedUsage) setUsage(JSON.parse(cachedUsage));
+        // Show cached data instantly, then refresh.
+        const cached = readCache<Bot[]>(`bots_${owner}`);
+        if (cached) setBots(cached);
+        const cachedName = readCache<string>(`nimmi_user_first_name`);
+        if (cachedName) setFirstName(cachedName);
 
-        const fetchData = async () => {
-            try {
-                const apiUrl = typeof window !== "undefined" && (window.location.hostname.includes("nimmiai.in") || window.location.hostname.includes("railway.app"))
-                    ? "https://api.nimmiai.in"
-                    : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
-
-                const [profileRes, botsRes, usageRes] = await Promise.all([
-                    fetch(`${apiUrl}/api/auth/profile?user_id=${userId}`),
-                    fetch(`${apiUrl}/api/bots?user_id=${userId}`),
-                    fetch(`${apiUrl}/api/usage?user_id=${userId}`)
-                ]);
-
-                if (profileRes.ok) {
-                    const profileData = await profileRes.json();
-                    setUserName(profileData.name || "User");
-                    setUserEmail(profileData.email || "");
-                }
-
-                if (botsRes.ok) {
-                    const botsData = await botsRes.json();
-                    setBots(botsData);
-                    localStorage.setItem(`bots_${userId}`, JSON.stringify(botsData));
-                }
-
-                if (usageRes.ok) {
-                    const usageData = await usageRes.json();
-                    setUsage(usageData);
-                    localStorage.setItem(`usage_${userId}`, JSON.stringify(usageData));
-                }
-
-                // Fetch initial handoff count
-                const handoffsRes = await fetch(`${apiUrl}/api/handoffs/pending`);
-                if (handoffsRes.ok) {
-                    const handoffs = await handoffsRes.json();
-                    // Filter for human sessions only
-                    const count = (handoffs || []).filter((h: any) => h.session_id.startsWith('widget-session-human-')).length;
-                    setHandoffCount(count);
-                }
-            } catch (err) {
-                console.error("Dashboard data load error:", err);
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        fetchData();
-
-        // Real-time socket for handoff notifications
-        const apiUrl = typeof window !== "undefined" && (window.location.hostname.includes("nimmiai.in") || window.location.hostname.includes("railway.app"))
-            ? "https://api.nimmiai.in"
-            : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
-            
-        const socket = io(apiUrl, { transports: ["websocket"] });
-        
-        socket.on("connect", () => {
-            socket.emit("join", { room: `admin_${userId}` });
-        });
-
-        socket.on("handoff_requested", () => {
-            // Re-fetch count when a new handoff is requested
-            fetchData();
-        });
-
-        return () => {
-            socket.disconnect();
-        };
-    }, [router]);
-
-    const handleCreateBot = async () => {
-        const userId = localStorage.getItem("nimmi_user_id");
-        if (!userId) return;
-
-        setCreatingBot(true);
-        try {
-            const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
-                ? "https://api.nimmiai.in"
-                : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
-            const res = await fetch(`${apiUrl}/api/bots/create`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    name: "My New Bot",
-                    user_id: userId
-                })
-            });
-            const data = await res.json();
-            if (res.ok) {
-                router.push(`/dashboard/builder/${data.id}`);
-            } else {
-                const errorMsg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || data);
-                alert(errorMsg || "Failed to create bot. Check your credit limit.");
-            }
-        } catch (err) {
-            console.error("Failed to create bot:", err);
-        } finally {
-            setCreatingBot(false);
+        fetchBots(owner);
+        apiJson<{ counts: { open: number } }>("/api/questions?status=open")
+            .then((q) => setOpenQuestions(q.counts.open))
+            .catch(() => setOpenQuestions(null));
+        if (getWorkspace()) {
+            apiJson<{ owner_id: string; role: string }[]>("/api/team/workspaces")
+                .then((ws) => setCanManage(ws.find((w) => w.owner_id === owner)?.role !== "agent"))
+                .catch(() => {});
         }
-    };
+        apiJson<{ name: string }>("/api/auth/profile")
+            .then((p) => {
+                if (!p?.name) return;
+                const first = capitalise(p.name.trim().split(" ")[0]);
+                setFullName(p.name);
+                setFirstName(first);
+                try {
+                    localStorage.setItem("nimmi_user_name", p.name);
+                    localStorage.setItem("nimmi_user_first_name", JSON.stringify(first));
+                } catch { /* ignore */ }
+            })
+            .catch(() => {});
+    }, [router, fetchBots]);
 
-    const handleDeleteBot = async (botId: string, e: React.MouseEvent) => {
-        e.stopPropagation();
-        if (!confirm("Are you sure you want to delete this bot? This action cannot be undone.")) return;
+    const counts = useMemo(() => {
+        const list = bots ?? [];
+        const active = list.filter((b) => b.status === "Active").length;
+        return { all: list.length, active, unplanned: list.length - active };
+    }, [bots]);
 
-        try {
-            const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
-                ? "https://api.nimmiai.in"
-                : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
-            const res = await fetch(`${apiUrl}/api/bots/${botId}`, {
-                method: "DELETE",
-            });
-            if (res.ok) {
-                setBots(bots.filter(b => b.id !== botId));
-                // Refresh usage to update credits
-                const userId = localStorage.getItem("nimmi_user_id");
-                const usageRes = await fetch(`${apiUrl}/api/usage?user_id=${userId}`);
-                const usageData = await usageRes.json();
-                if (usageRes.ok) setUsage(usageData);
-            }
-        } catch (err) {
-            console.error("Failed to delete bot:", err);
-        }
-    };
-
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center min-h-screen bg-[#faf9f7]">
-                <div className="w-12 h-12 border-4 border-[#9d55ac]/10 border-t-[#9d55ac] rounded-full animate-spin" />
-            </div>
+    const rows = useMemo(() => {
+        const q = query.trim().toLowerCase();
+        return (bots ?? []).filter((b) =>
+            (filter === "all" || (filter === "active" ? b.status === "Active" : b.status !== "Active")) &&
+            (!q || b.name.toLowerCase().includes(q) || b.id.startsWith(q)),
         );
-    }
+    }, [bots, filter, query]);
+
+    const nextRenewal = useMemo(() => {
+        return (bots ?? [])
+            .filter((b) => b.status === "Active")
+            .sort((a, b) => a.days_remaining - b.days_remaining)[0] ?? null;
+    }, [bots]);
+
+    const removeBot = async (bot: Bot) => {
+        try {
+            const res = await apiFetch(`/api/bots/${bot.id}`, { method: "DELETE" });
+            if (!res.ok) throw new Error();
+            setBots((prev) => (prev ?? []).filter((b) => b.id !== bot.id));
+            toast(`Deleted ${bot.name}`);
+        } catch {
+            toast("Couldn't delete the assistant. Try again.");
+        }
+        setDeleting(null);
+    };
 
     return (
-        <div className="min-h-screen bg-[#faf9f7] p-4 lg:p-10">
-            <div className="max-w-7xl mx-auto">
-                <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
-                    <div className="text-center md:text-left">
-                        <motion.div
-                            initial={{ opacity: 0, y: -20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className="inline-flex items-center gap-2 px-4 py-1.5 bg-purple-50 border border-purple-100 rounded-full mb-4"
-                        >
-                            <Sparkles size={14} className="text-[#9d55ac]" />
-                            <span className="text-xs font-bold text-[#9d55ac] uppercase tracking-wider">Welcome back, {userName.split(' ')[0]}</span>
-                        </motion.div>
-                        <h1 className="text-4xl md:text-5xl font-bold text-zinc-900 mb-3 tracking-tight">
-                            Your AI <span className="text-[#9d55ac]">Assistant Hub</span>
-                        </h1>
-                        <p className="text-zinc-500 font-medium">Manage, train, and deploy your custom AI chatbots.</p>
+        <div className="min-h-screen bg-paper text-ink">
+            <AppHeader userName={fullName} />
+
+            <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 pb-24">
+                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                    <div>
+                        <h1 className="text-2xl font-semibold tracking-tight">Assistants</h1>
+                        <p className="text-sm text-stone-500 mt-1">
+                            {firstName ? `${greeting()}, ${firstName}. ` : ""}Build, train and publish the assistants on your website.
+                        </p>
                     </div>
-
-                    <button
-                        onClick={handleCreateBot}
-                        disabled={creatingBot}
-                        className="bg-zinc-900 text-white px-8 py-4 rounded-[2rem] font-bold text-sm shadow-xl shadow-zinc-900/20 hover:bg-zinc-800 transition-all active:scale-95 flex items-center justify-center gap-2 group whitespace-nowrap"
-                    >
-                        <Plus size={20} className="group-hover:rotate-90 transition-transform duration-300" />
-                        {creatingBot ? "Creating..." : "Create New Bot"}
-                    </button>
-                </header>
-
-                {/* Quick Stats / Credits */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
-                    {/* Active Subscriptions Overview */}
-                    <motion.div 
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.2 }}
-                        onClick={() => router.push('/dashboard/billing')}
-                        className="col-span-1 bg-white p-8 rounded-[2.5rem] border border-zinc-100 flex flex-col items-center gap-6 shadow-sm cursor-pointer hover:shadow-xl hover:shadow-purple-900/5 transition-all text-center"
-                    >
-                        <div className="w-16 h-16 bg-[#9d55ac]/5 rounded-2xl flex items-center justify-center shrink-0 border border-[#9d55ac]/10 shadow-inner">
-                            <Sparkles size={24} className="text-[#9d55ac]" />
-                        </div>
-                        <div>
-                            <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Active Plans</h3>
-                            <div className="flex items-baseline justify-center gap-2">
-                                <span className="text-4xl font-bold text-zinc-900 tracking-tighter">
-                                    {bots.filter(b => b.status === "Active").length}
-                                </span>
-                            </div>
-                        </div>
-                    </motion.div>
-
-                    {/* Live Chat Handoff Card */}
-                    <motion.div 
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.2, delay: 0.1 }}
-                        onClick={() => router.push('/dashboard/live-chat')}
-                        className="col-span-1 bg-white p-8 rounded-[2.5rem] border border-zinc-100 flex flex-col items-center gap-6 shadow-sm cursor-pointer hover:shadow-xl hover:shadow-blue-900/5 transition-all text-center group relative"
-                    >
-                        {handoffCount > 0 && (
-                            <motion.div 
-                                initial={{ scale: 0 }}
-                                animate={{ scale: 1 }}
-                                className="absolute top-6 right-8 bg-red-500 text-white w-6 h-6 rounded-full text-[10px] font-black flex items-center justify-center shadow-lg shadow-red-500/40 animate-pulse border-2 border-white"
-                            >
-                                {handoffCount}
-                            </motion.div>
-                        )}
-                        <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center shrink-0 border border-blue-100 shadow-inner group-hover:scale-110 transition-transform">
-                            <MessageSquare size={24} className="text-blue-600" />
-                        </div>
-                        <div>
-                            <h3 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1">Live Support</h3>
-                            <div className="flex items-baseline justify-center gap-2">
-                                <span className="text-4xl font-bold text-zinc-900 tracking-tighter">
-                                    {handoffCount > 0 ? handoffCount : "Live"}
-                                </span>
-                            </div>
-                        </div>
-                    </motion.div>
-
-                    <motion.div 
-                        whileHover={{ y: -5 }}
-                        className="bg-zinc-900 p-8 rounded-[2.5rem] text-white shadow-2xl shadow-purple-900/10 relative overflow-hidden flex flex-col justify-between"
-                    >
-                        <div className="absolute top-0 right-0 p-6 opacity-[0.05]">
-                            <Sparkles size={100} />
-                        </div>
-                        <div>
-                            <h3 className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] mb-4">Pro Tip</h3>
-                            <p className="text-lg font-bold leading-snug">Connect your website to train your AI instantly on all your pages.</p>
-                        </div>
-                        <div className="mt-8">
-                            <button className="text-[#9d55ac] font-bold text-sm flex items-center gap-2 hover:gap-3 transition-all">
-                                Read Guide <ChevronRight size={18} />
-                            </button>
-                        </div>
-                    </motion.div>
-                </div>
-
-                {/* Bots Grid */}
-                <div className="mb-20">
-                    <div className="flex items-center gap-4 mb-8">
-                        <div className="w-10 h-10 bg-white rounded-xl shadow-sm flex items-center justify-center border border-zinc-100">
-                            <LayoutGrid size={18} className="text-[#9d55ac]" />
-                        </div>
-                        <h2 className="text-2xl font-bold text-zinc-900">Your Assistants</h2>
-                        <div className="h-px bg-zinc-100 flex-grow" />
-                        <span className="text-zinc-400 font-bold text-sm">{bots.length} Total</span>
-                    </div>
-
-                    {bots.length === 0 ? (
-                        <motion.div 
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            className="bg-white border-2 border-dashed border-zinc-100 rounded-[3rem] p-16 text-center"
-                        >
-                            <div className="w-24 h-24 bg-zinc-50 rounded-full flex items-center justify-center mx-auto mb-8">
-                                <Bot size={48} className="text-zinc-300" />
-                            </div>
-                            <h3 className="text-2xl font-bold text-zinc-900 mb-3">No bots built yet</h3>
-                            <p className="text-zinc-500 max-w-sm mx-auto mb-10 font-medium">Create your first AI assistant and start training it on your custom data in minutes.</p>
-                            <button
-                                onClick={handleCreateBot}
-                                className="inline-flex items-center gap-2 px-8 py-4 bg-[#9d55ac] text-white rounded-2xl font-bold text-sm shadow-xl shadow-purple-900/20 hover:scale-105 transition-all"
-                            >
-                                <PlusCircle size={20} /> Build My First Bot
-                            </button>
-                        </motion.div>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                            <AnimatePresence>
-                                {bots.map((bot, index) => (
-                                    <motion.div
-                                        key={bot.id}
-                                        layout
-                                        initial={{ opacity: 0, scale: 0.9 }}
-                                        animate={{ opacity: 1, scale: 1 }}
-                                        exit={{ opacity: 0, scale: 0.9 }}
-                                        transition={{ delay: index * 0.05 }}
-                                        onClick={() => router.push(`/dashboard/builder/${bot.id}`)}
-                                        className="bg-white p-8 rounded-[2.5rem] shadow-[0_10px_30px_rgba(0,0,0,0.02)] border border-white hover:shadow-[0_20px_50px_rgba(0,0,0,0.05)] hover:-translate-y-2 transition-all cursor-pointer group relative overflow-hidden"
-                                    >
-                                        <div className="flex justify-between items-start mb-6">
-                                            <div className="w-16 h-16 bg-purple-50 rounded-2xl flex items-center justify-center text-[#9d55ac] group-hover:scale-110 transition-transform">
-                                                <MessageSquare size={32} />
-                                            </div>
-                                            <button
-                                                onClick={(e) => handleDeleteBot(bot.id, e)}
-                                                className="p-3 bg-zinc-50 text-zinc-400 rounded-xl hover:bg-red-50 hover:text-red-500 transition-colors"
-                                            >
-                                                <Trash2 size={16} />
-                                            </button>
-                                        </div>
-                                        
-                                        <h3 className="text-xl font-bold text-zinc-900 mb-1 group-hover:text-[#9d55ac] transition-colors">{bot.name}</h3>
-                                        
-                                        <div className="flex flex-col gap-1 mb-8">
-                                            <div className="flex items-center gap-2 text-zinc-400 text-[10px] font-bold uppercase tracking-wider">
-                                                <Zap size={10} className="text-amber-500" />
-                                                Plan: <span className="text-zinc-600">{bot.plan || "No Plan"}</span>
-                                            </div>
-                                            <div className="flex items-center gap-2 text-zinc-400 text-[10px] font-bold uppercase tracking-wider">
-                                                <Clock size={10} />
-                                                Expiry: <span className="text-zinc-600">{bot.expiry || "-"}</span>
-                                            </div>
-                                        </div>
-
-                                        <div className="flex items-center justify-between pt-6 border-t border-zinc-50">
-                                            <div className="flex items-center gap-2">
-                                                <span className={`w-2 h-2 rounded-full ${bot.status === 'Active' ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-                                                <span className={`text-[10px] font-bold uppercase tracking-widest ${bot.status === 'Active' ? 'text-green-600' : 'text-red-500'}`}>
-                                                    {bot.status}
-                                                </span>
-                                            </div>
-                                            <div className="flex gap-2">
-                                                {bot.days_remaining > 0 && (
-                                                    <span className="text-[10px] font-black text-zinc-300 uppercase mr-2">
-                                                        {bot.days_remaining} Days Left
-                                                    </span>
-                                                )}
-                                                <div className="p-2 bg-zinc-50 rounded-lg text-zinc-400 hover:text-[#9d55ac] transition-colors">
-                                                    <Settings size={14} />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </motion.div>
-                                ))}
-                            </AnimatePresence>
-                        </div>
+                    {canManage && (
+                        <Button variant="primary" onClick={() => setCreating(true)} className="self-start sm:self-auto">
+                            <Plus size={15} /> New assistant
+                        </Button>
                     )}
                 </div>
-            </div>
+
+                {bots === null ? (
+                    <Skeleton className="h-[108px] mt-6" />
+                ) : (
+                    <Card className="mt-6 grid sm:grid-cols-2 lg:grid-cols-4 [&>*]:border-line">
+                        <div className="p-5">
+                            <p className="text-[13px] text-stone-500">Assistants</p>
+                            <p className="text-[28px] leading-none font-semibold tracking-tight tabular-nums mt-3">{counts.all}</p>
+                            <p className="text-xs text-stone-500 mt-2">{counts.active} on an active plan</p>
+                        </div>
+                        <Link href="/dashboard/live-chat" className="group p-5 border-t sm:border-t-0 sm:border-l hover:bg-stone-50 transition-colors">
+                            <p className="text-[13px] text-stone-500">Waiting for a person</p>
+                            <p className="text-[28px] leading-none font-semibold tracking-tight tabular-nums mt-3 flex items-center gap-2.5">
+                                {waiting}
+                                {waiting > 0 && <span className="h-2 w-2 rounded-full bg-signal" aria-label="Needs attention" />}
+                            </p>
+                            <p className="text-xs text-plum mt-2 inline-flex items-center gap-1">{waiting > 0 ? "Reply in live chat" : "Open live chat"} <ArrowRight size={12} className="group-hover:translate-x-0.5 transition-transform" /></p>
+                        </Link>
+                        <Link href="/dashboard/questions" className="group p-5 border-t lg:border-t-0 lg:border-l hover:bg-stone-50 transition-colors">
+                            <p className="text-[13px] text-stone-500">Questions to answer</p>
+                            <p className="text-[28px] leading-none font-semibold tracking-tight tabular-nums mt-3">{openQuestions ?? "–"}</p>
+                            <p className="text-xs text-plum mt-2 inline-flex items-center gap-1">
+                                {openQuestions ? "Teach your assistants" : "See questions"} <ArrowRight size={12} className="group-hover:translate-x-0.5 transition-transform" />
+                            </p>
+                        </Link>
+                        <Link href="/dashboard/billing" className="group p-5 border-t lg:border-t-0 sm:border-l hover:bg-stone-50 transition-colors">
+                            <p className="text-[13px] text-stone-500">Next plan renewal</p>
+                            {nextRenewal ? (
+                                <>
+                                    <p className="text-[28px] leading-none font-semibold tracking-tight tabular-nums mt-3">
+                                        {nextRenewal.days_remaining} <span className="text-sm font-normal text-stone-500">days</span>
+                                    </p>
+                                    <p className="text-xs text-stone-500 mt-2 truncate">{nextRenewal.name} · {nextRenewal.expiry}</p>
+                                </>
+                            ) : (
+                                <>
+                                    <p className="text-[28px] leading-none font-semibold tracking-tight mt-3 text-stone-300">–</p>
+                                    <p className="text-xs text-plum mt-2 inline-flex items-center gap-1">See plans <ArrowRight size={12} className="group-hover:translate-x-0.5 transition-transform" /></p>
+                                </>
+                            )}
+                        </Link>
+                    </Card>
+                )}
+
+                <section className="mt-10" aria-labelledby="assistants-heading">
+                    <h2 id="assistants-heading" className="sr-only">Your assistants</h2>
+
+                    {(bots?.length ?? 0) > 0 && (
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
+                            <Segmented
+                                label="Filter assistants"
+                                value={filter}
+                                onChange={setFilter}
+                                options={[
+                                    { value: "all", label: `All ${counts.all}` },
+                                    { value: "active", label: `Active ${counts.active}` },
+                                    { value: "unplanned", label: `No plan ${counts.unplanned}` },
+                                ]}
+                            />
+                            {counts.all > 5 && (
+                                <div className="relative sm:ml-auto sm:w-64">
+                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" aria-hidden />
+                                    <Input aria-label="Search assistants" placeholder="Search by name or ID" className="pl-8" value={query} onChange={(e) => setQuery(e.target.value)} />
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    <Card>
+                        {bots === null ? (
+                            <div className="p-5 space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12" />)}</div>
+                        ) : loadError && bots.length === 0 ? (
+                            <EmptyState
+                                title="Couldn't load your assistants"
+                                body="Check your connection and try again."
+                                action={<Button size="sm" onClick={() => userId && fetchBots(userId)}>Try again</Button>}
+                            />
+                        ) : bots.length === 0 ? (
+                            <EmptyState
+                                title="Create your first assistant"
+                                body="Give it a name, then train it on your website or documents. It can start answering visitors in minutes."
+                                action={<Button variant="primary" onClick={() => setCreating(true)}><Plus size={15} /> New assistant</Button>}
+                            />
+                        ) : rows.length === 0 ? (
+                            <EmptyState
+                                title="No assistants match"
+                                body="Try another filter or search."
+                                action={<Button size="sm" onClick={() => { setFilter("all"); setQuery(""); }}>Show all</Button>}
+                            />
+                        ) : (
+                            <ul>
+                                {rows.map((b) => <BotRow key={b.id} bot={b} canManage={canManage} onDelete={() => setDeleting(b)} />)}
+                            </ul>
+                        )}
+                    </Card>
+                </section>
+
+                <Card className="mt-6 flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-4">
+                    <div>
+                        <p className="text-sm font-medium">Voice calls</p>
+                        <p className="text-[13px] text-stone-500 mt-0.5">Let your assistants answer phone calls and call back people who ask, in English, Tamil, Hindi and more.</p>
+                    </div>
+                    <Link href="/dashboard/voice" className="sm:ml-auto shrink-0">
+                        <Button size="sm">Set up voice</Button>
+                    </Link>
+                </Card>
+            </main>
+
+            <NewAssistantDialog open={creating} onClose={() => setCreating(false)} userId={userId} />
+
+            <Dialog
+                open={!!deleting}
+                onClose={() => setDeleting(null)}
+                title={`Delete ${deleting?.name ?? "assistant"}?`}
+                description="Its settings, flow, knowledge and chat history are removed. This can't be undone."
+                footer={<>
+                    <Button variant="ghost" onClick={() => setDeleting(null)}>Cancel</Button>
+                    <Button variant="danger" onClick={() => deleting && removeBot(deleting)}>Delete assistant</Button>
+                </>}
+            >
+                {deleting?.status === "Active" ? (
+                    <p className="text-[13px] text-amber-700">It has {deleting.days_remaining} days left on its {planLabel(deleting.plan)}. That time is lost when it&apos;s deleted.</p>
+                ) : (
+                    <p className="text-[13px] text-stone-600">The chat widget stops working on any site where it&apos;s installed.</p>
+                )}
+            </Dialog>
         </div>
+    );
+}
+
+function BotRow({ bot, canManage, onDelete }: { bot: Bot; canManage: boolean; onDelete: () => void }) {
+    const active = bot.status === "Active";
+    const endingSoon = active && bot.days_remaining <= 7;
+
+    return (
+        <li className="group relative grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1.3fr)_9.5rem_minmax(0,1.2fr)_11.5rem] md:items-center gap-x-6 gap-y-1.5 px-5 py-3.5 border-t border-line first:border-t-0 hover:bg-stone-50 transition-colors">
+            <div className="min-w-0">
+                <Link
+                    href={`/dashboard/builder/${bot.id}`}
+                    className="text-sm font-medium truncate block after:absolute after:inset-0 focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-plum"
+                >
+                    {bot.name}
+                </Link>
+                <p className="text-xs text-stone-400 mt-0.5 font-mono">{bot.id.slice(0, 8)}</p>
+            </div>
+
+            <div className="row-start-2 md:row-start-auto">
+                {active ? <Status tone="good">Active</Status> : <Status tone="neutral">No active plan</Status>}
+            </div>
+
+            <div className={cn("col-start-1 md:col-start-auto text-[13px] min-w-0", !active && "hidden md:block")}>
+                {active ? (
+                    <>
+                        <p className="text-stone-700 truncate">{planLabel(bot.plan)}</p>
+                        <p className={cn("text-xs mt-0.5", endingSoon ? "text-amber-700" : "text-stone-500")}>
+                            Until {bot.expiry} · {bot.days_remaining} {bot.days_remaining === 1 ? "day" : "days"} left
+                        </p>
+                    </>
+                ) : (
+                    <p className="text-stone-500">Paused on your site until it has a plan</p>
+                )}
+            </div>
+
+            {/* Actions sit above the row's stretched link. */}
+            <div className="relative z-10 col-start-2 row-start-1 row-span-3 md:col-start-4 md:row-start-auto md:row-span-1 self-start md:self-center flex items-center justify-end gap-1">
+                {!active && canManage && (
+                    <Link href={`/dashboard/billing?bot=${bot.id}`} className="mr-1">
+                        <Button size="sm">Choose plan</Button>
+                    </Link>
+                )}
+                <a
+                    href={`/demo/${bot.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Preview ${bot.name} in a new tab`}
+                    title="Preview"
+                    className="p-2 rounded-md text-stone-400 hover:text-ink hover:bg-stone-100 focus-visible:outline-2 focus-visible:outline-plum"
+                >
+                    <ExternalLink size={15} />
+                </a>
+                {canManage && <button
+                    onClick={onDelete}
+                    aria-label={`Delete ${bot.name}`}
+                    title="Delete"
+                    className="p-2 rounded-md text-stone-400 hover:text-signal hover:bg-red-50 focus-visible:outline-2 focus-visible:outline-plum"
+                >
+                    <Trash2 size={15} />
+                </button>}
+            </div>
+        </li>
+    );
+}
+
+type Template = { id: string; name: string; summary: string; fields: string[]; goal: string };
+
+function NewAssistantDialog({ open, onClose, userId }: { open: boolean; onClose: () => void; userId: string | null }) {
+    const router = useRouter();
+    const [name, setName] = useState("");
+    const [template, setTemplate] = useState("");
+    const [templates, setTemplates] = useState<Template[] | null>(null);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+
+    useEffect(() => {
+        if (!open) return;
+        setName(""); setError(""); setTemplate("");
+        if (!templates) apiJson<Template[]>("/api/bots/templates").then(setTemplates).catch(() => setTemplates([]));
+    }, [open, templates]);
+
+    const create = async () => {
+        const clean = name.trim();
+        if (!clean) return setError("Give your assistant a name.");
+        if (!userId) return;
+        setBusy(true);
+        setError("");
+        try {
+            const data = await apiJson<{ id: string }>("/api/bots/create", { method: "POST", json: { name: clean, template: template || undefined } });
+            router.push(`/dashboard/builder/${data.id}`);
+        } catch (e) {
+            setError((e as Error).message || "Couldn't create the assistant.");
+            setBusy(false);
+        }
+    };
+
+    const chosen = templates?.find((t) => t.id === template);
+    const options = [{ id: "", name: "Start blank", summary: "Write its instructions and knowledge yourself." }, ...(templates ?? [])];
+
+    return (
+        <Dialog
+            open={open}
+            onClose={onClose}
+            title="New assistant"
+            description="Start from your industry to get instructions, a knowledge sheet to fill in, and what to ask callers."
+            footer={<>
+                <Button variant="ghost" onClick={onClose}>Cancel</Button>
+                <Button variant="primary" onClick={create} disabled={busy}>{busy ? "Creating…" : "Create and open builder"}</Button>
+            </>}
+        >
+            <label htmlFor="bot-name" className="text-sm font-medium">Name</label>
+            <Input
+                id="bot-name"
+                autoFocus
+                maxLength={60}
+                placeholder="e.g. Admissions Desk"
+                className="mt-1.5"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && create()}
+                aria-invalid={!!error}
+                aria-describedby={error ? "bot-name-error" : undefined}
+            />
+            {error && <p id="bot-name-error" className="text-[13px] text-signal mt-2">{error}</p>}
+
+            <p className="text-sm font-medium mt-4">Start from</p>
+            {templates === null ? <Skeleton className="h-40 mt-1.5" /> : (
+                <div role="radiogroup" aria-label="Start from" className="mt-1.5 max-h-64 overflow-y-auto rounded-md border border-line divide-y divide-line">
+                    {options.map((t) => (
+                        <button key={t.id || "blank"} type="button" role="radio" aria-checked={template === t.id} onClick={() => setTemplate(t.id)}
+                                className={cn("w-full text-left px-3 py-2.5 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-plum",
+                                              template === t.id ? "bg-plum-tint" : "hover:bg-stone-50")}>
+                            <span className={cn("block text-[13px]", template === t.id ? "font-medium text-plum" : "text-ink")}>{t.name}</span>
+                            <span className="block text-xs text-stone-500">{t.summary}</span>
+                        </button>
+                    ))}
+                </div>
+            )}
+            {chosen && (
+                <p className="text-xs text-stone-500 mt-2">
+                    Collects {chosen.fields.slice(0, 4).join(", ")}{chosen.fields.length > 4 ? " and more" : ""}. You can change everything later.
+                </p>
+            )}
+        </Dialog>
     );
 }

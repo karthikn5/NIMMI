@@ -15,7 +15,8 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 if LOCAL_DEV or not DATABASE_URL:
     # SQLite for local development - zero config needed
-    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nimmi_local.db")
+    # SQLITE_PATH lets tests and throwaway servers use their own database file
+    DB_PATH = os.getenv("SQLITE_PATH") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "nimmi_local.db")
     DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
     print(f"[DB] Using SQLite at {DB_PATH}")
 else:
@@ -26,17 +27,19 @@ else:
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
     print(f"[DB] Using PostgreSQL URL: {DATABASE_URL}")
 
-from sqlalchemy.pool import NullPool, StaticPool
+from sqlalchemy.pool import NullPool
 
 is_sqlite = DATABASE_URL.startswith("sqlite")
 
 if is_sqlite:
-    # SQLite needs StaticPool and check_same_thread=False
+    # One connection per session (NullPool), like Postgres. A single shared connection
+    # (StaticPool) lets one session's rollback silently undo another session's writes.
+    # `timeout` makes a writer wait for SQLite's lock instead of failing.
     engine = create_async_engine(
         DATABASE_URL,
         echo=False,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+        connect_args={"check_same_thread": False, "timeout": 30},
+        poolclass=NullPool,
     )
 else:
     engine = create_async_engine(
@@ -74,6 +77,28 @@ async def init_db():
         # This is more robust than create_all in some environments
         try:
             await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(_add_missing_columns, Base.metadata)
             print("Database tables created/verified.")
         except Exception as e:
             print(f"Error creating tables: {e}")
+
+
+def _add_missing_columns(sync_conn, metadata) -> None:
+    """
+    create_all() doesn't add new columns to tables that already exist. Add any
+    missing *nullable* columns (safe on SQLite and Postgres; no data is touched).
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+    for table in metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        present = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in present or not column.nullable:
+                continue
+            ddl_type = column.type.compile(dialect=sync_conn.dialect)
+            sync_conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl_type}'))
+            print(f"[DB] Added column {table.name}.{column.name}")

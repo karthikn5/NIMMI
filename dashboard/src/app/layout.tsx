@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://nimmiai.in"),
-  title: "Nimmi AI — Custom AI Chatbot Builder for Indian Businesses | Train on Your Data",
-  description: "Build and deploy a custom AI chatbot in minutes with Nimmi AI. Train it on your data, integrate with WhatsApp & website. Trusted by Indian SMEs. Start free today.",
+  title: "Nimmi AI | AI assistant for website chat, WhatsApp and phone calls",
+  description: "AI assistants for website chat, WhatsApp and phone calls in 11 Indian languages. Trained on your business, they answer customers, capture leads and hand over to your team. Free to build and test.",
   alternates: {
     canonical: "https://nimmiai.in",
   },
@@ -24,8 +24,8 @@ export const metadata: Metadata = {
     google: "woQlFXLN9lakQBgXCghYGOoN5RNv7bQBFUr-bJZmlOk",
   },
   openGraph: {
-    title: "Nimmi AI — Custom AI Chatbot Builder for Indian Businesses | Train on Your Data",
-  description: "Build and deploy a custom AI chatbot in minutes with Nimmi AI. Train it on your data, integrate with WhatsApp & website. Trusted by Indian SMEs. Start free today.",
+    title: "Nimmi AI | AI assistant for website chat, WhatsApp and phone calls",
+  description: "AI assistants for website chat, WhatsApp and phone calls in 11 Indian languages. Trained on your business, they answer customers, capture leads and hand over to your team. Free to build and test.",
     url: "https://nimmiai.in",
     siteName: "Nimmi AI",
     images: [
@@ -33,7 +33,7 @@ export const metadata: Metadata = {
         url: "/og-image.png",
         width: 1200,
         height: 630,
-        alt: "Nimmi AI — Build Custom AI Chatbots",
+        alt: "Nimmi AI",
       },
     ],
     locale: "en_IN",
@@ -41,8 +41,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Nimmi AI — Build Custom AI Chatbots for Your Business",
-    description: "Build and deploy a custom AI chatbot in minutes with Nimmi AI. Train it on your data, integrate with WhatsApp & website. Trusted by Indian SMEs. Start free today.",
+    title: "Nimmi AI | AI assistant for website chat, WhatsApp and phone calls",
+    description: "AI assistants for website chat, WhatsApp and phone calls in 11 Indian languages. Trained on your business, they answer customers, capture leads and hand over to your team. Free to build and test.",
     images: ["/og-image.png"],
   },
   icons: {

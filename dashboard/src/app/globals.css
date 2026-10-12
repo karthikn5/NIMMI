@@ -18,6 +18,18 @@
   --color-ring: var(--ring);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* Brand tokens sampled from the Nimmi logo */
+  --color-plum: #550a64;        /* wordmark */
+  --color-plum-hover: #44084f;
+  --color-plum-data: #7a2f88;   /* lighter step for chart marks */
+  --color-plum-tint: #f6f0f7;
+  --color-aubergine: #2e0037;   /* speech bubble */
+  --color-signal: #ad0000;      /* headset red: live, recording, destructive */
+  --color-paper: #faf9f7;
+  --color-line: #e8e5e0;
+  --color-line-strong: #d6d1ca;
+  --color-ink: #1c1719;
 }
 
 body {
@@ -51,3 +63,47 @@ body {
   box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
   border-color: #cbd5e1;
 }
+
+/* ─── Marketing site motion ──────────────────────────────────────
+   Content rises into place as it scrolls into view. Only applies once the
+   observer has started (html.reveal-ready), so the page is complete without JS. */
+html.reveal-ready [data-reveal]:not(.is-visible) {
+  opacity: 0;
+  transform: translateY(18px);
+}
+[data-reveal] {
+  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1), transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+
+@keyframes site-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.site-rise { animation: site-rise 0.8s cubic-bezier(0.22, 1, 0.36, 1) both; animation-delay: var(--rise-delay, 0ms); }
+
+/* Voice waveform: bars breathing at different speeds. */
+@keyframes site-wave { 0%, 100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
+.site-wave > span { transform-origin: center; animation: site-wave 1.2s ease-in-out infinite; }
+
+/* Language cloud: one greeting lit at a time. */
+@keyframes site-glow { 0%, 6% { color: var(--color-plum); } 9%, 100% { color: #a8a29e; } }
+.site-glow > span { color: #a8a29e; animation: site-glow 13.2s linear infinite; }
+
+/* Channel diagram: a highlight travelling along each line. */
+@keyframes site-dash { from { stroke-dashoffset: 120; } to { stroke-dashoffset: 0; } }
+.site-dash { stroke-dasharray: 22 98; animation: site-dash 2.6s linear infinite; }
+
+/* Handover: a dot moving from assistant to team. */
+@keyframes site-travel { 0% { left: 0%; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { left: 100%; opacity: 0; } }
+.site-travel { animation: site-travel 2.8s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  html.reveal-ready [data-reveal]:not(.is-visible) { opacity: 1; transform: none; }
+  [data-reveal], .site-rise, .site-wave > span, .site-glow > span, .site-dash, .site-travel { animation: none !important; transition: none !important; }
+}
+
+/* Marketing headings (Inter Tight); body text uses Inter via the page wrapper. */
+.font-display { font-family: var(--font-display), var(--font-site), system-ui, sans-serif; }
+
+/* Product tour: the progress line under the active feature; when it fills, the next slide shows. */
+@keyframes tour-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.tour-progress { transform-origin: left; animation-name: tour-progress; animation-timing-function: linear; animation-fill-mode: forwards; }
+@media (prefers-reduced-motion: reduce) { .tour-progress { animation: none; } }

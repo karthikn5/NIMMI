@@ -59,7 +59,7 @@ const categories = [
 const colorClasses: Record<string, { bg: string; text: string; border: string; iconBg: string }> = {
     green: { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-100", iconBg: "bg-emerald-100" },
     blue: { bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-100", iconBg: "bg-blue-100" },
-    purple: { bg: "bg-purple-50", text: "text-purple-700", border: "border-purple-100", iconBg: "bg-purple-100" },
+    purple: { bg: "bg-plum-tint", text: "text-plum-hover", border: "border-plum-tint", iconBg: "bg-plum-tint" },
     cyan: { bg: "bg-cyan-50", text: "text-cyan-700", border: "border-cyan-100", iconBg: "bg-cyan-100" },
     amber: { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-100", iconBg: "bg-amber-100" },
     pink: { bg: "bg-pink-50", text: "text-pink-700", border: "border-pink-100", iconBg: "bg-pink-100" },

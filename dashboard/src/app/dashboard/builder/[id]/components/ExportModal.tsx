@@ -1,5 +1,7 @@
 "use client";
 
+import { apiFetch } from "@/lib/api";
+
 import { useState, useEffect } from "react";
 import { X, Copy, Check, Code, Terminal, Layers, Lock, ShieldCheck, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -29,7 +31,7 @@ export default function ExportModal({ botId, onClose }: ExportModalProps) {
         const checkStatus = async () => {
             try {
                 const cleanUserId = userId.trim();
-                const configRes = await fetch(`${apiBase}/api/bots/${botId}/config?user_id=${cleanUserId}`);
+                const configRes = await apiFetch(`/api/bots/${botId}/config`);
                 
                 if (configRes.ok) {
                     const configData = await configRes.json();
@@ -51,7 +53,7 @@ export default function ExportModal({ botId, onClose }: ExportModalProps) {
 
         setExporting(true);
         try {
-            const res = await fetch(`${apiBase}/api/bots/export?bot_id=${botId}&user_id=${userId}`, {
+            const res = await apiFetch(`/api/bots/export?bot_id=${botId}`, {
                 method: 'POST'
             });
             const data = await res.json();

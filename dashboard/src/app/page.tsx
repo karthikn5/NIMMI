@@ -1,125 +1,83 @@
-import Navbar from "@/components/landing/Navbar";
-import Hero from "@/components/landing/Hero";
-import Features from "@/components/landing/Features";
-import HowItWorks from "@/components/landing/HowItWorks";
-import Services from "@/components/landing/Services";
-import Stats from "@/components/landing/Stats";
-import Pricing from "@/components/landing/Pricing";
-import FAQ from "@/components/landing/FAQ";
-import CTA from "@/components/landing/CTA";
-import Footer from "@/components/landing/Footer";
+import type { Metadata } from "next";
+import { Inter, Inter_Tight } from "next/font/google";
+import Capabilities from "@/components/site/Capabilities";
+import RevealOnScroll from "@/components/site/RevealOnScroll";
+import SiteNav from "@/components/site/SiteNav";
+import { Channels, Hero, Insights, Outbound, Team, Tour, Voice } from "@/components/site/ProductSections";
+import { FAQ, FAQS, FinalCTA, HowItWorks, Industries, Integrations, Pricing, SiteFooter } from "@/components/site/MoreSections";
 
-export const metadata = {
-  title: "Nimmi AI - Build Your Own Custom AI Chatbot | No Code Required",
-  description: "Create, train, and deploy custom AI chatbots for your business in India. Train on your PDFs, website, or text documents. Embedded in minutes with Nimmi AI.",
-  keywords: ["AI Chatbot India", "Custom AI Chatbot", "Chatbot Builder India", "No-code AI", "Business Chatbot"],
+const inter = Inter({ subsets: ["latin"], variable: "--font-site", display: "swap" });
+const interTight = Inter_Tight({ subsets: ["latin"], variable: "--font-display", weight: ["400", "500", "600"], display: "swap" });
+
+const TITLE = "Nimmi AI | AI assistant for website chat, WhatsApp and phone calls";
+const DESCRIPTION = "An AI assistant trained on your business. It answers customers on your website, WhatsApp and phone in 11 Indian languages, captures leads, books appointments and hands over to your team. Free to build and test.";
+
+export const metadata: Metadata = {
+  title: TITLE,
+  description: DESCRIPTION,
+  keywords: ["AI chatbot India", "WhatsApp AI chatbot", "AI voice agent India", "AI phone receptionist", "custom AI chatbot", "Tamil Hindi voice bot", "lead capture chatbot"],
+  alternates: { canonical: "https://nimmiai.in" },
   openGraph: {
-    title: "Nimmi AI - Build Your Own Custom AI Chatbot",
-    description: "The most powerful no-code AI chatbot builder for Indian businesses.",
+    title: TITLE,
+    description: DESCRIPTION,
     url: "https://nimmiai.in",
     siteName: "Nimmi AI",
-    images: [
-      {
-        url: "https://nimmiai.in/og-image.png",
-        width: 1200,
-        height: 630,
-      },
-    ],
+    images: [{ url: "https://nimmiai.in/og-image.png", width: 1200, height: 630 }],
     locale: "en_IN",
     type: "website",
   },
 };
 
+// Structured data mirrors what's on the page: the product, the company, and the FAQ shown below.
+const softwareLd = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "Nimmi AI",
+  operatingSystem: "Web",
+  applicationCategory: "BusinessApplication",
+  description: DESCRIPTION,
+  offers: { "@type": "AggregateOffer", lowPrice: "999", highPrice: "6999", priceCurrency: "INR", offerCount: 3 },
+};
+const orgLd = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  name: "Nimmi AI",
+  url: "https://nimmiai.in",
+  logo: "https://nimmiai.in/favicon.png",
+  email: "support.nimmi@gmail.com",
+  sameAs: ["https://www.instagram.com/nimmiai.in"],
+};
+const faqLd = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: FAQS.map((f) => ({ "@type": "Question", name: f.q, acceptedAnswer: { "@type": "Answer", text: f.a } })),
+};
+
 export default function Home() {
-  const jsonLd = {
-    "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "Nimmi AI",
-    "operatingSystem": "Web",
-    "applicationCategory": "BusinessApplication",
-    "offers": {
-      "@type": "Offer",
-      "price": "0",
-      "priceCurrency": "USD"
-    },
-    "description": "Build custom AI chatbots for your business in India. Train on your data and embed anywhere.",
-    "aggregateRating": {
-      "@type": "AggregateRating",
-      "ratingValue": "4.9",
-      "reviewCount": "50"
-    }
-  };
-
-  const orgJsonLd = {
-    "@context": "https://schema.org",
-    "@type": "Organization",
-    "name": "Nimmi AI",
-    "url": "https://nimmiai.in",
-    "logo": "https://nimmiai.in/favicon.png",
-    "sameAs": [
-      "https://twitter.com/nimmiai",
-      "https://linkedin.com/company/nimmiai"
-    ]
-  };
-
-  const faqJsonLd = {
-    "@context": "https://schema.org",
-    "@type": "FAQPage",
-    "mainEntity": [
-      {
-        "@type": "Question",
-        "name": "How do I build a custom AI chatbot with Nimmi AI?",
-        "acceptedAnswer": {
-          "@type": "Answer",
-          "text": "You can build a custom AI chatbot by signing up for a Nimmi AI account, uploading your data (PDFs, URLs, or text), and using our no-code builder to design and deploy your assistant in minutes."
-        }
-      },
-      {
-        "@type": "Question",
-        "name": "Can I train the AI on my own business data?",
-        "acceptedAnswer": {
-          "@type": "Answer",
-          "text": "Yes, Nimmi AI is specifically designed to be trained on your own data. You can sync your website, upload documents, or provide raw text to create a chatbot that knows your business inside out."
-        }
-      },
-      {
-        "@type": "Question",
-        "name": "Is there a free plan available?",
-        "acceptedAnswer": {
-          "@type": "Answer",
-          "text": "Yes, Nimmi AI offers a free forever plan that allows you to build and test your first AI chatbot with basic features and limits."
-        }
-      }
-    ]
-  };
-
   return (
-    <div className="min-h-screen bg-[#faf9f7] text-zinc-900 overflow-x-hidden">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }}
-      />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
-      />
-
-      <Navbar />
+    <div className={`${inter.variable} ${interTight.variable} ${inter.className} min-h-screen bg-paper text-ink overflow-x-clip`}>
+      <RevealOnScroll />
+      {[softwareLd, orgLd, faqLd].map((ld, i) => (
+        <script key={i} type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(ld) }} />
+      ))}
+      <SiteNav />
       <main>
         <Hero />
-        <Features />
-        <Stats />
+        <Channels />
+        <Tour />
+        <Capabilities />
+        <Voice />
+        <Outbound />
+        <Insights />
+        <Team />
         <HowItWorks />
-        <Services />
+        <Integrations />
+        <Industries />
         <Pricing />
         <FAQ />
-        <CTA />
+        <FinalCTA />
       </main>
-      <Footer />
+      <SiteFooter />
     </div>
   );
 }

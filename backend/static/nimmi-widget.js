@@ -37,6 +37,9 @@
     const launcherShape = visual.launcher_shape || visual.launcherShape || 'circle';
     const showTail = (visual.show_tail !== undefined ? visual.show_tail : visual.showTail) !== false;
     const logoSize = visual.logo_size || visual.logoSize || 32;
+    const rightPadding = visual.right_padding !== undefined ? visual.right_padding : (visual.rightPadding !== undefined ? visual.rightPadding : 20);
+    const bottomPadding = visual.bottom_padding !== undefined ? visual.bottom_padding : (visual.bottomPadding !== undefined ? visual.bottomPadding : 20);
+    const borderRadiusVal = visual.border_radius !== undefined ? visual.border_radius : (visual.borderRadius !== undefined ? visual.borderRadius : 24);
     
     // Process logo URL logic
     let logoUrl = visual.logo_url || visual.botLogo;
@@ -54,8 +57,8 @@
     const shadow = container.attachShadow({ mode: 'closed' });
 
     // Launcher positioning
-    const positionCSS = position === 'left' ? 'left: 24px;' : 'right: 24px;';
-    const windowPositionCSS = position === 'left' ? 'left: 24px;' : 'right: 24px;';
+    const positionCSS = position === 'left' ? `left: ${rightPadding}px;` : `right: ${rightPadding}px;`;
+    const windowPositionCSS = position === 'left' ? `left: ${rightPadding}px;` : `right: ${rightPadding}px;`;
     
     // Launcher shape CSS
     let borderRadius = '50%';
@@ -94,7 +97,7 @@
     style.textContent = `
         #nimmi-launcher {
             position: fixed;
-            bottom: 24px;
+            bottom: ${bottomPadding}px;
             ${positionCSS}
             width: ${width};
             height: ${height};
@@ -114,8 +117,10 @@
             transform: scale(1.1);
         }
         #nimmi-launcher img {
-            width: ${logoSize}px;
-            height: ${logoSize}px;
+            max-width: 80%;
+            max-height: 80%;
+            width: ${Math.min(logoSize, 56)}px;
+            height: ${Math.min(logoSize, 56)}px;
             object-fit: contain;
             pointer-events: none;
         }
@@ -128,12 +133,12 @@
         ${tailCSS}
         #nimmi-chat-window {
             position: fixed;
-            bottom: 100px;
+            bottom: ${bottomPadding + 76}px;
             ${windowPositionCSS}
             width: 400px;
             height: 600px;
             background: white;
-            border-radius: 24px;
+            border-radius: ${borderRadiusVal}px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.15);
             overflow: hidden;
             display: none;
@@ -183,11 +188,13 @@
     
     // We use an iframe to host the chat UI to prevent style pollution
     const iframe = document.createElement('iframe');
-    const dashboardBase = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
-        ? "https://nimmiai.in"
-        : "http://localhost:3000";
+    // The chat UI lives on the Nimmi dashboard. Don't infer it from the host page: on a
+    // customer's site that would never be nimmiai.in.
+    const dashboardBase = script.getAttribute('data-dashboard-url')
+        || (apiBase.includes('nimmiai.in') ? 'https://nimmiai.in' : 'http://localhost:3000');
         
-    iframe.src = `${dashboardBase}/widget/${botId}?t=` + Date.now();
+    const isDemo = script.getAttribute('data-is-demo') === 'true';
+    iframe.src = `${dashboardBase}/widget/${botId}?t=` + Date.now() + (isDemo ? '&is_demo=true' : '');
     chatWindow.appendChild(iframe);
     shadow.appendChild(chatWindow);
 

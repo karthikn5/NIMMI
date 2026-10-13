@@ -108,7 +108,7 @@ def test_dashboard_test_call(client, make_user, monkeypatch, run):
 
     placed = {}
 
-    async def fake_place(to, frm, job_id):
+    async def fake_place(to, frm, job_id, **_):
         placed.update(to=to, frm=frm, job=job_id)
         return "CA-test"
 

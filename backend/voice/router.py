@@ -22,7 +22,7 @@ from backend.models import (Bot, CallbackJob, CallbackSettings, CallLog, Campaig
 from notify.email import send_email
 from phone import display, extract_contact, mask, to_e164
 import assist
-from voice import ambience, catalog, exotel, llm, metering, recording, sarvam, scheduler, twilio
+from voice import accounts, ambience, catalog, exotel, llm, metering, recording, sarvam, scheduler, twilio
 from voice.pipeline import CallSession, CallSetup
 from voice.transports import BrowserTransport, ExotelTransport, TwilioTransport
 
@@ -177,7 +177,7 @@ async def overview(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depen
             "callbacks_on": bool(cb.enabled),
         },
         "engine_ready": sarvam.configured(),
-        "phone_ready": exotel.configured(),
+        "phone_ready": exotel.configured() or twilio.configured() or bool(active_number and active_number.account_id),
     }
 
 
@@ -348,24 +348,37 @@ async def browser_call(ws: WebSocket, token: str = ""):
 
 
 # ─── Exotel phone calls ───────────────────────────────────────────
-def _check_secret(secret: str) -> None:
-    expected = exotel.ws_secret()
-    if not expected or secret != expected:
+async def _exotel_scope(secret: str):
+    """Nimmi's own Exotel (accounts.NIMMI) or the customer's connected account the token belongs to."""
+    async with async_session() as db:
+        scope = await accounts.by_hook(db, "exotel", secret)
+    if scope is None:
         raise HTTPException(status_code=403, detail="Forbidden")
+    return scope
+
+
+def _owner_of(scope) -> Optional[str]:
+    return None if scope == accounts.NIMMI else scope.user_id
 
 
 TEST_CALL = "Test call requested from the dashboard"
 
 
 async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[str], to_raw: Optional[str],
-                         job_id: Optional[str] = None, voicemail: bool = False) -> None:
-    """Work out who a phone call belongs to (callback job or the called number), then run it."""
+                         job_id: Optional[str] = None, voicemail: bool = False, scope=accounts.NIMMI) -> None:
+    """
+    Work out who a phone call belongs to (callback job or the called number), then run it.
+    `scope` is the account the call came in on: a customer's account only reaches its own numbers and calls.
+    """
+    owner = _owner_of(scope)
     async with async_session() as db:
         job = None
         if job_id:
             job = (await db.execute(select(CallbackJob).where(CallbackJob.id == job_id))).scalars().first()
         if not job and call_sid:
             job = (await db.execute(select(CallbackJob).where(CallbackJob.provider_call_id == call_sid))).scalars().first()
+        if job and owner and job.user_id != owner:
+            job = None
         variables, purpose = {}, None
         if job:
             owner_id, bot_id, caller, direction, consent = job.user_id, job.bot_id, job.e164, "outbound", job.consent_source
@@ -377,9 +390,10 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
                 purpose = campaign.purpose if campaign else None
         else:
             called = to_e164(to_raw)
-            number = (await db.execute(
-                select(PhoneNumber).where(PhoneNumber.e164 == called, PhoneNumber.status == "active")
-            )).scalars().first() if called else None
+            number = (await db.execute(select(PhoneNumber).where(
+                PhoneNumber.e164 == called, PhoneNumber.status == "active",
+                PhoneNumber.account_id.is_(None) if owner is None else PhoneNumber.account_id == scope.id,
+            ))).scalars().first() if called else None
             if not number or not number.bot_id:
                 logger.warning(f"Call to unrouted number {to_raw}")
                 await transport.hangup("done")
@@ -404,13 +418,14 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
     await CallSession(setup, transport).run()
 
 
-async def _log_unanswered(db: AsyncSession, sid: Optional[str], job_id: Optional[str], status: str, provider: str) -> None:
+async def _log_unanswered(db: AsyncSession, sid: Optional[str], job_id: Optional[str], status: str, provider: str,
+                          owner: Optional[str] = None) -> None:
     """Outbound call that never connected: log it and schedule a retry (or give up)."""
     status = (status or "").lower()
     job = (await db.execute(select(CallbackJob).where(
         or_(CallbackJob.provider_call_id == sid, CallbackJob.id == job_id)
     ))).scalars().first() if (sid or job_id) else None
-    if not job:
+    if not job or (owner and job.user_id != owner):
         return
     if status == "completed":
         # Twilio reports "completed" the moment the caller hangs up, often before the session has
@@ -434,21 +449,22 @@ async def _log_unanswered(db: AsyncSession, sid: Optional[str], job_id: Optional
 
 @router.websocket("/ws/exotel/{secret}")
 async def exotel_call(ws: WebSocket, secret: str):
-    expected = exotel.ws_secret()
-    if not expected or secret != expected:
+    async with async_session() as db:
+        scope = await accounts.by_hook(db, "exotel", secret)
+    if scope is None:
         await ws.close(code=4403)
         return
     await ws.accept()
     transport = ExotelTransport(ws)
     if not await transport.wait_for_start():
         return
-    await _route_and_run(transport, transport.call_sid, transport.from_number, transport.to_number)
+    await _route_and_run(transport, transport.call_sid, transport.from_number, transport.to_number, scope=scope)
 
 
 @router.get("/exotel/after-bot")
 async def exotel_after_bot(secret: str = "", CallSid: str = ""):
     """Exotel Passthru: 200 = transfer (next applet dials), anything else = hang up."""
-    _check_secret(secret)
+    await _exotel_scope(secret)
     if CallSid in scheduler.pending_transfers:
         return PlainTextResponse("transfer")
     return Response(status_code=302)
@@ -457,7 +473,7 @@ async def exotel_after_bot(secret: str = "", CallSid: str = ""):
 @router.get("/exotel/transfer-target")
 async def exotel_transfer_target(secret: str = "", CallSid: str = ""):
     """Exotel Connect applet 'dial number from URL'."""
-    _check_secret(secret)
+    await _exotel_scope(secret)
     number = scheduler.pending_transfers.pop(CallSid, None)
     e164 = to_e164(number) if number else None
     if not e164:
@@ -468,19 +484,32 @@ async def exotel_transfer_target(secret: str = "", CallSid: str = ""):
 @router.api_route("/exotel/status", methods=["GET", "POST"])
 async def exotel_status(request: Request, secret: str = "", db: AsyncSession = Depends(get_db)):
     """Outbound call status: on busy / no-answer / failed, log it and schedule a retry."""
-    _check_secret(secret)
+    scope = await _exotel_scope(secret)
     params = dict(request.query_params)
     if request.method == "POST":
         params.update({k: str(v) for k, v in (await request.form()).items()})
-    await _log_unanswered(db, params.get("CallSid"), params.get("CustomField"), params.get("Status") or "", "Exotel")
+    await _log_unanswered(db, params.get("CallSid"), params.get("CustomField"), params.get("Status") or "", "Exotel",
+                          owner=_owner_of(scope))
     return {"status": "ok"}
 
 
 # ─── Twilio phone calls (testing, and customers outside India) ───
-def _check_twilio(secret: str) -> None:
-    expected = twilio.ws_secret()
-    if not expected or secret != expected:
+async def _twilio_scope(secret: str, request: Request, form) -> object:
+    """
+    Which account a Twilio webhook belongs to. For a customer's own account, the request must
+    also carry a valid X-Twilio-Signature made with that account's auth token.
+    """
+    async with async_session() as db:
+        scope = await accounts.by_hook(db, "twilio", secret)
+    if scope is None:
         raise HTTPException(status_code=403, detail="Forbidden")
+    if scope != accounts.NIMMI:
+        url = twilio.public_base() + request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        _, token = accounts.twilio_creds(scope)
+        params = {k: str(v) for k, v in form.items()}
+        if not twilio.valid_signature(token, url, params, request.headers.get("X-Twilio-Signature", "")):
+            raise HTTPException(status_code=403, detail="Invalid signature")
+    return scope
 
 
 def _xml(body: str) -> Response:
@@ -490,22 +519,25 @@ def _xml(body: str) -> Response:
 @router.post("/twilio/incoming/{secret}")
 async def twilio_incoming(secret: str, request: Request, db: AsyncSession = Depends(get_db)):
     """The Twilio number's 'A call comes in' webhook."""
-    _check_twilio(secret)
     form = await request.form()
+    scope = await _twilio_scope(secret, request, form)
+    owner = _owner_of(scope)
     called = to_e164(str(form.get("To") or ""))
-    number = (await db.execute(
-        select(PhoneNumber).where(PhoneNumber.e164 == called, PhoneNumber.status == "active")
-    )).scalars().first() if called else None
+    number = (await db.execute(select(PhoneNumber).where(
+        PhoneNumber.e164 == called, PhoneNumber.status == "active",
+        PhoneNumber.account_id.is_(None) if owner is None else PhoneNumber.account_id == scope.id,
+    ))).scalars().first() if called else None
     if not number or not number.bot_id:
         return _xml(twilio.say_and_hangup("Sorry, this number isn't set up yet. Goodbye."))
     return _xml(twilio.connect_twiml({"from": str(form.get("From") or ""), "to": str(form.get("To") or ""),
-                                      "direction": "inbound"}))
+                                      "direction": "inbound"}, hook=secret))
 
 
 @router.websocket("/ws/twilio/{secret}")
 async def twilio_call(ws: WebSocket, secret: str):
-    expected = twilio.ws_secret()
-    if not expected or secret != expected:
+    async with async_session() as db:
+        scope = await accounts.by_hook(db, "twilio", secret)
+    if scope is None:
         await ws.close(code=4403)
         return
     await ws.accept()
@@ -514,21 +546,23 @@ async def twilio_call(ws: WebSocket, secret: str):
         return
     p = transport.params
     await _route_and_run(transport, transport.call_sid, p.get("from"), p.get("to"), job_id=p.get("job"),
-                         voicemail=p.get("voicemail") == "1")
+                         voicemail=p.get("voicemail") == "1", scope=scope)
 
 
 @router.post("/twilio/outbound/{secret}")
 async def twilio_outbound(secret: str, request: Request, job: str = "", db: AsyncSession = Depends(get_db)):
     """Outbound call answered (voicemail detection on): a person gets the assistant; a machine gets the agent's choice."""
-    _check_twilio(secret)
     form = await request.form()
+    scope = await _twilio_scope(secret, request, form)
     answered_by = str(form.get("AnsweredBy") or "")
     if answered_by not in scheduler.MACHINE:
-        return _xml(twilio.connect_twiml({"job": job, "direction": "outbound"}))
+        return _xml(twilio.connect_twiml({"job": job, "direction": "outbound"}, hook=secret))
     cb = (await db.execute(select(CallbackJob).where(CallbackJob.id == job))).scalars().first() if job else None
+    if cb and _owner_of(scope) and cb.user_id != _owner_of(scope):
+        cb = None
     agent = (await db.execute(select(VoiceAgent).where(VoiceAgent.bot_id == cb.bot_id))).scalars().first() if cb else None
     if agent and agent.voicemail_action == "leave_message":
-        return _xml(twilio.connect_twiml({"job": job, "direction": "outbound", "voicemail": "1"}))
+        return _xml(twilio.connect_twiml({"job": job, "direction": "outbound", "voicemail": "1"}, hook=secret))
     if cb:  # hang up and try again later
         db.add(CallLog(user_id=cb.user_id, bot_id=cb.bot_id, direction="outbound", channel="phone", caller_e164=cb.e164,
                        outcome="voicemail", consent_source=cb.consent_source, provider_call_id=str(form.get("CallSid") or ""),
@@ -540,9 +574,9 @@ async def twilio_outbound(secret: str, request: Request, job: str = "", db: Asyn
 
 
 @router.post("/twilio/whisper/{secret}")
-async def twilio_whisper(secret: str, call: str = ""):
+async def twilio_whisper(secret: str, request: Request, call: str = ""):
     """Played to the person taking a warm transfer, before the caller is connected."""
-    _check_twilio(secret)
+    await _twilio_scope(secret, request, await request.form())
     brief = scheduler.pending_whispers.pop(call, "") if call else ""
     return _xml(twilio.whisper_twiml(brief or "The caller is being connected now."))
 
@@ -550,28 +584,27 @@ async def twilio_whisper(secret: str, call: str = ""):
 @router.post("/twilio/after/{secret}")
 async def twilio_after(secret: str, request: Request):
     """<Connect action>: the stream ended. Transfer if the assistant asked to, otherwise hang up."""
-    _check_twilio(secret)
     form = await request.form()
+    await _twilio_scope(secret, request, form)
     sid = str(form.get("CallSid") or "")
     number = scheduler.pending_transfers.pop(sid, None)
     e164 = to_e164(number) if number else None
     if not e164:
         return _xml(twilio.hangup_twiml())
-    return _xml(twilio.dial_twiml(e164, whisper_call=sid if sid in scheduler.pending_whispers else ""))
+    return _xml(twilio.dial_twiml(e164, whisper_call=sid if sid in scheduler.pending_whispers else "", hook=secret))
 
 
 @router.post("/twilio/status/{secret}")
 async def twilio_status(secret: str, request: Request, db: AsyncSession = Depends(get_db)):
-    _check_twilio(secret)
     form = await request.form()
-    await _log_unanswered(db, str(form.get("CallSid") or ""), None, str(form.get("CallStatus") or ""), "Twilio")
+    scope = await _twilio_scope(secret, request, form)
+    await _log_unanswered(db, str(form.get("CallSid") or ""), None, str(form.get("CallStatus") or ""), "Twilio",
+                          owner=_owner_of(scope))
     return {"status": "ok"}
 
 
-async def _place(number: PhoneNumber, to: str, job_id: str) -> str:
-    if number.provider == "twilio":
-        return await twilio.place_call(to, number.e164, job_id)
-    return await exotel.place_call(to, number.e164, job_id)
+async def _place(db: AsyncSession, number: PhoneNumber, to: str, job_id: str) -> str:
+    return await accounts.dial(db, number, to, job_id)
 
 
 class TestCallRequest(BaseModel):
@@ -590,8 +623,11 @@ async def test_call(req: TestCallRequest, ctx: AuthContext = Depends(require_man
     numbers = (await db.execute(select(PhoneNumber).where(
         PhoneNumber.user_id == ctx.owner_id, PhoneNumber.status == "active", PhoneNumber.e164.is_not(None)
     ))).scalars().all()
-    number = next((n for n in numbers if (n.provider == "twilio" and twilio.configured()) or
-                   (n.provider != "twilio" and exotel.configured())), None)
+    number = None
+    for n in numbers:
+        if accounts.usable(n, await accounts.account_of(db, n)):
+            number = n
+            break
     if not number:
         raise HTTPException(status_code=400, detail="You need an active phone number to place a test call")
     wallet = await metering.get_wallet(db, ctx.owner_id)
@@ -602,7 +638,7 @@ async def test_call(req: TestCallRequest, ctx: AuthContext = Depends(require_man
     db.add(job)
     await db.commit()
     try:
-        job.provider_call_id = await _place(number, e164, job.id)
+        job.provider_call_id = await _place(db, number, e164, job.id)
     except Exception as e:
         job.status, job.last_error = "failed", str(e)[:300]
         await db.commit()
@@ -654,10 +690,14 @@ async def call_recording(call_id: str, token: str = "", db: AsyncSession = Depen
 
 # ─── numbers ──────────────────────────────────────────────────────
 def _number_json(n: PhoneNumber) -> dict:
+    own = bool(n.account_id)
+    replace_open = (not own and n.provider == "twilio" and bool(n.provider_sid) and n.status == "active"
+                    and (n.replaced_at is None or datetime.utcnow() - n.replaced_at.replace(tzinfo=None) > timedelta(days=30)))
     return {"id": n.id, "number": n.number, "kind": n.kind, "city": n.city, "status": n.status, "bot_id": n.bot_id,
             "monthly_fee": n.monthly_fee, "provider": n.provider, "country": n.country,
             "next_charge_at": n.next_charge_at.isoformat() if n.next_charge_at else None,
-            "documents": [d.get("kind") for d in (n.kyc_documents or [])]}
+            "documents": [d.get("kind") for d in (n.kyc_documents or [])],
+            "source": "own" if own else "nimmi", "account_id": n.account_id, "can_replace": replace_open}
 
 
 async def _ops_email(subject: str, body: str) -> None:
@@ -714,14 +754,22 @@ async def cancel_number(number_id: str, ctx: AuthContext = Depends(require_owner
     number = (await db.execute(select(PhoneNumber).where(PhoneNumber.id == number_id, PhoneNumber.user_id == ctx.owner_id))).scalars().first()
     if not number:
         raise HTTPException(status_code=404, detail="Number not found")
-    if number.provider == "twilio" and number.provider_sid:
+    if number.account_id:
+        # The customer's own number: never release it, just give back the webhook it had before.
+        acc = await accounts.account_of(db, number)
+        if acc and number.provider == "twilio" and number.provider_sid:
+            try:
+                await twilio.set_voice_url(number.provider_sid, number.previous_voice_url or "", accounts.twilio_creds(acc))
+            except Exception as e:
+                logger.warning(f"Couldn't restore the webhook for {number.number}: {e}")
+    elif number.provider == "twilio" and number.provider_sid:
         try:
             await twilio.release_number(number.provider_sid)  # stop paying Twilio for it
         except twilio.TwilioError as e:
             raise HTTPException(status_code=502, detail=f"Couldn't release the number: {e}")
     await db.delete(number)
     await db.commit()
-    if number.status == "active" and number.provider != "twilio":
+    if number.status == "active" and number.provider != "twilio" and not number.account_id:
         await _ops_email("Nimmi: number released", f"Workspace {ctx.owner_id} released {number.number} ({number.id}).")
     return {"status": "deleted"}
 

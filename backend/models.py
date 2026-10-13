@@ -158,6 +158,25 @@ class PhoneNumber(Base):
     country = Column(String, nullable=True)  # ISO code, e.g. US
     next_charge_at = Column(DateTime(timezone=True), nullable=True)
     suspended_at = Column(DateTime(timezone=True), nullable=True)  # status "suspended" when rent couldn't be paid
+    # Numbers from the customer's own Twilio or Exotel account (bring your own number). None = Nimmi's account.
+    account_id = Column(String(36), ForeignKey("telephony_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
+    previous_voice_url = Column(String, nullable=True)  # their webhook before we pointed it here; restored on removal
+    replaced_at = Column(DateTime(timezone=True), nullable=True)  # last swap for a new number (once per billing period)
+
+
+class TelephonyAccount(Base):
+    """A customer's own Twilio or Exotel account, used to answer and place calls from their numbers."""
+    __tablename__ = "telephony_accounts"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    provider = Column(String, nullable=False)  # twilio, exotel
+    label = Column(String, default="")
+    account_sid = Column(String, nullable=False)
+    secrets = Column(Text, nullable=False)  # encrypted JSON: twilio {token}; exotel {api_key, api_token}
+    subdomain = Column(String, nullable=True)  # exotel: api.exotel.com or api.in.exotel.com
+    app_id = Column(String, nullable=True)  # exotel: the flow (app) that runs the voicebot
+    webhook_token = Column(String, nullable=False, unique=True, index=True)  # in this account's webhook URLs
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class Balance(Base):

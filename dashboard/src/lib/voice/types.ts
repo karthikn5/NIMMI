@@ -174,6 +174,32 @@ export interface PhoneNumber {
     country: string | null;      // self-serve numbers only (ISO code)
     next_charge_at: string | null; // self-serve numbers: next monthly charge from the balance
     documents: ("coi" | "gst")[];
+    source: "nimmi" | "own";       // bought from Nimmi, or on the customer's own Twilio/Exotel account
+    account_id: string | null;
+    can_replace: boolean;          // Nimmi-bought number that can be swapped for a new one now
+}
+
+/** A customer's own Twilio or Exotel account connected to Nimmi. */
+export interface PhoneAccount {
+    id: string;
+    provider: "twilio" | "exotel";
+    label: string;
+    account_sid: string;           // masked
+    numbers: number;
+    created_at: string | null;
+    subdomain?: string;
+    app_id?: string;
+    setup?: { voicebot: string; after_bot: string; transfer_target: string };
+}
+
+export interface AccountNumber {
+    phone_number: string;
+    display: string;
+    name: string;
+    country: string;
+    connected: boolean;
+    in_use: boolean;
+    has_other_webhook: boolean;
 }
 
 export interface NumberCountry {

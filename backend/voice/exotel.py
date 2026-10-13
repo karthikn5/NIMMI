@@ -22,7 +22,10 @@ class ExotelError(Exception):
     pass
 
 
-def _cfg() -> dict:
+def _cfg(creds: Optional[dict] = None) -> dict:
+    """Nimmi's own Exotel account from the environment, or a customer's (`creds`, same keys)."""
+    if creds:
+        return {"subdomain": "api.exotel.com", **creds}
     return {
         "sid": os.getenv("EXOTEL_ACCOUNT_SID", ""),
         "key": os.getenv("EXOTEL_API_KEY", ""),
@@ -41,19 +44,46 @@ def ws_secret() -> str:
     return os.getenv("EXOTEL_WS_SECRET", "")
 
 
-async def place_call(to_e164: str, caller_id_e164: str, job_id: str) -> str:
-    """Ring `to_e164` from our ExoPhone and connect them to the voicebot flow. Returns the call SID."""
-    c = _cfg()
-    if not configured():
+def public_base() -> str:
+    return (os.getenv("PUBLIC_BACKEND_URL") or os.getenv("BACKEND_URL") or "").rstrip("/")
+
+
+def setup_urls(hook: Optional[str] = None) -> dict:
+    """The addresses to paste into an Exotel flow (App Bazaar) for this account."""
+    base, token = public_base(), hook or ws_secret()
+    return {
+        "voicebot": base.replace("https://", "wss://").replace("http://", "ws://") + f"/api/voice/ws/exotel/{token}",
+        "after_bot": f"{base}/api/voice/exotel/after-bot?secret={token}",
+        "transfer_target": f"{base}/api/voice/exotel/transfer-target?secret={token}",
+    }
+
+
+async def verify(creds: dict) -> None:
+    """Check the account SID and API key and token work."""
+    c = _cfg(creds)
+    async with httpx.AsyncClient(timeout=20, auth=(c["key"], c["token"])) as client:
+        resp = await client.get(f"https://{c['subdomain']}/v1/Accounts/{c['sid']}/Calls.json", params={"PageSize": 1})
+    if resp.status_code in (401, 403):
+        raise ExotelError("Exotel didn't accept that account SID, API key and API token")
+    if resp.status_code >= 500 or resp.status_code == 404:
+        raise ExotelError(f"Couldn't reach that Exotel account ({resp.status_code}). Check the account SID and region.")
+
+
+async def place_call(to_e164: str, caller_id_e164: str, job_id: str, creds: Optional[dict] = None, hook: Optional[str] = None) -> str:
+    """Ring `to_e164` from an ExoPhone and connect them to the voicebot flow. Returns the call SID."""
+    c = _cfg(creds)
+    if not (creds or configured()):
         raise ExotelError("Exotel isn't configured on the server")
-    backend = os.getenv("BACKEND_URL", "").rstrip("/")
+    if not c.get("app_id"):
+        raise ExotelError("Add the Exotel flow (app) ID for this account first")
+    backend = public_base()
     data = {
         "From": to_e164,
         "CallerId": caller_id_e164,
         "Url": f"http://my.exotel.com/{c['sid']}/exoml/start_voice/{c['app_id']}",
         "CallType": "trans",
         "CustomField": job_id,
-        "StatusCallback": f"{backend}/api/voice/exotel/status?secret={ws_secret()}",
+        "StatusCallback": f"{backend}/api/voice/exotel/status?secret={hook or ws_secret()}",
     }
     async with httpx.AsyncClient(timeout=20, auth=(c["key"], c["token"])) as client:
         resp = await client.post(f"https://{c['subdomain']}/v1/Accounts/{c['sid']}/Calls/connect.json", data=data)

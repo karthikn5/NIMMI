@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Lock, Plus, Upload } from "lucide-react";
+import { Check, Link2, Lock, Plus, Upload } from "lucide-react";
 import { BalanceCard, TopUpDialog, useBalance } from "@/components/Balance";
 import { GetNumberDialog, NUMBER_KIND, countryName } from "@/components/voice/GetNumberDialog";
+import { ConnectNumberDialog } from "@/components/voice/ConnectNumberDialog";
 import {
     Button, Card, Dialog, EmptyState, Input, SaveBar, SectionHeader, Segmented, Select, SettingRow,
     Skeleton, Status, Switch, useToast,
@@ -11,7 +12,9 @@ import {
 import { apiFetch } from "@/lib/api";
 import { apiSave, useApi, useDraft } from "@/lib/useApi";
 import { formatDate, formatINR, formatWhen } from "@/lib/voice/api";
-import type { CallbackJob, CallbackSettings, PhoneNumber, VoiceAgentSummary } from "@/lib/voice/types";
+import type { CallbackJob, CallbackSettings, PhoneAccount, PhoneNumber, VoiceAgentSummary } from "@/lib/voice/types";
+
+const PROVIDER = { twilio: "Twilio", exotel: "Exotel" } as const;
 
 const STATUS: Record<PhoneNumber["status"], { label: string; tone: "good" | "warn" | "neutral" }> = {
     active: { label: "Active", tone: "good" },
@@ -27,8 +30,16 @@ export default function NumbersPage() {
     const [requestOpen, setRequestOpen] = useState(false);
     const [docsFor, setDocsFor] = useState<PhoneNumber | null>(null);
     const [releasing, setReleasing] = useState<PhoneNumber | null>(null);
+    const [swapping, setSwapping] = useState<PhoneNumber | null>(null);
     const [topUp, setTopUp] = useState(false);
     const wallet = useBalance();
+    // Your own Twilio/Exotel accounts. Only the workspace owner can see these (they hold keys).
+    const phoneAccounts = useApi<{ accounts: PhoneAccount[] }>("/api/voice/phone-accounts");
+    const [connectOpen, setConnectOpen] = useState(false);
+    const [connectAccount, setConnectAccount] = useState<PhoneAccount | null>(null);
+    const [disconnecting, setDisconnecting] = useState<PhoneAccount | null>(null);
+    const accountsList = phoneAccounts.data?.accounts ?? [];
+    const openConnect = (acc: PhoneAccount | null = null) => { setConnectAccount(acc); setConnectOpen(true); };
 
     const replace = (n: PhoneNumber) => numbers.setData((numbers.data ?? []).map((x) => (x.id === n.id ? n : x)));
 
@@ -49,7 +60,12 @@ export default function NumbersPage() {
                 <SectionHeader
                     title="Phone numbers"
                     description="Customers call these numbers to reach an assistant. Each number goes to one assistant."
-                    action={<Button size="sm" onClick={() => setRequestOpen(true)}><Plus size={14} /> Get a number</Button>}
+                    action={
+                        <div className="flex gap-2">
+                            {!phoneAccounts.error && <Button size="sm" variant="ghost" onClick={() => openConnect()}><Link2 size={14} /> Use your own number</Button>}
+                            <Button size="sm" onClick={() => setRequestOpen(true)}><Plus size={14} /> Get a number</Button>
+                        </div>
+                    }
                 />
                 <Card>
                     {numbers.loading ? (
@@ -57,8 +73,13 @@ export default function NumbersPage() {
                     ) : !numbers.data?.length ? (
                         <EmptyState
                             title="No phone numbers yet"
-                            body="You can still test every assistant in your browser. Get a number when you're ready to take real calls."
-                            action={<Button variant="primary" onClick={() => setRequestOpen(true)}>Get a number</Button>}
+                            body="You can still test every assistant in your browser. Get a number from Nimmi, or connect one you already have on Twilio or Exotel."
+                            action={
+                                <div className="flex justify-center gap-2">
+                                    <Button variant="primary" onClick={() => setRequestOpen(true)}>Get a number</Button>
+                                    {!phoneAccounts.error && <Button onClick={() => openConnect()}>Use your own number</Button>}
+                                </div>
+                            }
                         />
                     ) : (
                         <ul>
@@ -67,10 +88,14 @@ export default function NumbersPage() {
                                     <div>
                                         <p className="text-sm font-medium tabular-nums">{n.number}</p>
                                         <p className="text-[13px] text-stone-500 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-                                            <span>
-                                                {n.country ? countryName(n.country) : n.city} · {NUMBER_KIND[n.kind] ?? n.kind} · {formatINR(n.monthly_fee)}/month
-                                                {n.status === "active" && n.next_charge_at && ` · Renews ${formatDate(n.next_charge_at)}`}
-                                            </span>
+                                            {n.source === "own" ? (
+                                                <span>Your {PROVIDER[n.provider]} account{n.country ? ` · ${countryName(n.country)}` : ""}</span>
+                                            ) : (
+                                                <span>
+                                                    {n.country ? countryName(n.country) : n.city} · {NUMBER_KIND[n.kind] ?? n.kind} · {formatINR(n.monthly_fee)}/month
+                                                    {n.status === "active" && n.next_charge_at && ` · Renews ${formatDate(n.next_charge_at)}`}
+                                                </span>
+                                            )}
                                             <Status tone={STATUS[n.status].tone}>{STATUS[n.status].label}</Status>
                                         </p>
                                     </div>
@@ -91,8 +116,14 @@ export default function NumbersPage() {
                                         {n.status === "suspended" && (
                                             <Button size="sm" variant="primary" onClick={() => setTopUp(true)}>Add money</Button>
                                         )}
-                                        {n.status === "active" && n.next_charge_at && (
+                                        {n.can_replace && (
+                                            <Button size="sm" variant="ghost" onClick={() => setSwapping(n)}>Swap</Button>
+                                        )}
+                                        {n.status === "active" && n.next_charge_at && n.source !== "own" && (
                                             <Button size="sm" variant="ghost" onClick={() => setReleasing(n)}>Release</Button>
+                                        )}
+                                        {n.source === "own" && (
+                                            <Button size="sm" variant="ghost" onClick={() => setReleasing(n)}>Remove</Button>
                                         )}
                                     </div>
                                 </li>
@@ -100,6 +131,28 @@ export default function NumbersPage() {
                         </ul>
                     )}
                 </Card>
+                {accountsList.length > 0 && (
+                    <div className="mt-4">
+                        <h3 className="text-sm font-medium mb-2">Your phone accounts</h3>
+                        <Card>
+                            <ul>
+                                {accountsList.map((a) => (
+                                    <li key={a.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3 border-t border-line first:border-t-0">
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-sm font-medium">{PROVIDER[a.provider]} · {a.label}</p>
+                                            <p className="text-[13px] text-stone-500">
+                                                {a.account_sid} · {a.numbers} {a.numbers === 1 ? "number" : "numbers"}
+                                                {a.provider === "exotel" && !a.app_id && <span className="text-amber-700"> · Add the flow ID to make calls</span>}
+                                            </p>
+                                        </div>
+                                        <Button size="sm" onClick={() => openConnect(a)}>{a.provider === "twilio" ? "Add numbers" : "Setup and numbers"}</Button>
+                                        <Button size="sm" variant="ghost" onClick={() => setDisconnecting(a)}>Disconnect</Button>
+                                    </li>
+                                ))}
+                            </ul>
+                        </Card>
+                    </div>
+                )}
                 {(selfServe || (wallet.data?.balance ?? 0) > 0) && (
                     <div className="mt-4">
                         <h3 className="text-sm font-medium mb-2">Nimmi balance</h3>
@@ -120,10 +173,29 @@ export default function NumbersPage() {
                     if (n.status === "pending_kyc") setDocsFor(n);
                 }}
             />
+            <GetNumberDialog
+                open={!!swapping}
+                replacing={swapping}
+                agents={agents.data ?? []}
+                onClose={() => setSwapping(null)}
+                onCreated={() => numbers.reload()}
+            />
+            <ConnectNumberDialog
+                open={connectOpen}
+                account={connectAccount}
+                agents={agents.data ?? []}
+                onClose={() => { setConnectOpen(false); phoneAccounts.reload(); }}
+                onDone={(added) => { numbers.setData([...(numbers.data ?? []), ...added]); phoneAccounts.reload(); }}
+            />
+            <DisconnectDialog
+                account={disconnecting}
+                onClose={() => setDisconnecting(null)}
+                onDone={() => { numbers.reload(); phoneAccounts.reload(); }}
+            />
             <ReleaseDialog
                 number={releasing}
                 onClose={() => setReleasing(null)}
-                onReleased={(n) => { numbers.setData((numbers.data ?? []).filter((x) => x.id !== n.id)); wallet.reload(); }}
+                onReleased={(n) => { numbers.setData((numbers.data ?? []).filter((x) => x.id !== n.id)); wallet.reload(); phoneAccounts.reload(); }}
             />
             <TopUpDialog
                 open={topUp}
@@ -308,13 +380,14 @@ function ReleaseDialog({ number, onClose, onReleased }: { number: PhoneNumber | 
     const toast = useToast();
     const [busy, setBusy] = useState(false);
 
+    const own = number?.source === "own";
     const release = async () => {
         if (!number) return;
         setBusy(true);
         const res = await apiSave(`/api/voice/numbers/${number.id}`, "DELETE");
         setBusy(false);
         if (!res.ok) return toast(res.message);
-        toast(`${number.number} released`);
+        toast(own ? `${number.number} removed from Nimmi` : `${number.number} released`);
         onReleased(number);
         onClose();
     };
@@ -323,14 +396,48 @@ function ReleaseDialog({ number, onClose, onReleased }: { number: PhoneNumber | 
         <Dialog
             open={!!number}
             onClose={onClose}
-            title={`Release ${number?.number ?? ""}?`}
-            description="It stops taking calls right away and goes back to the carrier. You can't get the same number back, and the rest of this month isn't refunded."
+            title={own ? `Remove ${number?.number ?? ""} from Nimmi?` : `Release ${number?.number ?? ""}?`}
+            description={own
+                ? `The number stays on your ${number ? PROVIDER[number.provider] : ""} account. Calls to it stop reaching your assistant${number?.provider === "twilio" ? ", and we put back the setting it had before" : ""}.`
+                : "It stops taking calls right away and goes back to the carrier. You can't get the same number back, and the rest of this month isn't refunded."}
             footer={<>
-                <Button variant="ghost" onClick={onClose}>Keep number</Button>
-                <Button variant="danger" onClick={release} disabled={busy}>{busy ? "Releasing…" : "Release number"}</Button>
+                <Button variant="ghost" onClick={onClose}>{own ? "Keep it" : "Keep number"}</Button>
+                <Button variant="danger" onClick={release} disabled={busy}>{busy ? (own ? "Removing…" : "Releasing…") : own ? "Remove" : "Release number"}</Button>
             </>}
         >
             <p className="text-[13px] text-stone-600">Callbacks that use this number will need another one to call from.</p>
+        </Dialog>
+    );
+}
+
+function DisconnectDialog({ account, onClose, onDone }: { account: PhoneAccount | null; onClose: () => void; onDone: () => void }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const go = async () => {
+        if (!account) return;
+        setBusy(true);
+        const res = await apiSave(`/api/voice/phone-accounts/${account.id}`, "DELETE");
+        setBusy(false);
+        if (!res.ok) return toast(res.message);
+        toast(`${PROVIDER[account.provider]} account disconnected`);
+        onDone();
+        onClose();
+    };
+    return (
+        <Dialog
+            open={!!account}
+            onClose={onClose}
+            title={`Disconnect ${account ? PROVIDER[account.provider] : ""} · ${account?.label ?? ""}?`}
+            description="Its numbers stop reaching your assistants and we delete the saved keys. Your account and numbers stay with your provider."
+            footer={<>
+                <Button variant="ghost" onClick={onClose}>Cancel</Button>
+                <Button variant="danger" onClick={go} disabled={busy}>{busy ? "Disconnecting…" : "Disconnect"}</Button>
+            </>}
+        >
+            <p className="text-[13px] text-stone-600">
+                {account?.numbers ? `${account.numbers} ${account.numbers === 1 ? "number is" : "numbers are"} removed from Nimmi. ` : ""}
+                Call-backs and campaigns that use them will need another number.
+            </p>
         </Dialog>
     );
 }

@@ -14,7 +14,7 @@ from database import async_session
 from backend.models import (Campaign, CallbackJob, CallbackSettings, CallLog, ComplianceSettings, DncEntry,
                             PhoneNumber, VoiceAgent)
 import balance
-from voice import exotel, metering, recording, twilio
+from voice import accounts, exotel, metering, recording, twilio
 from voice.catalog import NUMBER_GRACE_DAYS
 
 logger = logging.getLogger(__name__)
@@ -110,10 +110,8 @@ async def dispatch_due_callbacks() -> None:
             await db.commit()
             try:
                 job.last_error = None
-                if number.provider == "twilio":
-                    job.provider_call_id = await twilio.place_call(job.e164, number.e164, job.id, **({"detect_voicemail": True} if detect else {}))
-                else:
-                    job.provider_call_id = await exotel.place_call(job.e164, number.e164, job.id)
+                # Through Nimmi's account, or the customer's own Twilio/Exotel account for their numbers.
+                job.provider_call_id = await accounts.dial(db, number, job.e164, job.id, detect_voicemail=detect)
             except Exception as e:
                 logger.warning(f"Callback {job.id} failed to dial: {e}")
                 schedule_retry(job, max_attempts, str(e)[:300])
@@ -254,10 +252,10 @@ async def _loop() -> None:
         try:
             from notify import automations
             await automations.process_due()  # automatic customer emails
-            if exotel.configured() or twilio.configured():
-                await expire_stale_calls()
-                await dispatch_due_callbacks()
-                await finish_campaigns()
+            # Always: customers' own phone accounts work even when Nimmi has none configured.
+            await expire_stale_calls()
+            await dispatch_due_callbacks()
+            await finish_campaigns()
             if datetime.utcnow() - last_purge > timedelta(hours=6):
                 await purge_expired_recordings()
                 if twilio.configured():

@@ -7,6 +7,9 @@ Note for India: Twilio can't provide Indian numbers for domestic calls, so a
 Twilio number is for testing and for customers outside India. Use Exotel for
 Indian numbers.
 """
+import base64
+import hashlib
+import hmac
 import logging
 import os
 from array import array
@@ -36,8 +39,23 @@ def public_base() -> str:
     return (os.getenv("PUBLIC_BACKEND_URL") or os.getenv("BACKEND_URL") or "").rstrip("/")
 
 
-def _auth() -> tuple[str, str]:
-    return os.getenv("TWILIO_ACCOUNT_SID", ""), os.getenv("TWILIO_AUTH_TOKEN", "")
+Creds = tuple[str, str]  # (account SID, auth token); None means Nimmi's own account from the environment
+
+
+def _auth(creds: Creds | None = None) -> tuple[str, str]:
+    return creds or (os.getenv("TWILIO_ACCOUNT_SID", ""), os.getenv("TWILIO_AUTH_TOKEN", ""))
+
+
+def incoming_url(hook: str | None = None) -> str:
+    """Where a number's incoming calls go. `hook` is a connected account's own webhook token."""
+    return f"{public_base()}/api/voice/twilio/incoming/{hook or ws_secret()}"
+
+
+def valid_signature(auth_token: str, url: str, params: dict, signature: str) -> bool:
+    """Twilio's X-Twilio-Signature: HMAC-SHA1 of the URL plus the sorted form fields, keyed by the auth token."""
+    payload = url + "".join(f"{k}{params[k]}" for k in sorted(params))
+    digest = base64.b64encode(hmac.new(auth_token.encode(), payload.encode(), hashlib.sha1).digest()).decode()
+    return bool(signature) and hmac.compare_digest(digest, signature)
 
 
 # ─── G.711 mu-law <-> PCM16 ───────────────────────────────────────
@@ -83,11 +101,12 @@ def pcm_to_ulaw(pcm: bytes) -> bytes:
 
 
 # ─── TwiML ────────────────────────────────────────────────────────
-def connect_twiml(params: dict) -> str:
+def connect_twiml(params: dict, hook: str | None = None) -> str:
     """Stream the call to our voice engine; when the stream ends, ask /after whether to transfer."""
     base = public_base()
-    ws_url = base.replace("https://", "wss://").replace("http://", "ws://") + f"/api/voice/ws/twilio/{ws_secret()}"
-    action = f"{base}/api/voice/twilio/after/{ws_secret()}"
+    token = hook or ws_secret()
+    ws_url = base.replace("https://", "wss://").replace("http://", "ws://") + f"/api/voice/ws/twilio/{token}"
+    action = f"{base}/api/voice/twilio/after/{token}"
     parameters = "".join(f"<Parameter name={quoteattr(k)} value={quoteattr(str(v))}/>" for k, v in params.items() if v)
     return (f'<?xml version="1.0" encoding="UTF-8"?><Response><Connect action={quoteattr(action)}>'
             f"<Stream url={quoteattr(ws_url)}>{parameters}</Stream></Connect></Response>")
@@ -97,11 +116,11 @@ def say_and_hangup(text: str) -> str:
     return f'<?xml version="1.0" encoding="UTF-8"?><Response><Say>{escape(text)}</Say><Hangup/></Response>'
 
 
-def dial_twiml(e164: str, whisper_call: str = "") -> str:
+def dial_twiml(e164: str, whisper_call: str = "", hook: str | None = None) -> str:
     """Transfer the caller. With `whisper_call`, the person answering first hears a brief (warm transfer)."""
     if not whisper_call:
         return f'<?xml version="1.0" encoding="UTF-8"?><Response><Dial>{escape(e164)}</Dial></Response>'
-    url = f"{public_base()}/api/voice/twilio/whisper/{ws_secret()}?call={whisper_call}"
+    url = f"{public_base()}/api/voice/twilio/whisper/{hook or ws_secret()}?call={whisper_call}"
     return (f'<?xml version="1.0" encoding="UTF-8"?><Response><Dial>'
             f'<Number url={quoteattr(url)}>{escape(e164)}</Number></Dial></Response>')
 
@@ -117,26 +136,29 @@ def hangup_twiml() -> str:
 
 
 # ─── REST ─────────────────────────────────────────────────────────
-async def place_call(to_e164: str, from_e164: str, job_id: str, detect_voicemail: bool = False) -> str:
+async def place_call(to_e164: str, from_e164: str, job_id: str, detect_voicemail: bool = False,
+                     creds: Creds | None = None, hook: str | None = None) -> str:
     """
-    Ring `to_e164` from our Twilio number and connect them to the voice engine. Returns the call SID.
+    Ring `to_e164` from a Twilio number and connect them to the voice engine. Returns the call SID.
     With `detect_voicemail`, Twilio listens first (a few seconds) and tells /outbound who answered.
+    `creds` and `hook` are set for numbers on a customer's own Twilio account.
     """
-    if not configured():
+    if not (creds and public_base()) and not configured():
         raise TwilioError("Twilio isn't configured on the server")
-    sid, _ = _auth()
+    sid, _ = _auth(creds)
+    token = hook or ws_secret()
     # A dict (not a list of pairs): httpx treats a list as a raw byte stream and fails on AsyncClient.
     data = {
         "To": to_e164, "From": from_e164,
-        "StatusCallback": f"{public_base()}/api/voice/twilio/status/{ws_secret()}",
+        "StatusCallback": f"{public_base()}/api/voice/twilio/status/{token}",
         "StatusCallbackEvent": "completed",
     }
     if detect_voicemail:
-        data["Url"] = f"{public_base()}/api/voice/twilio/outbound/{ws_secret()}?job={job_id}"
+        data["Url"] = f"{public_base()}/api/voice/twilio/outbound/{token}?job={job_id}"
         data["MachineDetection"] = "DetectMessageEnd"  # wait for the beep, so a message lands in full
     else:
-        data["Twiml"] = connect_twiml({"job": job_id, "direction": "outbound"})
-    async with httpx.AsyncClient(timeout=20, auth=_auth()) as client:
+        data["Twiml"] = connect_twiml({"job": job_id, "direction": "outbound"}, hook)
+    async with httpx.AsyncClient(timeout=20, auth=_auth(creds)) as client:
         resp = await client.post(f"{API}/Accounts/{sid}/Calls.json", data=data)
     if resp.status_code >= 300:
         try:
@@ -162,6 +184,43 @@ async def point_number_here(e164: str) -> None:
         raise TwilioError(f"Couldn't update the number: {resp.text[:300]}")
 
 
+# ─── Customers' own Twilio accounts ───────────────────────────────
+async def verify_account(creds: Creds) -> str:
+    """Check the SID and auth token work; returns the account's name."""
+    sid, _ = creds
+    async with httpx.AsyncClient(timeout=20, auth=creds) as client:
+        resp = await client.get(f"{API}/Accounts/{sid}.json")
+    if resp.status_code in (401, 403, 404):
+        raise TwilioError("Twilio didn't accept that Account SID and auth token")
+    if resp.status_code >= 300:
+        raise TwilioError(_error(resp))
+    body = resp.json()
+    if body.get("status") not in (None, "active"):
+        raise TwilioError(f"This Twilio account is {body.get('status')}")
+    return body.get("friendly_name") or sid
+
+
+async def list_numbers(creds: Creds) -> list[dict]:
+    """Voice-capable numbers on the account, with where their calls go now."""
+    sid, _ = creds
+    data = await _get(f"/Accounts/{sid}/IncomingPhoneNumbers.json", {"PageSize": 200}, creds=creds)
+    return [
+        {"sid": n["sid"], "phone_number": n["phone_number"], "friendly_name": n.get("friendly_name") or "",
+         "voice_url": n.get("voice_url") or "", "country": n.get("iso_country") or ""}
+        for n in data.get("incoming_phone_numbers") or [] if (n.get("capabilities") or {}).get("voice", True)
+    ]
+
+
+async def set_voice_url(number_sid: str, url: str, creds: Creds | None = None) -> None:
+    """Point a number's 'A call comes in' webhook at `url`."""
+    sid, _ = _auth(creds)
+    async with httpx.AsyncClient(timeout=20, auth=_auth(creds)) as client:
+        resp = await client.post(f"{API}/Accounts/{sid}/IncomingPhoneNumbers/{number_sid}.json",
+                                 data={"VoiceUrl": url, "VoiceMethod": "POST"})
+    if resp.status_code >= 300:
+        raise TwilioError(f"Couldn't update the number: {_error(resp)}")
+
+
 async def account_numbers() -> list[str]:
     sid, _ = _auth()
     async with httpx.AsyncClient(timeout=20, auth=_auth()) as client:
@@ -176,8 +235,8 @@ async def account_numbers() -> list[str]:
 NUMBER_TYPES = {"local": "Local", "toll_free": "TollFree", "mobile": "Mobile"}
 
 
-async def _get(path: str, params: dict | None = None, base: str = API) -> dict:
-    async with httpx.AsyncClient(timeout=20, auth=_auth()) as client:
+async def _get(path: str, params: dict | None = None, base: str = API, creds: Creds | None = None) -> dict:
+    async with httpx.AsyncClient(timeout=20, auth=_auth(creds)) as client:
         resp = await client.get(f"{base}{path}", params=params)
     if resp.status_code >= 300:
         raise TwilioError(_error(resp))

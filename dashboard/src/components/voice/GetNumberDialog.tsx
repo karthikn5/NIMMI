@@ -26,11 +26,22 @@ const EMPTY_ADDRESS: Address = { customer_name: "", street: "", city: "", region
  * India: a guided request (telecom KYC, set up by our team).
  * Other countries: live search of available numbers, bought instantly from the Nimmi balance.
  */
-export function GetNumberDialog({ open, onClose, onCreated, agents }: {
+export function GetNumberDialog({ open, onClose, onCreated, agents, replacing }: {
     open: boolean; onClose: () => void; onCreated: (n: PhoneNumber) => void; agents: VoiceAgentSummary[];
+    /** Swap this Nimmi-bought number for a new one in the same country instead of buying another. */
+    replacing?: PhoneNumber | null;
 }) {
     const [where, setWhere] = useState<"india" | "abroad">("india");
     const close = () => { setWhere("india"); onClose(); };
+
+    if (replacing) {
+        return (
+            <Dialog open={open} onClose={close} title={`Swap ${replacing.number}`} footer={null}
+                    description="Pick a new number. Its assistant, call-back and campaign settings move across, and the month you've paid carries over.">
+                <BuyAbroad agents={agents} replacing={replacing} onCancel={close} onCreated={(n) => { close(); onCreated(n); }} />
+            </Dialog>
+        );
+    }
 
     return (
         <Dialog
@@ -99,12 +110,15 @@ function IndiaRequest({ onCancel, onCreated }: { onCancel: () => void; onCreated
     );
 }
 
-function BuyAbroad({ agents, onCancel, onCreated }: { agents: VoiceAgentSummary[]; onCancel: () => void; onCreated: (n: PhoneNumber) => void }) {
+function BuyAbroad({ agents, onCancel, onCreated, replacing }: {
+    agents: VoiceAgentSummary[]; onCancel: () => void; onCreated: (n: PhoneNumber) => void; replacing?: PhoneNumber;
+}) {
     const toast = useToast();
     const catalog = useApi<{ countries: NumberCountry[]; available: boolean }>("/api/voice/numbers/countries");
     const wallet = useBalance();
-    const [country, setCountry] = useState("US");
-    const [type, setType] = useState<NumberCountry["types"][number]>("local");
+    const [country, setCountry] = useState(replacing?.country || "US");
+    const [type, setType] = useState<NumberCountry["types"][number]>(
+        replacing && ["local", "toll_free", "mobile"].includes(replacing.kind) ? replacing.kind as NumberCountry["types"][number] : "local");
     const [digits, setDigits] = useState("");
     const [results, setResults] = useState<{ monthly_fee: number; numbers: AvailableNumber[] } | null>(null);
     const [searching, setSearching] = useState(false);
@@ -143,7 +157,9 @@ function BuyAbroad({ agents, onCancel, onCreated }: { agents: VoiceAgentSummary[
     if (!catalog.data?.available) {
         return (
             <>
-                <p className="text-[13px] text-stone-600 leading-relaxed">Numbers outside India aren&apos;t available on this account yet. Choose India to request a local number.</p>
+                <p className="text-[13px] text-stone-600 leading-relaxed">
+                    {replacing ? "Swapping numbers isn't available right now. Please try again later." : <>Numbers outside India aren&apos;t available on this account yet. Choose India to request a local number.</>}
+                </p>
                 <Footer><Button onClick={onCancel}>Close</Button></Footer>
             </>
         );
@@ -151,20 +167,24 @@ function BuyAbroad({ agents, onCancel, onCreated }: { agents: VoiceAgentSummary[
 
     const fee = results?.monthly_fee ?? 0;
     const balance = wallet.data?.balance ?? 0;
-    const short = fee > balance;
+    const short = !replacing && fee > balance; // a swap isn't charged now
     const addressMissing = !!picked?.address_required &&
         (!address.customer_name.trim() || !address.street.trim() || !address.city.trim() || !address.postal_code.trim());
 
     const buy = async () => {
         if (!picked) return;
         setBuying(true);
-        const res = await apiSave("/api/voice/numbers/buy", "POST", {
-            phone_number: picked.phone_number, country, type, bot_id: botId || null,
-            address: picked.address_required ? address : null,
-        });
+        const res = replacing
+            ? await apiSave(`/api/voice/numbers/${replacing.id}/replace`, "POST", {
+                phone_number: picked.phone_number, address: picked.address_required ? address : null,
+            })
+            : await apiSave("/api/voice/numbers/buy", "POST", {
+                phone_number: picked.phone_number, country, type, bot_id: botId || null,
+                address: picked.address_required ? address : null,
+            });
         setBuying(false);
         if (!res.ok) return toast(res.message);
-        toast(`${picked.display} is yours. It's ready for calls.`);
+        toast(replacing ? `Swapped. ${picked.display} now replaces ${replacing.number}.` : `${picked.display} is yours. It's ready for calls.`);
         onCreated(res.data as PhoneNumber);
     };
 
@@ -172,7 +192,7 @@ function BuyAbroad({ agents, onCancel, onCreated }: { agents: VoiceAgentSummary[
 
     return (
         <>
-            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-end">
+            {!replacing && <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-end">
                 <div>
                     <label htmlFor="country" className="text-sm font-medium">Country</label>
                     <Select id="country" className="mt-1.5" value={country} onChange={(e) => {
@@ -190,7 +210,7 @@ function BuyAbroad({ agents, onCancel, onCreated }: { agents: VoiceAgentSummary[
                     onChange={setType}
                     options={(spec?.types ?? ["local"]).map((t) => ({ value: t, label: NUMBER_KIND[t] }))}
                 />
-            </div>
+            </div>}
 
             <form className="mt-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); search(); }}>
                 <Input
@@ -212,7 +232,9 @@ function BuyAbroad({ agents, onCancel, onCreated }: { agents: VoiceAgentSummary[
                     <p className="text-[13px] text-stone-500">No numbers match. Try another area code, or leave it empty.</p>
                 ) : results && (
                     <>
-                        <p className="text-[13px] text-stone-500 mb-2">{formatINR(fee)} a month each, charged from your Nimmi balance.</p>
+                        <p className="text-[13px] text-stone-500 mb-2">
+                            {replacing ? `${countryName(country)} numbers. From your next renewal, ${formatINR(fee)} a month.` : `${formatINR(fee)} a month each, charged from your Nimmi balance.`}
+                        </p>
                         <ul role="radiogroup" aria-label="Available numbers" className="max-h-56 overflow-y-auto rounded-md border border-line divide-y divide-line">
                             {results.numbers.map((n) => {
                                 const on = picked?.phone_number === n.phone_number;
@@ -241,13 +263,13 @@ function BuyAbroad({ agents, onCancel, onCreated }: { agents: VoiceAgentSummary[
 
             {picked && (
                 <div className="mt-5 space-y-4">
-                    <div>
+                    {!replacing && <div>
                         <label htmlFor="answered_by" className="text-sm font-medium">Answered by</label>
                         <Select id="answered_by" className="mt-1.5" value={botId} onChange={(e) => setBotId(e.target.value)}>
                             <option value="">Choose later</option>
                             {agents.map((a) => <option key={a.bot_id} value={a.bot_id}>{a.bot_name}</option>)}
                         </Select>
-                    </div>
+                    </div>}
 
                     {picked.address_required && (
                         <fieldset>
@@ -263,20 +285,24 @@ function BuyAbroad({ agents, onCancel, onCreated }: { agents: VoiceAgentSummary[
                         </fieldset>
                     )}
 
-                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-md bg-stone-50 border border-line text-[13px]">
+                    {replacing ? (
+                        <p className="px-3 py-2.5 rounded-md bg-stone-50 border border-line text-[13px] text-stone-600">
+                            {replacing.number} stops working as soon as you swap, and goes back to the carrier. You can swap a number once a month.
+                        </p>
+                    ) : <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-md bg-stone-50 border border-line text-[13px]">
                         <span className={short ? "text-signal" : "text-stone-600"}>
                             Balance {formatINR(balance)}
                             {short && `. You need ${formatINR(fee - balance)} more.`}
                         </span>
                         <Button size="sm" variant={short ? "primary" : "ghost"} onClick={() => setTopUp(true)}>Add money</Button>
-                    </div>
+                    </div>}
                 </div>
             )}
 
             <Footer>
                 <Button variant="ghost" onClick={onCancel}>Cancel</Button>
                 <Button variant="primary" onClick={buy} disabled={!picked || short || addressMissing || buying}>
-                    {buying ? "Buying…" : picked ? `Buy for ${formatINR(fee)}/month` : "Choose a number"}
+                    {buying ? (replacing ? "Swapping…" : "Buying…") : !picked ? "Choose a number" : replacing ? "Swap to this number" : `Buy for ${formatINR(fee)}/month`}
                 </Button>
             </Footer>
 

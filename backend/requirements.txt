@@ -25,3 +25,4 @@ fastapi-socketio
 python-socketio
 PyJWT
 websockets
+cryptography>=42

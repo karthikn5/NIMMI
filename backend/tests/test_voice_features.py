@@ -262,7 +262,7 @@ def test_campaign_create_dispatch_and_finish(client, make_user, run, monkeypatch
 
     dialled = []
 
-    async def fake_place(to, frm, job_id, detect_voicemail=False):
+    async def fake_place(to, frm, job_id, detect_voicemail=False, **_):
         dialled.append((to, detect_voicemail))
         return f"CA-{len(dialled)}"
     monkeypatch.setattr(twilio, "place_call", fake_place)

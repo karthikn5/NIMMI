@@ -10,13 +10,14 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 import balance
 from auth import AuthContext, get_owned_bot, rate_limit, require_owner
 from database import get_db
-from backend.models import BalanceEntry, PhoneNumber
+from backend.models import BalanceEntry, CallbackSettings, Campaign, PhoneNumber
 from phone import display
 from voice import catalog, twilio
 
@@ -117,6 +118,61 @@ async def buy_number(req: BuyRequest, ctx: AuthContext = Depends(require_owner),
     await db.commit()
     from voice.router import _number_json
     return _number_json(row)
+
+
+class ReplaceRequest(BaseModel):
+    phone_number: str
+    address: Optional[Address] = None
+
+
+@router.post("/voice/numbers/{number_id}/replace")
+async def replace_number(number_id: str, req: ReplaceRequest, ctx: AuthContext = Depends(require_owner),
+                         db: AsyncSession = Depends(get_db)):
+    """
+    Swap a number bought here for a new one in the same country. The assistant, call-back and
+    campaign settings move to the new number, and the month already paid carries over.
+    Allowed once per billing period, since each swap costs a new number.
+    """
+    old = (await db.execute(select(PhoneNumber).where(PhoneNumber.id == number_id, PhoneNumber.user_id == ctx.owner_id))).scalars().first()
+    if not old:
+        raise HTTPException(status_code=404, detail="Number not found")
+    if old.account_id or old.provider != "twilio" or not old.provider_sid or old.status != "active":
+        raise HTTPException(status_code=400, detail="Only active numbers bought in Nimmi can be swapped")
+    if old.replaced_at and datetime.utcnow() - old.replaced_at.replace(tzinfo=None) < timedelta(days=30):
+        raise HTTPException(status_code=400, detail="This number was swapped recently. You can swap it again next month.")
+    if req.phone_number == old.e164:
+        raise HTTPException(status_code=400, detail="Choose a different number")
+    number_type = old.kind if old.kind in twilio.NUMBER_TYPES else "local"
+    _check_country(old.country or "", number_type)
+    rate_limit(f"numswap:{ctx.owner_id}", 3, 3600)
+    fee = await _fee(old.country, number_type)
+
+    try:
+        address_sid = None
+        if req.address:
+            a = req.address
+            address_sid = await twilio.create_address(a.customer_name, a.street, a.city, a.region, a.postal_code, old.country)
+        new_sid = await twilio.buy_number(req.phone_number, f"Nimmi {ctx.owner_id[:8]}", address_sid)
+    except twilio.TwilioError as e:
+        raise HTTPException(status_code=502, detail=f"Couldn't get the new number: {e}. Nothing has changed.")
+
+    new = PhoneNumber(user_id=ctx.owner_id, number=display(req.phone_number), e164=req.phone_number, kind=old.kind,
+                      city=old.city, status="active", provider="twilio", country=old.country, provider_sid=new_sid,
+                      monthly_fee=fee, bot_id=old.bot_id, next_charge_at=old.next_charge_at, replaced_at=datetime.utcnow())
+    db.add(new)
+    await db.flush()
+    # Everything that called from the old number now calls from the new one.
+    await db.execute(update(CallbackSettings).where(CallbackSettings.from_number_id == old.id).values(from_number_id=new.id))
+    await db.execute(update(Campaign).where(Campaign.from_number_id == old.id).values(from_number_id=new.id))
+    old_sid, old_display = old.provider_sid, old.number
+    await db.delete(old)
+    await db.commit()
+    try:
+        await twilio.release_number(old_sid)
+    except twilio.TwilioError as e:
+        logger.error(f"Swapped {old_display} but couldn't release it on Twilio ({old_sid}): {e}")
+    from voice.router import _number_json
+    return _number_json(new)
 
 
 # ─── Balance ──────────────────────────────────────────────────────

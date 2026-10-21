@@ -248,3 +248,17 @@ async def voice_sample(voice_id: str, language: str) -> bytes:
         with open(path, "wb") as f:
             f.write(wav)
         return wav
+
+
+STT_URL = "https://api.sarvam.ai/speech-to-text"
+
+
+async def transcribe(audio: bytes, filename: str, content_type: str, language: str = "unknown") -> str:
+    """Text of a short recording (the chat widget's mic in browsers without built-in speech recognition)."""
+    files = {"file": (filename or "speech.webm", audio, content_type or "application/octet-stream")}
+    data = {"model": STT_MODEL, "language_code": language or "unknown"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(STT_URL, headers={"api-subscription-key": api_key()}, files=files, data=data)
+    if resp.status_code >= 300:
+        raise SarvamError(f"STT {resp.status_code}: {resp.text[:300]}")
+    return (resp.json().get("transcript") or "").strip()

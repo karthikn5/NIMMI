@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, ExternalLink, Plus, Search, Trash2 } from "lucide-react";
+import { ArrowRight, ExternalLink, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
 import {
     Button, Card, Dialog, EmptyState, Input, Segmented, Skeleton, Status, ToastProvider, cn, useToast,
 } from "@/components/ui";
 import { activeOwnerId, apiFetch, apiJson, currentUserId, getWorkspace } from "@/lib/api";
 import { useWaitingCount } from "@/lib/liveChat";
+import { useLimits } from "@/lib/plan";
 
 type Bot = {
     id: string;
@@ -21,6 +22,11 @@ type Bot = {
 };
 
 type Filter = "all" | "active" | "unplanned";
+
+type DeletedBot = { id: string; bot_id: string; name: string; deleted_at: string | null; expires_at: string | null; conversations: number };
+
+const shortDate = (iso: string | null) =>
+    iso ? new Date(/[zZ]|[+-]\d\d:\d\d$/.test(iso) ? iso : `${iso}Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "";
 
 export default function DashboardPage() {
     return (
@@ -65,6 +71,12 @@ function Dashboard() {
     const [query, setQuery] = useState("");
     const [creating, setCreating] = useState(false);
     const [deleting, setDeleting] = useState<Bot | null>(null);
+    const [deleted, setDeleted] = useState<DeletedBot[]>([]);
+    const [restoring, setRestoring] = useState<string | null>(null);
+
+    const fetchDeleted = useCallback(() => {
+        apiJson<DeletedBot[]>("/api/bots/deleted").then(setDeleted).catch(() => setDeleted([]));
+    }, []);
 
     const fetchBots = useCallback(async (uid: string) => {
         try {
@@ -94,6 +106,7 @@ function Dashboard() {
         if (cachedName) setFirstName(cachedName);
 
         fetchBots(owner);
+        fetchDeleted();
         apiJson<{ counts: { open: number } }>("/api/questions?status=open")
             .then((q) => setOpenQuestions(q.counts.open))
             .catch(() => setOpenQuestions(null));
@@ -114,7 +127,7 @@ function Dashboard() {
                 } catch { /* ignore */ }
             })
             .catch(() => {});
-    }, [router, fetchBots]);
+    }, [router, fetchBots, fetchDeleted]);
 
     const counts = useMemo(() => {
         const list = bots ?? [];
@@ -141,11 +154,26 @@ function Dashboard() {
             const res = await apiFetch(`/api/bots/${bot.id}`, { method: "DELETE" });
             if (!res.ok) throw new Error();
             setBots((prev) => (prev ?? []).filter((b) => b.id !== bot.id));
-            toast(`Deleted ${bot.name}`);
+            toast(`Deleted ${bot.name}. You can restore it for 30 days.`);
+            fetchDeleted();
         } catch {
             toast("Couldn't delete the assistant. Try again.");
         }
         setDeleting(null);
+    };
+
+    const restoreBot = async (item: DeletedBot) => {
+        setRestoring(item.id);
+        try {
+            await apiJson(`/api/bots/deleted/${item.id}/restore`, { method: "POST" });
+            toast(`Restored ${item.name}`);
+            if (userId) fetchBots(userId);
+            fetchDeleted();
+        } catch (e) {
+            toast((e as Error).message);
+        } finally {
+            setRestoring(null);
+        }
     };
 
     return (
@@ -263,6 +291,32 @@ function Dashboard() {
                     </Card>
                 </section>
 
+                {canManage && deleted.length > 0 && (
+                    <section className="mt-6" aria-labelledby="deleted-heading">
+                        <Card>
+                            <div className="px-5 pt-4 pb-3">
+                                <h2 id="deleted-heading" className="text-sm font-medium">Recently deleted</h2>
+                                <p className="text-[13px] text-stone-500 mt-0.5">Restore an assistant with its chats and settings. Each is removed for good 30 days after it was deleted.</p>
+                            </div>
+                            <ul className="border-t border-line">
+                                {deleted.map((d) => (
+                                    <li key={d.id} className="flex items-center gap-4 px-5 py-3 border-t border-line first:border-t-0">
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-sm truncate">{d.name || "Assistant"}</p>
+                                            <p className="text-xs text-stone-500 mt-0.5">
+                                                Deleted {shortDate(d.deleted_at)} · {d.conversations} {d.conversations === 1 ? "chat" : "chats"} · removed for good on {shortDate(d.expires_at)}
+                                            </p>
+                                        </div>
+                                        <Button size="sm" onClick={() => restoreBot(d)} disabled={restoring === d.id}>
+                                            <RotateCcw size={13} /> {restoring === d.id ? "Restoring…" : "Restore"}
+                                        </Button>
+                                    </li>
+                                ))}
+                            </ul>
+                        </Card>
+                    </section>
+                )}
+
                 <Card className="mt-6 flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-4">
                     <div>
                         <p className="text-sm font-medium">Voice calls</p>
@@ -280,7 +334,7 @@ function Dashboard() {
                 open={!!deleting}
                 onClose={() => setDeleting(null)}
                 title={`Delete ${deleting?.name ?? "assistant"}?`}
-                description="Its settings, flow, knowledge and chat history are removed. This can't be undone."
+                description="Its settings, flow, knowledge and chat history are removed. You can restore it from Recently deleted for 30 days."
                 footer={<>
                     <Button variant="ghost" onClick={() => setDeleting(null)}>Cancel</Button>
                     <Button variant="danger" onClick={() => deleting && removeBot(deleting)}>Delete assistant</Button>
@@ -368,6 +422,7 @@ function NewAssistantDialog({ open, onClose, userId }: { open: boolean; onClose:
     const [templates, setTemplates] = useState<Template[] | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
+    const limits = useLimits();
 
     useEffect(() => {
         if (!open) return;
@@ -392,6 +447,19 @@ function NewAssistantDialog({ open, onClose, userId }: { open: boolean; onClose:
 
     const chosen = templates?.find((t) => t.id === template);
     const options = [{ id: "", name: "Start blank", summary: "Write its instructions and knowledge yourself." }, ...(templates ?? [])];
+
+    if (limits && limits.assistants !== null && limits.used.assistants >= limits.assistants) {
+        return (
+            <Dialog open={open} onClose={onClose} title="The free plan includes one assistant"
+                    description="Choose a plan for your assistant to add more, and to turn on voice calls, integrations and custom domains."
+                    footer={<>
+                        <Button variant="ghost" onClick={onClose}>Close</Button>
+                        <Link href="/dashboard/billing"><Button variant="primary">Choose a plan</Button></Link>
+                    </>}>
+                <span />
+            </Dialog>
+        );
+    }
 
     return (
         <Dialog

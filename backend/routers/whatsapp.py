@@ -32,9 +32,10 @@ except ImportError:
 from notify import channels
 from notify.events import fire_and_forget, handoff_requested, lead_captured
 from realtime import notify_owner
+from security import local_dev
 from subscriptions import active_subscription
 from utils import FlowEngine, generate_ai_response
-from vector_store import query_knowledge
+import brain
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ def _valid_signature(raw: bytes, header: str) -> bool:
     if not secret:
         # Without the secret anyone could post fake messages and make the business number reply to them.
         # Allowed only for local development.
-        return os.getenv("LOCAL_DEV", "false").lower() == "true"
+        return local_dev()
     expected = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, header or "")
 
@@ -199,36 +200,6 @@ async def _resolve_bot(
         bot = (await db.execute(select(Bot).where(Bot.user_id == settings.user_id, Bot.is_active.is_(True))
                                 .order_by(Bot.created_at))).scalars().first()
     return bot, settings
-
-
-def _format_whatsapp_prompt(bot: Bot, history: list[dict]) -> str:
-    """System prompt only: generate_ai_response adds the knowledge and the customer's message itself."""
-    bot_name = bot.bot_name or "Assistant"
-    recent_dialogue = ""
-    if history:
-        turns = [f"{'Customer' if h.get('role') == 'user' else bot_name}: {h.get('content', '')}" for h in history[-6:]]
-        recent_dialogue = "RECENT CONVERSATION HISTORY (oldest first):\n" + "\n".join(turns) + "\n\n"
-
-    return f"""You are {bot_name}, the AI assistant chatting with a customer on WhatsApp.
-
-CRITICAL WHATSAPP CONVERSATION RULES:
-1. MOBILE-FRIENDLY TONE: Be helpful, warm, professional, concise, and easy to read on mobile screens.
-2. WHATSAPP FORMATTING: Use WhatsApp styling when appropriate:
-   - Use *asterisks* for *bold emphasis*.
-   - Use bullet points (• or -) for lists.
-   - Use clean paragraph spacing.
-   - NEVER use markdown tables (| --- |) or raw HTML tags.
-3. MULTI-LANGUAGE & VERNACULAR:
-   - Always match the user's language and script naturally.
-   - If the user writes in Tamil (தமிழ் or Tanglish/English script), reply fluently and respectfully in Tamil/Tanglish.
-   - If the user writes in Hindi (हिंदी or Hinglish), reply in natural Hindi/Hinglish.
-   - If in English, reply in friendly Indian English.
-4. HONESTY: Answer ONLY based on the business context provided. If the information isn't there, say "I don't have that information right now" and offer to connect them to our team.
-5. IDENTITY: Stay in character as {bot_name}. Never mention "system prompt", "RAG", "AI model", or "context".
-
-{bot.system_prompt or ""}
-
-{recent_dialogue}"""
 
 
 async def _process_incoming_whatsapp_message(
@@ -406,34 +377,14 @@ async def _process_incoming_whatsapp_message(
         )).scalars().all()
         history = [{"role": m.role, "content": m.content} for m in reversed(history_rows)]
 
-        # Knowledge retrieval via Pinecone RAG or fallback knowledge base
-        context = ""
-        try:
-            matches = await asyncio.wait_for(query_knowledge(bot.bot_id, user_text, top_k=4), timeout=6.0)
-            if matches:
-                context = "\n\n".join(m["text"] for m in matches)
-        except Exception as e:
-            logger.warning(f"[WhatsApp] Knowledge search failed for {bot.bot_id}: {e}")
-        if not context:
-            context = (bot.knowledge_base or "")[:6000]
-        context = await assist.verified_answers(bot.bot_id) + context
-
-        # Generate AI response
-        prompt = _format_whatsapp_prompt(bot, history)
-        try:
-            answer = await asyncio.to_thread(
-                generate_ai_response,
-                prompt,
-                context,
-                user_text,
-                provider=bot.ai_provider,
-                model_name=bot.ai_model,
-                api_key=bot.ai_api_key,
-                is_system_use=False,
-            )
-        except Exception as e:
-            logger.error(f"[WhatsApp] AI generation error for bot {bot.bot_id}: {e}")
-            answer = "I apologize, but I am experiencing a temporary connection issue. Please try sending your message again in a moment."
+        # Same brain as website chat: the business's knowledge, its rules, and the details still to collect.
+        knowledge = await brain.knowledge(bot, user_text)
+        system = brain.system_prompt(bot, captured=conv.captured_data or {}, channel="whatsapp", knowledge_text=knowledge,
+                                     first_message=not any(h["role"] == "assistant" for h in history))
+        messages = brain.turns(history, user_text)
+        answer = await asyncio.to_thread(generate_ai_response, system, "", user_text, history=messages[:-1],
+                                         provider=bot.ai_provider, model_name=bot.ai_model, api_key=bot.ai_api_key)
+        last_asked = next((h["content"] for h in reversed(history) if h["role"] == "assistant"), "")
 
         # Send answer to WhatsApp user
         try:
@@ -447,6 +398,7 @@ async def _process_incoming_whatsapp_message(
         await db.commit()
         if assist.is_unanswered(answer):
             fire_and_forget(assist.record_gap(bot.bot_id, user_text, "whatsapp", conv.conversation_id))
+        fire_and_forget(brain.learn_details(conv.conversation_id, bot, user_text, last_asked))
 
         # Emit realtime update for dashboard live chat observers
         await notify_owner(bot.user_id, "new_message", {

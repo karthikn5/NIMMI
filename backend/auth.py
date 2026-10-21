@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from database import get_db
+from security import is_production, local_dev
 try:
     from backend.models import Bot, TeamMember, User
 except ImportError:
@@ -34,8 +35,14 @@ ROLES = ("owner", "admin", "agent")
 def _jwt_secret() -> str:
     secret = os.getenv("JWT_SECRET")
     if secret:
+        if is_production() and len(secret) < 32:
+            raise RuntimeError("JWT_SECRET is too short. Use at least 32 random characters.")
         return secret
-    # Stable fallback so tokens survive restarts; set JWT_SECRET in production.
+    if is_production():
+        # A secret derived from other settings can be guessed by anyone who learns them, and then
+        # sessions for any account can be forged. Production must have its own random secret.
+        raise RuntimeError("JWT_SECRET is not set. Refusing to start in production without it.")
+    # Stable local fallback so tokens survive restarts during development.
     seed = (os.getenv("SUPABASE_KEY", "") + os.getenv("DATABASE_URL", "") + os.getenv("RAZORPAY_KEY_SECRET", ""))
     if not seed:
         seed = "nimmi-local-dev"
@@ -52,14 +59,41 @@ def issue_token(user_id: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 
-def decode_token(token: str) -> Optional[str]:
+def _user_claims(token: str) -> Optional[dict]:
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"], options={"require": ["exp", "iat", "sub"]})
     except jwt.PyJWTError:
         return None
-    if payload.get("typ") != "user":
+    return payload if payload.get("typ") == "user" else None
+
+
+def decode_token(token: str) -> Optional[str]:
+    """The user id in a well-formed, unexpired session token. Use `user_for_token` to also check revocation."""
+    claims = _user_claims(token)
+    return claims.get("sub") if claims else None
+
+
+def _issued_after(claims: dict, valid_after: Optional[datetime]) -> bool:
+    if not valid_after:
+        return True
+    cutoff = valid_after if valid_after.tzinfo else valid_after.replace(tzinfo=timezone.utc)
+    return int(claims.get("iat", 0)) >= int(cutoff.timestamp())
+
+
+async def user_for_token(token: Optional[str], db: AsyncSession) -> Optional[str]:
+    """The signed-in user's id, if the token is valid and wasn't revoked (password change, sign out everywhere)."""
+    claims = _user_claims(token or "")
+    if not claims:
         return None
-    return payload.get("sub")
+    row = (await db.execute(select(User.id, User.tokens_valid_after).where(User.id == claims["sub"]))).first()
+    if not row or not _issued_after(claims, row.tokens_valid_after):
+        return None
+    return row.id
+
+
+def revoke_sessions(user: User) -> None:
+    """Sign the user out everywhere; tokens issued from now on stay valid."""
+    user.tokens_valid_after = datetime.now(timezone.utc).replace(microsecond=0)
 
 
 def issue_scoped_token(subject: str, scope: str, ttl_seconds: int) -> str:
@@ -98,13 +132,8 @@ def _bearer(request: Request) -> Optional[str]:
 
 
 async def _resolve(token: Optional[str], workspace: Optional[str], db: AsyncSession) -> Optional[AuthContext]:
-    if not token:
-        return None
-    user_id = decode_token(token)
+    user_id = await user_for_token(token, db)
     if not user_id:
-        return None
-    user = (await db.execute(select(User.id).where(User.id == user_id))).scalar_one_or_none()
-    if not user:
         return None
     if not workspace or workspace == user_id:
         return AuthContext(user_id=user_id, owner_id=user_id, role="owner")
@@ -155,7 +184,7 @@ async def get_owned_bot(bot_id: str, ctx: AuthContext, db: AsyncSession) -> Bot:
     bot = (await db.execute(select(Bot).where(Bot.bot_id == clean))).scalars().first()
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
-    if os.getenv("LOCAL_DEV", "false").lower() == "true":
+    if local_dev():
         return bot
     if bot.user_id != ctx.owner_id:
         raise HTTPException(status_code=404, detail="Bot not found")
@@ -177,7 +206,14 @@ def rate_limit(key: str, limit: int, window_sec: int) -> None:
 
 
 def client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    """
+    The caller's address for rate limits. Proxies append to X-Forwarded-For, so the trustworthy
+    entry is the one our own proxy added (the last one, with Railway's single hop). The first entry
+    is whatever the caller typed and can't be trusted. TRUSTED_PROXY_HOPS adjusts this (e.g. 2 behind
+    Cloudflare plus Railway; 0 when the app is reached directly).
+    """
+    hops = int(os.getenv("TRUSTED_PROXY_HOPS", "1") or 0)
+    forwarded = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+    if hops > 0 and forwarded:
+        return forwarded[-min(hops, len(forwarded))]
     return request.client.host if request.client else "unknown"

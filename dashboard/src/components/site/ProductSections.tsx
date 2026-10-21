@@ -44,7 +44,7 @@ export function Hero() {
                         <PrimaryLink href="/auth/signup">Start free <ArrowRight size={16} /></PrimaryLink>
                         <SecondaryLink href="#how">See how it works</SecondaryLink>
                     </div>
-                    <p className="site-rise text-[13px] text-stone-500 mt-5" style={{ "--rise-delay": "320ms" } as CSSProperties}>Build and test free, with 30 voice minutes. Plans from ₹833 a month, billed yearly.</p>
+                    <p className="site-rise text-[13px] text-stone-500 mt-5" style={{ "--rise-delay": "320ms" } as CSSProperties}>Start free with one assistant and one website. Plans from ₹833 a month, billed yearly.</p>
                 </div>
 
                 <div className="site-rise relative mx-auto w-full max-w-[460px] lg:max-w-none" style={{ "--rise-delay": "200ms" } as CSSProperties}>

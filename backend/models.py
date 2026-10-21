@@ -1,7 +1,9 @@
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, JSON, Integer, Float, UniqueConstraint
 from sqlalchemy.sql import func
 import uuid
+from datetime import datetime, timezone
 from database import Base
+from secretbox import EncryptedText  # secrets are stored encrypted at rest
 
 class User(Base):
     __tablename__ = "users"
@@ -14,6 +16,7 @@ class User(Base):
     subscription_tier = Column(String, default="Free")
     stripe_customer_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    tokens_valid_after = Column(DateTime(timezone=True), nullable=True)  # sessions issued earlier are signed out
 
 class Bot(Base):
     __tablename__ = "bots"
@@ -26,7 +29,7 @@ class Bot(Base):
     knowledge_base = Column(Text, nullable=True)
     ai_provider = Column(String, default="google") # google, openai, groq
     ai_model = Column(String, default="gemini-3-flash-preview")
-    ai_api_key = Column(String, nullable=True)
+    ai_api_key = Column(EncryptedText, nullable=True)
     behaviour = Column(JSON, nullable=True)  # reply settings from the builder; see behaviour.py
     is_active = Column(Boolean, default=True)
     export_unlocked = Column(Boolean, default=False)
@@ -325,16 +328,16 @@ class IntegrationSettings(Base):
     whatsapp_template = Column(String, nullable=True)
     whatsapp_language = Column(String, default="en")
     webhook_url = Column(String, nullable=True)
-    webhook_secret = Column(String, nullable=True)
+    webhook_secret = Column(EncryptedText, nullable=True)
     leadsquared_enabled = Column(Boolean, default=False)
     leadsquared_host = Column(String, nullable=True)
-    leadsquared_access_key = Column(String, nullable=True)
-    leadsquared_secret_key = Column(String, nullable=True)
+    leadsquared_access_key = Column(EncryptedText, nullable=True)
+    leadsquared_secret_key = Column(EncryptedText, nullable=True)
     # WhatsApp 2-Way AI Chatbot
     whatsapp_chat_enabled = Column(Boolean, default=False, nullable=True)
     whatsapp_bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="SET NULL"), nullable=True)
     whatsapp_phone_number_id = Column(String, nullable=True)
-    whatsapp_access_token = Column(String, nullable=True)
+    whatsapp_access_token = Column(EncryptedText, nullable=True)
     whatsapp_verify_token = Column(String, nullable=True)
     whatsapp_business_account_id = Column(String, nullable=True)
     # Email: which team alerts go out, and automatic emails to customers
@@ -351,14 +354,30 @@ class EmailJob(Base):
     __table_args__ = (UniqueConstraint("kind", "ref_id", name="uq_email_job"),)
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    kind = Column(String, nullable=False)        # chat_lead, call_lead
-    ref_id = Column(String(36), nullable=False)  # conversation or call id
+    kind = Column(String, nullable=False)        # automation (with "#2"/"#3" for follow-ups) or "broadcast:<id>"
+    ref_id = Column(String(36), nullable=False)  # conversation, call or callback id; for bulk email a hash of the address
     to_email = Column(String, nullable=False)
     subject = Column(String, nullable=False)
     body = Column(Text, nullable=False)
     send_at = Column(DateTime(timezone=True), index=True)
     status = Column(String, default="queued", index=True)  # queued, sent, failed, cancelled
     error = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    automation = Column(String, nullable=True)  # chat_lead, call_lead, goal_met, call_missed, handoff_done
+    step = Column(Integer, nullable=True)  # 1, 2, 3 in a sequence
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    broadcast_id = Column(String(36), nullable=True, index=True)  # set for bulk emails
+
+
+class EmailBroadcast(Base):
+    """A bulk email to a group of leads; each recipient is an EmailJob with this broadcast_id."""
+    __tablename__ = "email_broadcasts"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    subject = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    audience = Column(JSON, default=dict)  # {source, days, hot_only}
+    recipients = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -422,3 +441,68 @@ class SavedReply(Base):
     title = Column(String(80), nullable=False)
     body = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DeletedItem(Base):
+    """Something a workspace deleted, kept for 30 days so it can be restored (see recycle.py)."""
+    __tablename__ = "deleted_items"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)  # the workspace
+    kind = Column(String, nullable=False)  # bot
+    ref_id = Column(String(36), nullable=False, index=True)
+    label = Column(String, nullable=True)
+    deleted_by = Column(String(36), nullable=True)
+    payload = Column(JSON, nullable=False)
+    deleted_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class Site(Base):
+    """A website the workspace publishes on Nimmi (static files), at <slug>.<SITES_DOMAIN> and optionally its own domain."""
+    __tablename__ = "sites"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)  # the workspace
+    name = Column(String(80), nullable=False)
+    slug = Column(String(63), unique=True, nullable=False, index=True)
+    current_deploy_id = Column(String(36), nullable=True)  # what visitors see; switched only once a deploy is complete
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="SET NULL"), nullable=True)  # assistant added to every page
+    spa = Column(String(8), default="auto")  # auto | on | off: unknown paths show index.html (single-page apps)
+    # Git: the repository to publish from, and a secret deploy-hook link (e.g. a GitHub webhook) to publish on push.
+    git_url = Column(String(300), nullable=True)
+    git_branch = Column(String(100), nullable=True)
+    git_folder = Column(String(200), nullable=True)
+    git_token = Column(EncryptedText, nullable=True)  # for private repositories
+    hook_secret = Column(String(64), nullable=True)
+    # Custom domain (paid plans): verified by a TXT record, served once the edge has its certificate.
+    custom_domain = Column(String(253), unique=True, nullable=True)
+    domain_status = Column(String(20), nullable=True)  # pending | issuing | active | failed
+    domain_token = Column(String(64), nullable=True)
+    domain_provider_id = Column(String(100), nullable=True)  # Cloudflare custom hostname id
+    domain_error = Column(String(300), nullable=True)
+    domain_checked_at = Column(DateTime(timezone=True), nullable=True)
+    domain_added_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(20), default="active")  # active | blocked (abuse)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)  # kept 30 days, then removed
+
+
+class SiteDeploy(Base):
+    """One published version of a site. Files are stored once per site by content hash (see sites/storage.py)."""
+    __tablename__ = "site_deploys"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    site_id = Column(String(36), ForeignKey("sites.id", ondelete="CASCADE"), index=True)
+    status = Column(String(20), default="building")  # building | ready | failed
+    source = Column(String(20), nullable=False)  # upload | git | hook
+    files = Column(JSON, nullable=True)  # {"path/in/site.html": ["sha256", size]}
+    file_count = Column(Integer, default=0)
+    total_bytes = Column(Integer, default=0)
+    spa = Column(Boolean, default=False)  # detected: one HTML page that routes itself
+    commit_sha = Column(String(64), nullable=True)
+    commit_message = Column(String(300), nullable=True)
+    note = Column(String(300), nullable=True)  # e.g. "Skipped 3 files (.env, node_modules)"
+    error = Column(String(500), nullable=True)
+    created_by = Column(String(36), nullable=True)
+    # Set here, to the microsecond: deploys started in the same second still sort in order.
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    finished_at = Column(DateTime(timezone=True), nullable=True)

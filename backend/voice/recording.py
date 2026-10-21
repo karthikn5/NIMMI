@@ -98,11 +98,17 @@ async def save(call_id: str, wav: bytes) -> str:
                     headers={**supa.headers(key, "audio/wav"), "x-upsert": "true"},
                     content=wav,
                 )
+                if resp.status_code not in (200, 201) and await supa.ensure_bucket(client, url, key, BUCKET, public=False):
+                    resp = await client.post(
+                        f"{url}/storage/v1/object/{BUCKET}/{name}",
+                        headers={**supa.headers(key, "audio/wav"), "x-upsert": "true"},
+                        content=wav,
+                    )
             if resp.status_code in (200, 201):
                 return f"supabase:{name}"
-            logger.warning(f"Recording upload failed ({resp.status_code}): {resp.text[:200]}; saving locally")
+            logger.error(f"Recording upload failed ({resp.status_code}): {resp.text[:200]}; saving on the server disk")
         except Exception as e:
-            logger.warning(f"Recording upload error: {e}; saving locally")
+            logger.error(f"Recording upload error: {e}; saving on the server disk")
     os.makedirs(LOCAL_DIR, exist_ok=True)
     path = os.path.join(LOCAL_DIR, name)
     await asyncio.to_thread(lambda: open(path, "wb").write(wav))

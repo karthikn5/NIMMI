@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 import realtime  # noqa: E402
 from database import init_db  # noqa: E402
+from security import SecurityMiddleware, is_production  # noqa: E402
 from payments import router as payments_router  # noqa: E402
 from routers.analytics import router as analytics_router  # noqa: E402
 from routers.auth_routes import router as auth_router  # noqa: E402
@@ -42,6 +43,7 @@ from routers.bots import router as bots_router  # noqa: E402
 from routers.chat import router as chat_router  # noqa: E402
 from routers.handoffs import router as handoffs_router  # noqa: E402
 from routers.integrations import router as integrations_router  # noqa: E402
+from routers.email_center import router as email_center_router  # noqa: E402
 from routers.team import router as team_router  # noqa: E402
 from voice import scheduler as voice_scheduler  # noqa: E402
 from voice.numbers_api import router as numbers_router  # noqa: E402
@@ -50,6 +52,9 @@ from voice.campaigns_api import router as campaigns_router  # noqa: E402
 from voice.router import router as voice_router  # noqa: E402
 from routers.whatsapp import router as whatsapp_router  # noqa: E402
 from routers.workspace import router as workspace_router  # noqa: E402
+from routers.sites import router as sites_router  # noqa: E402
+from plans import router as plans_router  # noqa: E402
+from sites.serve import SitesMiddleware  # noqa: E402
 
 
 @asynccontextmanager
@@ -58,6 +63,12 @@ async def lifespan(app: FastAPI):
         await init_db()
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
+    supabase_url = os.getenv("SUPABASE_URL", "")
+    if "your-project" in supabase_url or "your_supa" in os.getenv("SUPABASE_KEY", ""):
+        logger.error("SUPABASE_URL / SUPABASE_KEY still hold the example placeholders: Google sign-in and uploads won't work.")
+    if is_production() and not (supabase_url and os.getenv("SUPABASE_SERVICE_ROLE_KEY")):
+        logger.error("File storage isn't configured (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY). Logo uploads will "
+                     "fail, recordings are kept only until the next deploy, and daily backups are off.")
     if os.getenv("DISABLE_SCHEDULER", "").lower() != "true":
         voice_scheduler.start()
         if os.getenv("PINECONE_API_KEY"):
@@ -68,12 +79,16 @@ async def lifespan(app: FastAPI):
     await voice_scheduler.stop()
 
 
-app = FastAPI(title="Nimmi AI Backend", lifespan=lifespan)
+# The interactive API docs are a map of every endpoint; keep them off the public server.
+_docs = {} if not is_production() else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+app = FastAPI(title="Nimmi AI Backend", lifespan=lifespan, **_docs)
 
 # Browsers call from the dashboard and from customer websites (the widget), so CORS stays open;
 # dashboard endpoints are protected by bearer tokens, not cookies.
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(SecurityMiddleware)  # body size limits and security headers on every API response
+app.add_middleware(SitesMiddleware)  # outermost: visits to published websites are answered before the API
 
 realtime.register(SocketManager(app=app, mount_location="/socket.io", cors_allowed_origins="*"))
 
@@ -81,7 +96,8 @@ os.makedirs(os.path.join(_HERE, "static", "uploads"), exist_ok=True)
 app.mount("/static", StaticFiles(directory=os.path.join(_HERE, "static")), name="static")
 
 for router in (auth_router, bots_router, chat_router, handoffs_router, numbers_router, phone_accounts_router, campaigns_router, voice_router,
-               integrations_router, analytics_router, team_router, whatsapp_router, workspace_router):
+               integrations_router, email_center_router, analytics_router, team_router, whatsapp_router, workspace_router,
+               sites_router, plans_router):
     app.include_router(router)
 app.include_router(payments_router, prefix="/api/payments")
 

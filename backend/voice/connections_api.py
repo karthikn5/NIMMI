@@ -21,6 +21,7 @@ from database import get_db
 from backend.models import PhoneNumber, TelephonyAccount
 from phone import display, to_e164
 from voice import accounts, exotel, twilio
+import plans
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/voice", tags=["phone accounts"])
@@ -82,6 +83,7 @@ async def list_accounts(ctx: AuthContext = Depends(require_owner), db: AsyncSess
 @router.post("/phone-accounts")
 async def connect_account(req: ConnectRequest, ctx: AuthContext = Depends(require_owner), db: AsyncSession = Depends(get_db)):
     """Check the keys with the provider, then save them encrypted. Connecting the same account again updates its keys."""
+    await plans.require(db, ctx.owner_id, "voice")
     rate_limit(f"phoneacct:{ctx.owner_id}", 10, 600)
     if not twilio.public_base():
         raise HTTPException(status_code=503, detail="The server's public address (PUBLIC_BACKEND_URL) isn't set yet")
@@ -176,6 +178,7 @@ class AddNumbers(BaseModel):
 @router.post("/phone-accounts/{account_id}/numbers")
 async def add_numbers(account_id: str, req: AddNumbers, ctx: AuthContext = Depends(require_owner), db: AsyncSession = Depends(get_db)):
     """Use these numbers in Nimmi. Twilio numbers are pointed at Nimmi automatically."""
+    await plans.require(db, ctx.owner_id, "voice")
     acc = await _owned(db, ctx, account_id)
     if req.bot_id:
         await get_owned_bot(req.bot_id, ctx, db)

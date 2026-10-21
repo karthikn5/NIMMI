@@ -16,7 +16,7 @@ BASE = {
 def _capture(monkeypatch):
     sent = []
 
-    async def fake_send(to, subject, text, html_body=None, reply_to=None, from_name=None):
+    async def fake_send(to, subject, text, html_body=None, reply_to=None, from_name=None, unsubscribe_url=None, **_):
         sent.append({"to": to, "subject": subject, "text": text, "html": html_body, "reply_to": reply_to, "from": from_name})
         return True
     monkeypatch.setattr(email, "send_email", fake_send)
@@ -37,8 +37,8 @@ def test_settings_validate_and_round_trip(client, make_user):
     assert r.status_code == 200, r.text
     s = r.json()
     assert s["alert_email"] == "sales@acme.in, owner@acme.in" and s["alert_calls"] is False and s["alert_handoffs"] is True
-    assert s["automations"]["call_lead"]["delay"] == "1h" and s["automations"]["chat_lead"]["enabled"] is False
-    assert s["automations"]["chat_lead"]["subject"]  # defaults fill in what wasn't saved
+    assert s["automations"]["call_lead"]["steps"][0]["delay"] == "1h" and s["automations"]["chat_lead"]["enabled"] is False
+    assert s["automations"]["chat_lead"]["steps"][0]["subject"]  # defaults fill in what wasn't saved
     assert "summary" in s["placeholders"]
 
 

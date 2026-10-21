@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Copy } from "lucide-react";
 import { Button, Card, EmptyState, Input, Segmented, SettingRow, Skeleton, Status, Switch, useToast } from "@/components/ui";
-import { LOG_KIND, type LogRow } from "@/lib/integrations";
+import { logKind, type LogRow } from "@/lib/integrations";
 import { formatWhen } from "@/lib/voice/api";
 import { PanelHeader, type PanelProps } from "./shared";
 
@@ -69,7 +69,7 @@ type Filter = "all" | "email" | "whatsapp" | "webhook" | "crm";
 
 export function ActivityPanel({ log, onRefresh }: { log: LogRow[] | null; onRefresh: () => void }) {
     const [filter, setFilter] = useState<Filter>("all");
-    const rows = useMemo(() => (log ?? []).filter((r) => filter === "all" || LOG_KIND[r.kind]?.channel === filter), [log, filter]);
+    const rows = useMemo(() => (log ?? []).filter((r) => filter === "all" || logKind(r.kind)?.channel === filter), [log, filter]);
 
     return (
         <>
@@ -88,7 +88,7 @@ export function ActivityPanel({ log, onRefresh }: { log: LogRow[] | null; onRefr
                     <ul>
                         {rows.map((r) => (
                             <li key={r.id} className="grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_6.5rem_minmax(0,1.3fr)_7.5rem] gap-x-4 gap-y-1 px-5 py-3 border-t border-line first:border-t-0 text-[13px]">
-                                <span>{LOG_KIND[r.kind]?.label ?? r.kind}</span>
+                                <span>{logKind(r.kind)?.label ?? r.kind}</span>
                                 <Status tone={r.status === "sent" ? "good" : r.status === "failed" ? "bad" : "neutral"}>
                                     {r.status === "sent" ? "Sent" : r.status === "failed" ? "Failed" : r.status === "skipped" ? "Skipped" : "Sending"}
                                 </Status>

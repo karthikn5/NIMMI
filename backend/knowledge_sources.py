@@ -6,6 +6,7 @@ replace and remove those blocks, so the builder can show sources as a list.
 """
 import re
 
+SUMMARY = "Business summary"  # written by Nimmi from the other sources (brain.refresh_summary)
 _MARK = re.compile(r"^--- (?:Source: (?P<name>.+?)|(?P<yt>YouTube Source)) ---$", re.MULTILINE)
 
 
@@ -37,19 +38,43 @@ def put(text: str, name: str, body: str) -> str:
     return join(written, blocks)
 
 
+def _page_key(url: str) -> str:
+    return re.sub(r"^https?://(www\.)?", "", url.strip().lower()).rstrip("/")
+
+
+def put_site(text: str, name: str, body: str, page_urls: list[str]) -> str:
+    """Add a whole website as one source, dropping earlier copies of the site or of its pages."""
+    covered = {_page_key(u) for u in page_urls} | {_page_key(name)}
+    written, blocks = split(text)
+    return join(written, [(n, b) for n, b in blocks if _page_key(n) not in covered] + [(name, body.strip())])
+
+
 def remove(text: str, name: str) -> tuple[str, bool]:
     written, blocks = split(text)
     kept = [(n, b) for n, b in blocks if n != name]
     return join(written, kept), len(kept) != len(blocks)
 
 
+def keep(old: str, new: str, name: str) -> str:
+    """The new text, keeping source `name` from the old text if the new text doesn't have it."""
+    had = dict(split(old)[1])
+    if name not in had or name in dict(split(new)[1]):
+        return new
+    return put(new, name, had[name])
+
+
 def listing(text: str) -> list[dict]:
     """Sources for the builder: name, kind and size."""
     _, blocks = split(text)
     def kind(name: str) -> str:
+        if name == SUMMARY:
+            return "summary"
         if name.startswith("file: "):
             return "file"
         if "youtube.com" in name or "youtu.be" in name or name == "YouTube video":
             return "youtube"
         return "website"
-    return [{"name": n, "kind": kind(n), "chars": len(b)} for n, b in blocks]
+
+    def pages(body: str) -> int:
+        return max(1, len(re.findall(r"^## https?://\S+\s*$", body, re.MULTILINE)))  # not "(site-wide details)"
+    return [{"name": n, "kind": kind(n), "chars": len(b), "pages": pages(b)} for n, b in blocks]

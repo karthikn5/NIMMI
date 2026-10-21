@@ -213,16 +213,33 @@ export const assetUrl = (url: string) =>
 
 /* ---------- Behaviour (stored as the bot's behaviour; see backend/behaviour.py) ---------- */
 
+export type StandardField = "name" | "phone" | "email";
+export type Collect = {
+    enabled: boolean;
+    fields: StandardField[];
+    /** The business's own details, such as Budget or City (up to 6). */
+    custom: string[];
+    timing: "early" | "after_answer" | "interest";
+};
+
 export type Behaviour = {
     reply_length: "short" | "balanced" | "detailed";
     language: string;
     ask_for_contact: boolean;
     offer_human: boolean;
     fallback_followup: string;
+    collect: Collect;
 };
+
+export const STANDARD_FIELDS: { value: StandardField; label: string }[] = [
+    { value: "name", label: "Name" }, { value: "phone", label: "Phone number" }, { value: "email", label: "Email" },
+];
+export const MAX_CUSTOM_FIELDS = 6;
+export const COLLECT_DEFAULTS: Collect = { enabled: true, fields: ["name", "phone", "email"], custom: [], timing: "after_answer" };
 
 export const BEHAVIOUR_DEFAULTS: Behaviour = {
     reply_length: "balanced", language: "match", ask_for_contact: false, offer_human: true, fallback_followup: "",
+    collect: COLLECT_DEFAULTS,
 };
 
 export const LANGUAGES = [
@@ -232,4 +249,6 @@ export const LANGUAGES = [
     { value: "gu", label: "Gujarati" },
 ];
 
-export const normalizeBehaviour = (raw: Partial<Behaviour> | null | undefined): Behaviour => ({ ...BEHAVIOUR_DEFAULTS, ...(raw || {}) });
+export const normalizeBehaviour = (raw: Partial<Behaviour> | null | undefined): Behaviour => ({
+    ...BEHAVIOUR_DEFAULTS, ...(raw || {}), collect: { ...COLLECT_DEFAULTS, ...(raw?.collect || {}) },
+});

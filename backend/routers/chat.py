@@ -1,29 +1,29 @@
 """Public endpoints used by the chat widget and demo page."""
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime
 from typing import List, Optional
 
-import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from auth import AuthContext, get_optional_ctx
+from auth import AuthContext, client_ip, get_optional_ctx, rate_limit
 from database import async_session, get_db
 from backend.models import Bot, Conversation, Message
-from netsafe import UnsafeUrl, assert_public_url
+from netsafe import UnsafeUrl, assert_public_url, safe_client
 import assist
 import behaviour
 from notify.events import handoff_requested, fire_and_forget, lead_captured
 from phone import extract_contact
 from realtime import notify_owner
 from subscriptions import active_subscription
-from utils import FlowEngine, generate_ai_response, generate_ai_response_stream
-from vector_store import query_knowledge
+from utils import generate_ai_response, generate_ai_response_stream
+import brain
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -33,45 +33,70 @@ HUMAN_KEYWORDS = ["talk to human", "agent", "human", "speak to someone", "repres
 EXPIRED_TEXT = "Subscription Expired: This bot is currently inactive. Please renew your subscription to continue chatting."
 
 
+# Sizes are capped so one request can't run up AI costs or fill the database.
+BotId = Field(..., max_length=40)
+SessionId = Field(..., min_length=1, max_length=120)
+MAX_FIELDS = 60  # details one conversation can collect
+
+
 class ChatMessage(BaseModel):
-    bot_id: str
-    message: str
-    visitor_session_id: str
-    history: List[dict] = []
+    bot_id: str = BotId
+    message: str = Field(..., min_length=1, max_length=4000)
+    visitor_session_id: str = SessionId
+    history: List[dict] = Field(default_factory=list)  # only the last 20 turns are kept
     is_demo: Optional[bool] = False
+
+    @field_validator("history")
+    @classmethod
+    def _clean_history(cls, turns: List[dict]) -> List[dict]:
+        # Only user/assistant turns, text only, and not too long (they're sent to the AI).
+        return [{"role": "user" if t.get("role") == "user" else "assistant", "content": str(t.get("content") or t.get("text") or "")[:4000]}
+                for t in turns[-20:] if isinstance(t, dict)]
 
 
 class VariableCapture(BaseModel):
-    bot_id: str
-    visitor_session_id: str
-    variable_name: str
-    variable_value: str
+    bot_id: str = BotId
+    visitor_session_id: str = SessionId
+    variable_name: str = Field(..., min_length=1, max_length=80)
+    variable_value: str = Field("", max_length=50_000)  # stored up to 2000 characters
 
 
 class AIPromptRequest(BaseModel):
-    bot_id: str
-    prompt: str
-    visitor_session_id: str
-    context: Optional[str] = ""
+    bot_id: str = BotId
+    prompt: str = Field(..., max_length=4000)
+    visitor_session_id: str = SessionId
+    context: Optional[str] = Field("", max_length=200_000)  # the flow's collected details; the first 8000 characters are used
 
 
 class HTTPProxyRequest(BaseModel):
-    url: str
-    method: str = "GET"
-    headers: Optional[dict] = {}
-    body: Optional[dict] = {}
+    bot_id: str = BotId
+    url: str = Field(..., max_length=2000)
+    method: str = Field("GET", max_length=10)
+    body: Optional[dict] = Field(default_factory=dict)
 
 
 class GoogleSheetsSyncRequest(BaseModel):
-    bot_id: str
-    spreadsheet_id: str
-    sheet_name: str = "Sheet1"
+    bot_id: str = BotId
+    spreadsheet_id: str = Field(..., max_length=200)
+    sheet_name: str = Field("Sheet1", max_length=100)
     data: dict
 
 
 class ManualHandoffRequest(BaseModel):
-    bot_id: str
-    visitor_session_id: str
+    bot_id: str = BotId
+    visitor_session_id: str = SessionId
+
+
+def _limit(request: Request, name: str, bot_id: str, per_minute: int) -> None:
+    """Public endpoints: per visitor address, per assistant and overall, so scripts can't flood them."""
+    ip = client_ip(request)
+    rate_limit(f"{name}:{ip}:{bot_id}", per_minute, 60)
+    rate_limit(f"{name}:{ip}", per_minute * 3, 60)
+    rate_limit(f"{name}-hour:{ip}", per_minute * 30, 3600)
+
+
+def _flow_nodes(bot: Bot, *types: str) -> list[dict]:
+    return [n.get("data") or {} for n in (bot.flow_data or {}).get("nodes", []) if n.get("type") in types]
 
 
 async def _load_bot(bot_id: str, db: AsyncSession) -> Bot:
@@ -100,18 +125,6 @@ async def _conversation(bot: Bot, session_id: str, db: AsyncSession) -> Optional
     )).scalars().first()
 
 
-async def _knowledge(bot: Bot, query: str, top_k: int, limit: int) -> str:
-    """The business's confirmed answers first, then the closest matches from its knowledge."""
-    confirmed = await assist.verified_answers(bot.bot_id)
-    try:
-        matches = await asyncio.wait_for(query_knowledge(bot.bot_id, query, top_k), timeout=6.0)
-        if matches:
-            return confirmed + "\n\n".join(m["text"] for m in matches)
-    except Exception as e:
-        logger.warning(f"Knowledge search failed for {bot.bot_id}: {e}")
-    return confirmed + (bot.knowledge_base or "")[:limit]
-
-
 def _after_answer(bot: Bot, conversation_id: Optional[str], question: str, answer: str, channel: str = "chat") -> None:
     """Questions the assistant couldn't answer go to the Questions page for the business to answer."""
     if assist.is_unanswered(answer):
@@ -134,38 +147,11 @@ async def _request_handoff(bot: Bot, conv: Conversation, message: str) -> None:
     })
 
 
-def _persona_prompt(bot: Bot, first_message: bool) -> str:
-    name = bot.bot_name or "Assistant"
-    intro = (f'Introduce yourself naturally in this first message: "Hi, I am {name}, your personal assistant from [Company/Name]".'
-             if first_message else
-             "Do NOT introduce yourself again. You have already introduced yourself. Get straight to the answer without repeating your name or role.")
-    return f"""You are {name}. You must ALWAYS respond in first person as {name}.
-Speak naturally as a human assistant.
-
-YOUR IDENTITY:
-- Name: {name}
-- Role: Personal Assistant
-- Organization/Company: Find the company name or the person's name in the "INTERNAL KNOWLEDGE" below.
-
-INTRODUCTION RULE:
-{intro}
-
-STRICT RULES:
-1. NEVER mention technical terms like "RAG", "AI model", "knowledge base", "context", or "database".
-2. NO HALLUCINATION: Only answer using the "INTERNAL KNOWLEDGE" provided. If the information is not there, say "{behaviour.fallback(bot.behaviour)}"
-3. CORRECT SPACING: Ensure you use proper spacing between words.
-4. BE CONCISE: Don't repeat your name in every sentence.
-
-{bot.system_prompt or ""}
-{behaviour.rules(bot.behaviour)}
-
-Adopt the persona fully. Be helpful, natural, and stay in character."""
-
-
 async def _pre_ai(chat: ChatMessage, bot: Bot, db: AsyncSession):
     """
-    Shared checks before calling the AI: human takeover, handoff keywords and
-    the visual flow. Returns (conversation, replies_or_None, extra_fields).
+    Shared checks before calling the AI: human takeover and handoff keywords.
+    Returns (conversation, replies_or_None, extra_fields). The visual flow runs in the widget itself
+    (it asks the questions and saves the answers), so it isn't run again here.
     """
     conv = await _conversation(bot, chat.visitor_session_id, db)
     if conv and conv.handoff_status == "human":
@@ -185,23 +171,6 @@ async def _pre_ai(chat: ChatMessage, bot: Bot, db: AsyncSession):
                          else "I've notified a human agent. They will join the chat shortly. Please wait.")
         return conv, [reply], {"handoff_status": "pending"}
 
-    if bot.flow_data and bot.flow_data.get("nodes"):
-        current = conv.current_node_id if conv else None
-        first_user_message = not any(m.get("role") == "user" for m in chat.history)
-        if current or first_user_message:
-            flow_messages, next_node, handoff = FlowEngine.process(bot.flow_data, current)
-            if flow_messages:
-                if not conv:
-                    conv = Conversation(bot_id=bot.bot_id, visitor_session_id=chat.visitor_session_id)
-                    db.add(conv)
-                conv.current_node_id = next_node
-                if handoff:
-                    conv.handoff_status, conv.handoff_requested = "pending", True
-                await db.commit()
-                if handoff:
-                    await _request_handoff(bot, conv, chat.message)
-                return conv, flow_messages, {}
-
     if not conv:
         conv = Conversation(bot_id=bot.bot_id, visitor_session_id=chat.visitor_session_id)
         db.add(conv)
@@ -210,15 +179,16 @@ async def _pre_ai(chat: ChatMessage, bot: Bot, db: AsyncSession):
 
 
 class AnswerFeedback(BaseModel):
-    bot_id: str
-    visitor_session_id: str
-    question: str
+    bot_id: str = BotId
+    visitor_session_id: str = SessionId
+    question: str = Field(..., max_length=10_000)
     helpful: bool
 
 
 @router.post("/chat/feedback")
-async def answer_feedback(data: AnswerFeedback, db: AsyncSession = Depends(get_db)):
+async def answer_feedback(data: AnswerFeedback, request: Request, db: AsyncSession = Depends(get_db)):
     """A visitor rated an answer. Unhelpful ones go to Questions, so the business can answer them properly."""
+    _limit(request, "feedback", data.bot_id, 20)
     bot = await _load_bot(data.bot_id, db)
     conv = (await db.execute(select(Conversation).where(
         Conversation.bot_id == bot.bot_id, Conversation.visitor_session_id == data.visitor_session_id))).scalars().first()
@@ -230,7 +200,8 @@ async def answer_feedback(data: AnswerFeedback, db: AsyncSession = Depends(get_d
 
 
 @router.post("/chat/message")
-async def chat_message(chat: ChatMessage, ctx: Optional[AuthContext] = Depends(get_optional_ctx), db: AsyncSession = Depends(get_db)):
+async def chat_message(chat: ChatMessage, request: Request, ctx: Optional[AuthContext] = Depends(get_optional_ctx), db: AsyncSession = Depends(get_db)):
+    _limit(request, "chat", chat.bot_id, 30)
     bot = await _load_bot(chat.bot_id, db)
     if not await _plan_ok(bot, bool(chat.is_demo), ctx, db):
         return {"answer": EXPIRED_TEXT, "bot_id": chat.bot_id, "expired": True}
@@ -241,27 +212,40 @@ async def chat_message(chat: ChatMessage, ctx: Optional[AuthContext] = Depends(g
         await _save_turn(conv.conversation_id, chat.message, reply)
         return {"answer": reply, "bot_id": chat.bot_id, **extra}
 
-    context = await _knowledge(bot, chat.message, 5, 8000)
-    try:
-        answer = await asyncio.to_thread(
-            generate_ai_response, _persona_prompt(bot, len(chat.history) == 0), context, chat.message,
-            provider=bot.ai_provider, model_name=bot.ai_model, api_key=bot.ai_api_key, is_system_use=False,
-        )
-    except Exception as e:
-        logger.error(f"AI response error: {e}")
-        answer = "Sorry, I'm having trouble thinking right now. Please try again."
+    system, messages = await _brief(bot, conv, chat)
+    answer = await asyncio.to_thread(generate_ai_response, system, "", messages[-1]["content"], history=messages[:-1],
+                                     provider=bot.ai_provider, model_name=bot.ai_model, api_key=bot.ai_api_key)
     await _save_turn(conv.conversation_id, chat.message, answer)
     _after_answer(bot, conv.conversation_id, chat.message, answer)
+    fire_and_forget(brain.learn_details(conv.conversation_id, bot, chat.message, _last_assistant(chat.history)))
     return {"answer": answer, "bot_id": chat.bot_id}
 
 
+def _last_assistant(history: List[dict]) -> str:
+    return next((h.get("content", "") for h in reversed(history or []) if h.get("role") == "assistant"), "")
+
+
+async def _brief(bot: Bot, conv: Conversation, chat: ChatMessage) -> tuple[str, list[dict]]:
+    """The assistant's instructions (with knowledge and what it still needs to learn) and the conversation."""
+    knowledge = await brain.knowledge(bot, chat.message)
+    first = not any(h.get("role") == "assistant" for h in chat.history)
+    system = brain.system_prompt(bot, captured=conv.captured_data or {}, first_message=first, channel="chat", knowledge_text=knowledge)
+    return system, brain.turns(chat.history, chat.message)
+
+
+def _sse(text: str) -> str:
+    """One streamed piece. JSON-encoded so line breaks inside an answer survive the event stream."""
+    return f"data: {json.dumps(text)}\n\n"
+
+
 @router.post("/chat/message/stream")
-async def chat_message_stream(chat: ChatMessage, ctx: Optional[AuthContext] = Depends(get_optional_ctx), db: AsyncSession = Depends(get_db)):
+async def chat_message_stream(chat: ChatMessage, request: Request, ctx: Optional[AuthContext] = Depends(get_optional_ctx), db: AsyncSession = Depends(get_db)):
+    _limit(request, "chat", chat.bot_id, 30)
     bot = await _load_bot(chat.bot_id, db)
 
     def single(text: str) -> StreamingResponse:
         async def gen():
-            yield f"data: {text}\n\n"
+            yield _sse(text)
             yield "data: [DONE]\n\n"
         return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -274,12 +258,11 @@ async def chat_message_stream(chat: ChatMessage, ctx: Optional[AuthContext] = De
 
         async def flow_gen():
             for line in replies:
-                yield f"data: {line}\n\n"
+                yield _sse(line)
             yield "data: [DONE]\n\n"
         return StreamingResponse(flow_gen(), media_type="text/event-stream")
 
-    context = await _knowledge(bot, chat.message, 3, 5000)
-    prompt = _persona_prompt(bot, len(chat.history) == 0)
+    system, messages = await _brief(bot, conv, chat)
     conversation_id = conv.conversation_id
 
     async def event_generator():
@@ -290,7 +273,7 @@ async def chat_message_stream(chat: ChatMessage, ctx: Optional[AuthContext] = De
         def produce():
             try:
                 for chunk in generate_ai_response_stream(
-                    prompt, context, chat.message, history=chat.history,
+                    system, "", messages[-1]["content"], history=messages[:-1],
                     provider=bot.ai_provider, model_name=bot.ai_model, api_key=bot.ai_api_key,
                 ):
                     loop.call_soon_threadsafe(queue.put_nowait, chunk)
@@ -303,27 +286,62 @@ async def chat_message_stream(chat: ChatMessage, ctx: Optional[AuthContext] = De
         loop.run_in_executor(None, produce)
         while (chunk := await queue.get()) is not None:
             parts.append(chunk)
-            yield f"data: {chunk}\n\n"
+            yield _sse(chunk)
         yield "data: [DONE]\n\n"
         try:
             await _save_turn(conversation_id, chat.message, "".join(parts))
         except Exception as e:
             logger.warning(f"Could not save chat turn: {e}")
         _after_answer(bot, conversation_id, chat.message, "".join(parts))
+        fire_and_forget(brain.learn_details(conversation_id, bot, chat.message, _last_assistant(chat.history)))
 
     return StreamingResponse(event_generator(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 
 
+MAX_VOICE_BYTES = 1_000_000  # about a minute of compressed speech
+SPEECH_LANGUAGES = {"en": "en-IN", "hi": "hi-IN", "ta": "ta-IN", "te": "te-IN", "kn": "kn-IN", "ml": "ml-IN",
+                    "mr": "mr-IN", "bn": "bn-IN", "gu": "gu-IN"}
+
+
+@router.post("/chat/transcribe")
+async def transcribe_speech(request: Request, bot_id: str = Form(..., max_length=40), file: UploadFile = File(...),
+                            ctx: Optional[AuthContext] = Depends(get_optional_ctx), db: AsyncSession = Depends(get_db)):
+    """The widget's mic, for browsers without built-in speech recognition: a short recording to text."""
+    _limit(request, "transcribe", bot_id, 8)
+    bot = await _load_bot(bot_id, db)
+    if not await _plan_ok(bot, True, ctx, db):
+        raise HTTPException(status_code=402, detail="This assistant isn't active")
+    if not (file.content_type or "").startswith("audio/"):
+        raise HTTPException(status_code=400, detail="Send an audio recording")
+    audio = await file.read(MAX_VOICE_BYTES + 1)
+    if not audio or len(audio) > MAX_VOICE_BYTES:
+        raise HTTPException(status_code=400, detail="Keep voice messages under a minute")
+    from voice import sarvam
+    if not sarvam.configured():
+        raise HTTPException(status_code=503, detail="Voice input isn't available right now")
+    language = SPEECH_LANGUAGES.get(behaviour.clean(bot.behaviour)["language"], "unknown") if bot.behaviour else "unknown"
+    try:
+        text = await sarvam.transcribe(audio, file.filename or "speech.webm", file.content_type, language)
+    except sarvam.SarvamError as e:
+        logger.warning(f"Voice input failed: {e}")
+        raise HTTPException(status_code=502, detail="Couldn't understand that. Please try again or type your message.")
+    return {"text": text}
+
+
 @router.post("/chat/variables")
-async def capture_variables(data: VariableCapture, db: AsyncSession = Depends(get_db)):
+async def capture_variables(data: VariableCapture, request: Request, db: AsyncSession = Depends(get_db)):
+    _limit(request, "variables", data.bot_id, 40)
     bot = await _load_bot(data.bot_id, db)
     conv = await _conversation(bot, data.visitor_session_id, db)
     if not conv:
+        rate_limit(f"new-conv:{client_ip(request)}", 30, 3600)  # many fresh "visitors" from one address is a script
         conv = Conversation(bot_id=bot.bot_id, visitor_session_id=data.visitor_session_id, captured_data={})
         db.add(conv)
     captured = dict(conv.captured_data or {})
-    captured[data.variable_name[:80]] = str(data.variable_value)[:2000]
+    if data.variable_name not in captured and len(captured) >= MAX_FIELDS:
+        raise HTTPException(status_code=400, detail="Too many details for one conversation")
+    captured[data.variable_name] = data.variable_value[:2000]
     conv.captured_data = captured
     await db.commit()
 
@@ -334,14 +352,19 @@ async def capture_variables(data: VariableCapture, db: AsyncSession = Depends(ge
 
 
 @router.post("/chat/ai-prompt")
-async def ai_custom_prompt(data: AIPromptRequest, ctx: Optional[AuthContext] = Depends(get_optional_ctx), db: AsyncSession = Depends(get_db)):
+async def ai_custom_prompt(data: AIPromptRequest, request: Request, ctx: Optional[AuthContext] = Depends(get_optional_ctx), db: AsyncSession = Depends(get_db)):
+    """The flow's "AI prompt" step. Only prompts the business wrote into its flow run, so this can't be used as a free AI."""
+    _limit(request, "ai-prompt", data.bot_id, 10)
     bot = await _load_bot(data.bot_id, db)
     if not await _plan_ok(bot, True, ctx, db):
         return {"answer": EXPIRED_TEXT}
+    allowed = {str(d.get(k) or "").strip() for d in _flow_nodes(bot, "aiPrompt") for k in ("prompt", "systemPrompt")} - {""}
+    if data.prompt.strip() not in allowed:
+        raise HTTPException(status_code=403, detail="This prompt isn't part of the assistant's flow")
     try:
         answer = await asyncio.to_thread(
             generate_ai_response, "Execute the following specific prompt based on the context.",
-            (data.context or bot.knowledge_base or "")[:20000], data.prompt,
+            (data.context[:8000] if data.context else (bot.knowledge_base or "")[:20000]), data.prompt,
             provider=bot.ai_provider, model_name=bot.ai_model, api_key=bot.ai_api_key, is_system_use=False,
         )
         return {"answer": answer}
@@ -350,24 +373,51 @@ async def ai_custom_prompt(data: AIPromptRequest, ctx: Optional[AuthContext] = D
         return {"answer": "Error generating AI response."}
 
 
+MAX_PROXY_BYTES = 256 * 1024
+
+
+def _flow_request_allowed(bot: Bot, url: str, method: str) -> bool:
+    """Only URLs the business put in its flow (HTTP request, webhook and Slack steps), with their method."""
+    for d in _flow_nodes(bot, "httpRequest", "webhook", "slack"):
+        if str(d.get("url") or "").strip() == url.strip():
+            if str(d.get("method") or "POST").upper() == method:
+                return True
+    return False
+
+
 @router.post("/chat/proxy-http")
-async def proxy_http_request(data: HTTPProxyRequest):
-    """Runs the flow's HTTP Request node. Only public internet addresses are reachable."""
+async def proxy_http_request(data: HTTPProxyRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Runs the flow's HTTP request, webhook and Slack steps: only to URLs in that assistant's flow, only on the public internet."""
+    _limit(request, "proxy", data.bot_id, 20)
     method = data.method.upper()
     if method not in ("GET", "POST", "PATCH", "PUT", "DELETE"):
         return {"error": "Method not supported"}
+    bot = await _load_bot(data.bot_id, db)
+    if not _flow_request_allowed(bot, data.url, method):
+        raise HTTPException(status_code=403, detail="This address isn't part of the assistant's flow")
     try:
         url = await assert_public_url(data.url)
     except UnsafeUrl as e:
         return {"error": str(e)}
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
-            resp = await client.request(method, url, headers=data.headers or {},
-                                        json=data.body if method in ("POST", "PATCH", "PUT") else None)
-        body = resp.json() if "application/json" in resp.headers.get("content-type", "") else resp.text[:20000]
-        return {"status": resp.status_code, "data": body}
+        async with safe_client(timeout=10) as client:
+            async with client.stream(method, url, json=data.body if method in ("POST", "PATCH", "PUT") else None) as resp:
+                raw = bytearray()
+                async for chunk in resp.aiter_bytes():
+                    raw.extend(chunk)
+                    if len(raw) > MAX_PROXY_BYTES:
+                        break
+                status, ctype = resp.status_code, resp.headers.get("content-type", "")
+        text = bytes(raw[:MAX_PROXY_BYTES]).decode("utf-8", errors="replace")
+        if "application/json" in ctype:
+            try:
+                return {"status": status, "data": json.loads(text)}
+            except ValueError:
+                pass
+        return {"status": status, "data": text[:20000]}
     except Exception as e:
-        return {"error": str(e)}
+        logger.info(f"Flow HTTP step failed: {e}")
+        return {"error": "The request didn't go through"}
 
 
 def _sheet_configured(bot: Bot, spreadsheet_id: str) -> bool:
@@ -379,7 +429,10 @@ def _sheet_configured(bot: Bot, spreadsheet_id: str) -> bool:
 
 
 @router.post("/integrations/google-sheets")
-async def sync_to_google_sheets(data: GoogleSheetsSyncRequest, db: AsyncSession = Depends(get_db)):
+async def sync_to_google_sheets(data: GoogleSheetsSyncRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    _limit(request, "sheets", data.bot_id, 10)
+    if len(data.data) > MAX_FIELDS:
+        raise HTTPException(status_code=400, detail="Too many fields")
     bot = await _load_bot(data.bot_id, db)
     if not _sheet_configured(bot, data.spreadsheet_id):
         raise HTTPException(status_code=403, detail="This spreadsheet isn't connected to the assistant's flow")
@@ -395,19 +448,20 @@ async def sync_to_google_sheets(data: GoogleSheetsSyncRequest, db: AsyncSession 
             service = build("sheets", "v4", credentials=creds, cache_discovery=False)
             return service.spreadsheets().values().append(
                 spreadsheetId=data.spreadsheet_id, range=f"{data.sheet_name}!A1", valueInputOption="RAW",
-                insertDataOption="INSERT_ROWS", body={"values": [[str(v) for v in data.data.values()]]},
+                insertDataOption="INSERT_ROWS", body={"values": [[str(v)[:2000] for v in data.data.values()]]},
             ).execute()
 
         result = await asyncio.to_thread(append)
         return {"status": "success", "updatedRange": result.get("updates", {}).get("updatedRange")}
     except Exception as e:
         logger.error(f"Google Sheets sync error: {e}")
-        return {"error": str(e)}
+        return {"error": "Couldn't add the row to Google Sheets"}
 
 
 @router.post("/chat/handoff")
-async def manual_handoff(request: ManualHandoffRequest, db: AsyncSession = Depends(get_db)):
+async def manual_handoff(request: ManualHandoffRequest, http: Request, db: AsyncSession = Depends(get_db)):
     """The widget's 'talk to a person' button."""
+    _limit(http, "handoff", request.bot_id, 6)
     bot = await _load_bot(request.bot_id, db)
     conv = await _conversation(bot, request.visitor_session_id, db)
     if not conv:

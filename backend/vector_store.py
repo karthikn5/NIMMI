@@ -1,19 +1,18 @@
 """
-Pinecone Vector Store — Chunking, Embedding & Semantic Search
-Handles all interactions with Pinecone for the RAG pipeline.
-"""
-import sys
-import os
-# Absolute path to backend directory to solve virtual environment import issues
-sys.path.append(r'c:\Users\karth\.gemini\antigravity\scratch\nimmi-ai\backend')
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+Pinecone vector store: chunking, embedding and semantic search for large knowledge bases.
 
-import os
+Small knowledge is read in full by the assistant (brain.py); this index is what finds the right
+passages when a business's knowledge is too big for that. Embeddings use Gemini's REST API in
+batches of 100, and replace_knowledge() rebuilds a bot's whole index so no outdated text lingers.
+"""
 import asyncio
-import logging
 import hashlib
-from typing import List, Dict, Optional
-import google.generativeai as genai
+import logging
+import os
+import re
+from typing import Dict, List, Tuple
+
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -23,11 +22,14 @@ logger = logging.getLogger(__name__)
 # ─── Configuration ───────────────────────────────────────────────
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "nimmi-knowledge-base")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+EMBED_MODEL = "gemini-embedding-001"
+EMBED_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBED_MODEL}"
+CHUNK_SIZE, CHUNK_OVERLAP = 1200, 150
+PAGE_HEADING = re.compile(r"^## (https?://\S+.*)$", re.MULTILINE)  # pages of a website source
 
-# Pinecone client (initialized lazily)
 _pc = None
 _index = None
+_dimension = None
 
 
 def _get_index():
@@ -35,172 +37,129 @@ def _get_index():
     global _pc, _index
     if _index is not None:
         return _index
-
     if not PINECONE_API_KEY:
         raise RuntimeError("PINECONE_API_KEY is not set in environment variables")
-
     from pinecone import Pinecone
-
     _pc = Pinecone(api_key=PINECONE_API_KEY)
     _index = _pc.Index(PINECONE_INDEX_NAME)
     logger.info(f"[VectorStore] Connected to Pinecone index: {PINECONE_INDEX_NAME}")
     return _index
 
 
-# ─── Text Chunking ───────────────────────────────────────────────
+def _index_dimension() -> int:
+    """The vector size the index stores; gemini-embedding-001 can make 768, 1536 or 3072."""
+    global _dimension
+    if _dimension is None:
+        try:
+            _dimension = int(_get_index().describe_index_stats().get("dimension") or 0) or None
+        except Exception as e:
+            logger.warning(f"[VectorStore] Couldn't read the index size: {e}")
+        if _dimension is None:
+            return int(os.getenv("EMBED_DIMENSIONS", "768"))
+    return _dimension
 
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
-    """
-    Split text into overlapping chunks for better semantic coverage.
-    
-    Args:
-        text: The full text to chunk.
-        chunk_size: Target character count per chunk.
-        overlap: Number of characters to overlap between consecutive chunks.
-    
-    Returns:
-        A list of text chunks.
-    """
+
+# ─── Text chunking ───────────────────────────────────────────────
+def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
+    """Overlapping pieces of about `chunk_size` characters, broken at sentence ends where possible."""
     if not text or not text.strip():
         return []
-
-    # Clean up excessive whitespace
     text = " ".join(text.split())
-
-    chunks = []
-    start = 0
-    text_len = len(text)
-
-    while start < text_len:
+    chunks, start, n = [], 0, len(text)
+    while start < n:
         end = start + chunk_size
-
-        # Try to break at a sentence boundary (., !, ?) or newline
-        if end < text_len:
-            # Look for the last sentence-ending punctuation within the chunk
-            best_break = -1
-            for sep in [". ", "! ", "? ", "\n"]:
-                pos = text.rfind(sep, start, end)
-                if pos > best_break:
-                    best_break = pos
-
-            if best_break > start:
-                end = best_break + 1  # Include the punctuation
-
+        if end < n:
+            best = max(text.rfind(sep, start + chunk_size // 2, end) for sep in (". ", "! ", "? ", "; "))
+            if best > start:
+                end = best + 1
         chunk = text[start:end].strip()
         if chunk:
             chunks.append(chunk)
-
-        # Move forward with overlap
-        start = end - overlap if end < text_len else text_len
-
-    logger.info(f"[VectorStore] Chunked text into {len(chunks)} pieces (avg {sum(len(c) for c in chunks) // max(len(chunks), 1)} chars)")
+        start = end - overlap if end < n else n
     return chunks
 
 
-# ─── Embedding Generation ────────────────────────────────────────
+# ─── Embeddings (Gemini REST) ────────────────────────────────────
+def _key() -> str:
+    key = os.getenv("GEMINI_API_KEY", "")
+    if not key:
+        raise RuntimeError("GEMINI_API_KEY is not set")
+    return key
+
+
+def embed_batch(texts: List[str], task: str = "RETRIEVAL_DOCUMENT") -> List[List[float]]:
+    """Embeddings for up to 100 texts in one request."""
+    size = _index_dimension()
+    body = {"requests": [{"model": f"models/{EMBED_MODEL}", "content": {"parts": [{"text": t}]}, "taskType": task,
+                          "outputDimensionality": size} for t in texts]}
+    r = httpx.post(f"{EMBED_URL}:batchEmbedContents", headers={"x-goog-api-key": _key()}, json=body, timeout=60)
+    r.raise_for_status()
+    return [e["values"] for e in r.json()["embeddings"]]
+
 
 def generate_embedding(text: str) -> List[float]:
-    """
-    Generate a vector embedding for the given text using Gemini's embedding model.
-    This is FREE within Google AI Studio limits.
-    
-    Returns:
-        A list of floats representing the text embedding.
-    """
-    if not GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY is not set")
-    
-    genai.configure(api_key=GEMINI_API_KEY, transport="rest")
-
-    result = genai.embed_content(
-        model="models/gemini-embedding-001",
-        content=text,
-        task_type="retrieval_document",
-    )
-
-    return result["embedding"]
+    return embed_batch([text])[0]
 
 
 def generate_query_embedding(query: str) -> List[float]:
-    """
-    Generate an embedding optimized for search queries.
-    Uses task_type="retrieval_query" for better semantic matching.
-    """
-    if not GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY is not set")
-
-    genai.configure(api_key=GEMINI_API_KEY, transport="rest")
-
-    result = genai.embed_content(
-        model="models/gemini-embedding-001",
-        content=query,
-        task_type="retrieval_query",
-    )
-
-    return result["embedding"]
+    return embed_batch([query], task="RETRIEVAL_QUERY")[0]
 
 
-# ─── Pinecone Operations ─────────────────────────────────────────
-
+# ─── Pinecone operations ─────────────────────────────────────────
 def _make_chunk_id(bot_id: str, chunk_index: int, content: str) -> str:
-    """Generate a deterministic ID for a chunk to enable idempotent upserts."""
+    """Deterministic ID for a chunk, so the same text upserts idempotently."""
     content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()[:8]
     return f"{bot_id}_{chunk_index}_{content_hash}"
 
 
-def upsert_knowledge(bot_id: str, text: str, source_name: str = "upload") -> int:
-    """
-    Chunk text, generate embeddings, and upsert into Pinecone.
-    
-    Args:
-        bot_id: The bot this knowledge belongs to.
-        text: The full extracted text.
-        source_name: Label for the source (filename, URL, etc.)
-    
-    Returns:
-        Number of chunks upserted.
-    """
+def _store(bot_id: str, pieces: List[Tuple[str, str]]) -> int:
+    """Embed (in batches of 100) and store (source, passage) pairs in the bot's namespace."""
     index = _get_index()
-    chunks = chunk_text(text)
+    total = 0
+    for start in range(0, len(pieces), 100):
+        batch = pieces[start:start + 100]
+        try:
+            vectors = embed_batch([chunk for _, chunk in batch])
+        except Exception as e:
+            logger.error(f"[VectorStore] Embedding batch failed for bot {bot_id}: {e}")
+            continue
+        index.upsert(vectors=[{
+            "id": _make_chunk_id(bot_id, start + i, chunk), "values": values,
+            "metadata": {"bot_id": bot_id, "source": source[:300], "chunk_index": start + i, "text": chunk[:1500]},
+        } for i, ((source, chunk), values) in enumerate(zip(batch, vectors))], namespace=bot_id)
+        total += len(batch)
+    logger.info(f"[VectorStore] Indexed {total} passages for bot {bot_id}")
+    return total
 
-    if not chunks:
-        logger.warning(f"[VectorStore] No chunks generated for bot {bot_id}")
-        return 0
 
-    # Process in batches of 50 to stay within Pinecone limits
-    batch_size = 50
-    total_upserted = 0
+def upsert_knowledge(bot_id: str, text: str, source_name: str = "upload") -> int:
+    """Chunk, embed and store `text` in the bot's namespace. Returns passages stored."""
+    return _store(bot_id, [(source_name, chunk) for chunk in chunk_text(text)])
 
-    for batch_start in range(0, len(chunks), batch_size):
-        batch_chunks = chunks[batch_start : batch_start + batch_size]
-        vectors = []
 
-        for i, chunk in enumerate(batch_chunks):
-            chunk_idx = batch_start + i
-            try:
-                embedding = generate_embedding(chunk)
-                vector_id = _make_chunk_id(bot_id, chunk_idx, chunk)
-                vectors.append({
-                    "id": vector_id,
-                    "values": embedding,
-                    "metadata": {
-                        "bot_id": bot_id,
-                        "source": source_name,
-                        "chunk_index": chunk_idx,
-                        "text": chunk[:1000],  # Pinecone metadata limit ~40KB, keep text concise
-                    },
-                })
-            except Exception as e:
-                logger.error(f"[VectorStore] Embedding error for chunk {chunk_idx}: {e}")
-                continue
+def _sections(text: str) -> List[Tuple[str, str]]:
+    """(source, text) for the written knowledge, each source and each page of a website, so every
+    passage found in a search says where it came from."""
+    import knowledge_sources
+    written, blocks = knowledge_sources.split(text)
+    out = [("Written knowledge", written)] if written else []
+    for name, body in blocks:
+        if name == knowledge_sources.SUMMARY:
+            continue  # the assistant always reads the summary (brain.knowledge)
+        parts = PAGE_HEADING.split(body)
+        if len(parts) == 1:
+            out.append((name, body))
+            continue
+        if parts[0].strip():
+            out.append((name, parts[0]))
+        out += [(parts[i].strip(), parts[i + 1]) for i in range(1, len(parts), 2)]
+    return out
 
-        if vectors:
-            index.upsert(vectors=vectors, namespace=bot_id)
-            total_upserted += len(vectors)
-            logger.info(f"[VectorStore] Upserted batch of {len(vectors)} vectors for bot {bot_id}")
 
-    logger.info(f"[VectorStore] Total {total_upserted} chunks indexed for bot {bot_id} from '{source_name}'")
-    return total_upserted
+def replace_knowledge(bot_id: str, text: str) -> int:
+    """Rebuild a bot's whole index from its current knowledge, so removed or changed text can't linger."""
+    delete_bot_knowledge(bot_id)
+    return _store(bot_id, [(source, chunk) for source, body in _sections(text or "") for chunk in chunk_text(body)])
 
 
 async def query_knowledge(bot_id: str, query: str, top_k: int = 5) -> List[Dict]:

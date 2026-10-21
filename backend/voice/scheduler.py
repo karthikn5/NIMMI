@@ -7,13 +7,14 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, or_, update
 from sqlalchemy.future import select
 
 from database import async_session
 from backend.models import (Campaign, CallbackJob, CallbackSettings, CallLog, ComplianceSettings, DncEntry,
                             PhoneNumber, VoiceAgent)
 import balance
+from phone import callable_destination
 from voice import accounts, exotel, metering, recording, twilio
 from voice.catalog import NUMBER_GRACE_DAYS
 
@@ -86,6 +87,9 @@ async def dispatch_due_callbacks() -> None:
             if blocked:
                 job.status, job.last_error = "cancelled", "Number is on the do-not-call list"
                 continue
+            if not callable_destination(job.e164):  # last guard before anything is dialled
+                job.status, job.last_error = "cancelled", "We don't place calls to that country"
+                continue
             if not in_window(now, *window):
                 job.next_attempt_at = next_window_start(now, window[0])
                 continue
@@ -102,12 +106,19 @@ async def dispatch_due_callbacks() -> None:
             agent = (await db.execute(select(VoiceAgent).where(VoiceAgent.bot_id == job.bot_id))).scalars().first()
             detect = number.provider == "twilio" and bool(agent) and (agent.voicemail_action or "off") != "off"
 
-            job.attempts += 1
-            job.status = "calling"
-            job.next_attempt_at = now  # while calling: when we dialled (see expire_stale_calls)
+            # Claim the call atomically, so it's dialled once even if several server processes run this loop.
+            claimed = await db.execute(
+                update(CallbackJob).where(CallbackJob.id == job.id, CallbackJob.status == "queued")
+                .values(status="calling", attempts=CallbackJob.attempts + 1,
+                        next_attempt_at=now)  # while calling: when we dialled (see expire_stale_calls)
+                .execution_options(synchronize_session=False)
+            )
+            await db.commit()
+            if claimed.rowcount != 1:
+                continue  # another process took it
+            await db.refresh(job)
             if job.campaign_id:
                 in_flight[job.campaign_id] += 1
-            await db.commit()
             try:
                 job.last_error = None
                 # Through Nimmi's account, or the customer's own Twilio/Exotel account for their numbers.
@@ -248,6 +259,8 @@ async def renew_numbers() -> None:
 
 async def _loop() -> None:
     last_purge = datetime.min
+    last_recycle = datetime.min
+    last_sites = datetime.min
     while True:
         try:
             from notify import automations
@@ -261,6 +274,16 @@ async def _loop() -> None:
                 if twilio.configured():
                     await renew_numbers()
                 last_purge = datetime.utcnow()
+            from ops import backup
+            await backup.maybe_backup()  # one encrypted database backup a day (when storage is configured)
+            if datetime.utcnow() - last_recycle > timedelta(hours=6):
+                import recycle
+                await recycle.purge_expired()  # deleted assistants are kept 30 days
+                last_recycle = datetime.utcnow()
+            if datetime.utcnow() - last_sites > timedelta(minutes=2):
+                from sites import deploy as site_deploys
+                await site_deploys.maintenance()  # interrupted deploys, custom domains waiting on DNS, deleted sites
+                last_sites = datetime.utcnow()
         except asyncio.CancelledError:
             raise
         except Exception as e:

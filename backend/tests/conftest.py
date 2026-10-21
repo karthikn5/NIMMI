@@ -12,13 +12,18 @@ import pytest
 
 _DB = os.path.join(tempfile.mkdtemp(prefix="nimmi-test-"), "test.db")
 os.environ.update({
-    "SQLITE_PATH": _DB, "LOCAL_DEV": "true", "DISABLE_SCHEDULER": "true", "JWT_SECRET": "test-secret",
+    "SQLITE_PATH": _DB, "LOCAL_DEV": "false", "DISABLE_SCHEDULER": "true", "JWT_SECRET": "test-secret",
     "RAZORPAY_KEY_ID": "rzp_test_x", "RAZORPAY_KEY_SECRET": "test_secret", "RAZORPAY_WEBHOOK_SECRET": "hook_secret",
     "EXOTEL_WS_SECRET": "exo-secret", "ADMIN_API_KEY": "admin-key",
     "TWILIO_ACCOUNT_SID": "ACtest", "TWILIO_AUTH_TOKEN": "tw-token", "TWILIO_WS_SECRET": "tw-secret",
+    "TWILIO_VERIFY_SIGNATURES": "false",  # most tests post unsigned webhooks; test_hardening covers signing
     "PUBLIC_BACKEND_URL": "https://example.test",
     "GROQ_API_KEY": "", "SUPABASE_SERVICE_ROLE_KEY": "",
+    "GEMINI_API_KEY": "", "OPENAI_API_KEY": "", "PINECONE_API_KEY": "",  # tests never call real AI or search services
     "RESEND_API_KEY": "", "SMTP_HOST": "", "SARVAM_API_KEY": "",
+    "ENFORCE_PLAN_LIMITS": "false",  # most tests aren't about plans; test_sites turns the limits on
+    "SITES_DOMAIN": "sites.test", "SITES_DIR": os.path.join(os.path.dirname(_DB), "site_files"),
+    "CLOUDFLARE_API_TOKEN": "", "CLOUDFLARE_ZONE_ID": "", "SITES_EDGE_KEY": "edge-key",
 })
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

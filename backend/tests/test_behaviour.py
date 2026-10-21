@@ -7,8 +7,11 @@ from routers import chat as chat_router
 def test_rules_only_apply_once_settings_are_saved():
     assert behaviour.rules(None) == ""
     assert behaviour.fallback(None) == "I'm sorry, I don't have that information."
-    r = behaviour.rules({"reply_length": "short", "language": "ta", "ask_for_contact": True, "offer_human": False})
+    # The old one-line contact rule only applies when detail collection is turned off.
+    r = behaviour.rules({"reply_length": "short", "language": "ta", "ask_for_contact": True, "offer_human": False,
+                         "collect": {"enabled": False}})
     assert "short" in r and "Tamil" in r and "phone number" in r and "Person" not in r
+    assert "phone number" not in behaviour.rules({"ask_for_contact": True})  # collection (on by default) covers it
 
 
 def test_custom_follow_up_still_counts_as_unanswered():

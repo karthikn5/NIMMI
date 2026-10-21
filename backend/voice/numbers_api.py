@@ -20,6 +20,7 @@ from database import get_db
 from backend.models import BalanceEntry, CallbackSettings, Campaign, PhoneNumber
 from phone import display
 from voice import catalog, twilio
+import plans
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["numbers"])
@@ -81,6 +82,7 @@ class BuyRequest(BaseModel):
 
 @router.post("/voice/numbers/buy")
 async def buy_number(req: BuyRequest, ctx: AuthContext = Depends(require_owner), db: AsyncSession = Depends(get_db)):
+    await plans.require(db, ctx.owner_id, "voice")
     _check_country(req.country, req.type)
     rate_limit(f"numbuy:{ctx.owner_id}", 5, 600)
     if req.bot_id:
@@ -133,6 +135,7 @@ async def replace_number(number_id: str, req: ReplaceRequest, ctx: AuthContext =
     campaign settings move to the new number, and the month already paid carries over.
     Allowed once per billing period, since each swap costs a new number.
     """
+    await plans.require(db, ctx.owner_id, "voice")
     old = (await db.execute(select(PhoneNumber).where(PhoneNumber.id == number_id, PhoneNumber.user_id == ctx.owner_id))).scalars().first()
     if not old:
         raise HTTPException(status_code=404, detail="Number not found")

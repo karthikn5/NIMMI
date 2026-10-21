@@ -26,7 +26,7 @@ export default function TestChat({ botId, saving }: { botId: string; saving: boo
             </div>
             <div className="flex-1 min-h-0 flex items-center justify-center p-5 sm:p-8">
                 <div className="h-full max-h-[680px] w-full max-w-[400px] rounded-2xl overflow-hidden border border-black/5 bg-white shadow-[0_10px_40px_rgba(0,0,0,0.12)]">
-                    <iframe key={run} title="Test chat" src={`/widget/${botId}?is_demo=true&run=${run}`} className="h-full w-full border-0" />
+                    <iframe key={run} title="Test chat" src={`/widget/${botId}?is_demo=true&run=${run}`} allow="microphone" className="h-full w-full border-0" />
                 </div>
             </div>
         </div>

@@ -27,16 +27,22 @@ def test_crawl_whole_site_then_remove_a_page(client, make_user, monkeypatch):
     monkeypatch.setattr(bots_router, "assert_public_url", safe)
     monkeypatch.setattr(bots_router, "crawl_site", fake_site)
 
+    # A page of the site added on its own earlier, and another site.
+    client.patch(f"/api/bots/{bot}", headers=u.h(), json={"knowledge_base": "Our notes\n\n--- Source: https://www.homes.example/pricing/ ---\n"
+                                                                        "old price\n\n--- Source: https://other.example ---\nother"})
     r = client.post("/api/knowledge/crawl", json={"bot_id": bot, "url": "https://homes.example", "pages": 10}, headers=u.h())
     assert r.status_code == 200 and r.json()["pages"] == 2, r.text
-    names = [s["name"] for s in client.get(f"/api/bots/{bot}/knowledge/sources", headers=u.h()).json()["sources"]]
-    assert names == ["https://homes.example", "https://homes.example/pricing"]
+    # A website is one source (each page under its own heading), shown with how many pages it has,
+    # and it replaces the separate copy of its pricing page.
+    sources = client.get(f"/api/bots/{bot}/knowledge/sources", headers=u.h()).json()["sources"]
+    assert [(s["name"], s["kind"], s["pages"]) for s in sources] == [("https://other.example", "website", 1),
+                                                                     ("https://homes.example", "website", 2)]
 
-    # Crawling again refreshes the same pages instead of adding copies.
+    # Reading the site again replaces it instead of adding a copy.
     client.post("/api/knowledge/crawl", json={"bot_id": bot, "url": "https://homes.example", "pages": 10}, headers=u.h())
     assert len(client.get(f"/api/bots/{bot}/knowledge/sources", headers=u.h()).json()["sources"]) == 2
 
-    r = client.delete(f"/api/bots/{bot}/knowledge/sources", params={"name": "https://homes.example/pricing"}, headers=u.h())
+    r = client.delete(f"/api/bots/{bot}/knowledge/sources", params={"name": "https://homes.example"}, headers=u.h())
     assert r.status_code == 200 and "58 lakhs" not in r.json()["knowledge_base"]
     assert client.delete(f"/api/bots/{bot}/knowledge/sources", params={"name": "nope"}, headers=u.h()).status_code == 404
 

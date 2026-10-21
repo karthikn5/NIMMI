@@ -24,10 +24,14 @@ def test_social_login_requires_proof(client, monkeypatch):
         if token != "good":
             from fastapi import HTTPException
             raise HTTPException(status_code=401, detail="expired")
-        return {"email": "google.user@example.com", "user_metadata": {"full_name": "Google User"}}
+        if token == "unverified":  # a Supabase email/password signup claiming someone's address
+            return {"email": "google.user@example.com", "app_metadata": {"provider": "email"}, "email_confirmed_at": None}
+        return {"email": "google.user@example.com", "user_metadata": {"full_name": "Google User"},
+                "app_metadata": {"provider": "google"}, "email_confirmed_at": "2026-10-01T10:00:00Z"}
 
     monkeypatch.setattr(auth_routes, "_supabase_user", fake_supabase)
     assert client.post("/api/auth/social", json={"access_token": "bad"}).status_code == 401
+    assert client.post("/api/auth/social", json={"access_token": "unverified"}).status_code == 401
     ok = client.post("/api/auth/social", json={"access_token": "good"})
     assert ok.status_code == 200 and ok.json()["email"] == "google.user@example.com"
 
@@ -81,9 +85,19 @@ def test_live_chat_queue_is_scoped(client, make_user):
     assert client.post(f"/api/handoffs/{conv}/close", headers=alice.h()).status_code == 200
 
 
-def test_http_node_cannot_reach_internal_addresses(client):
-    for url in ("http://127.0.0.1:8000/api/test", "http://169.254.169.254/latest/meta-data", "file:///etc/passwd", "http://10.0.0.5/"):
-        assert "error" in client.post("/api/chat/proxy-http", json={"url": url}).json(), url
+def test_http_node_only_calls_the_flows_own_public_urls(client, make_user):
+    alice = make_user()
+    bot = alice.bot()
+    internal = ["http://127.0.0.1:8000/api/test", "http://169.254.169.254/latest/meta-data", "file:///etc/passwd", "http://10.0.0.5/"]
+    nodes = [{"id": f"n{i}", "type": "httpRequest", "data": {"url": url, "method": "GET"}} for i, url in enumerate(internal)]
+    client.post(f"/api/bots/{bot}/config", json={"nodes": nodes, "edges": []}, headers=alice.h())
+
+    # Even URLs written into the flow can't reach the server's own network.
+    for url in internal:
+        assert "error" in client.post("/api/chat/proxy-http", json={"bot_id": bot, "url": url, "method": "GET"}).json(), url
+    # Anything not in the flow is refused outright: the endpoint isn't an open proxy.
+    assert client.post("/api/chat/proxy-http", json={"bot_id": bot, "url": "https://example.com/", "method": "GET"}).status_code == 403
+    assert client.post("/api/chat/proxy-http", json={"url": "https://example.com/"}).status_code == 422
 
 
 def test_google_sheets_needs_a_configured_sheet(client, make_user):

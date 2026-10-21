@@ -21,6 +21,7 @@ router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
 
 import os
+import plans
 
 def _json(s: IntegrationSettings, owner_email: str) -> dict:
     backend_url = (os.getenv("PUBLIC_BACKEND_URL") or os.getenv("BACKEND_URL", "http://localhost:8000")).rstrip("/")
@@ -63,11 +64,22 @@ async def get_settings(ctx: AuthContext = Depends(require_manager), db: AsyncSes
     return _json(s, owner)
 
 
-class AutomationIn(BaseModel):
-    enabled: bool = False
+class StepIn(BaseModel):
     delay: str = "now"
     subject: str = Field("", max_length=200)
     body: str = Field("", max_length=5000)
+
+
+class AutomationIn(BaseModel):
+    enabled: bool = False
+    steps: Optional[list[StepIn]] = None
+    # Older dashboards sent a single email.
+    delay: str = "now"
+    subject: str = Field("", max_length=200)
+    body: str = Field("", max_length=5000)
+
+    def step_list(self) -> list[StepIn]:
+        return self.steps if self.steps is not None else [StepIn(delay=self.delay, subject=self.subject, body=self.body)]
 
 
 class IntegrationUpdate(BaseModel):
@@ -98,6 +110,7 @@ class IntegrationUpdate(BaseModel):
 
 @router.put("")
 async def update_settings(data: IntegrationUpdate, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    await plans.require(db, ctx.owner_id, "integrations")
     s, owner = await _load(ctx.owner_id, db)
     if data.webhook_url:
         try:
@@ -114,11 +127,18 @@ async def update_settings(data: IntegrationUpdate, ctx: AuthContext = Depends(re
         raise HTTPException(status_code=400, detail="Enter a valid reply-to email address")
     autos = {}
     for key, a in data.automations.items():
-        if key not in automations.DEFAULTS or a.delay not in automations.DELAYS:
+        steps = a.step_list()
+        if key not in automations.DEFAULTS or not steps or any(st.delay not in automations.DELAYS for st in steps):
             raise HTTPException(status_code=400, detail="Unknown email automation")
-        if a.enabled and not (a.subject.strip() and a.body.strip()):
-            raise HTTPException(status_code=400, detail="Add a subject and message before turning an email on")
-        autos[key] = {"enabled": a.enabled, "delay": a.delay, "subject": a.subject.strip(), "body": a.body.strip()}
+        if len(steps) > automations.MAX_STEPS:
+            raise HTTPException(status_code=400, detail=f"A sequence can have up to {automations.MAX_STEPS} emails")
+        offsets = [automations.DELAYS[st.delay] for st in steps]
+        if any(later <= earlier for earlier, later in zip(offsets, offsets[1:])):
+            raise HTTPException(status_code=400, detail="Each follow-up has to go out after the one before it")
+        if a.enabled and not all(st.subject.strip() and st.body.strip() for st in steps):
+            raise HTTPException(status_code=400, detail="Add a subject and message to every email before turning it on")
+        autos[key] = {"enabled": a.enabled,
+                      "steps": [{"delay": st.delay, "subject": st.subject.strip(), "body": st.body.strip()} for st in steps]}
     if any(a["enabled"] for a in autos.values()) and not (data.reply_to.strip() or s.reply_to):
         raise HTTPException(status_code=400, detail="Add a reply-to address so customers can answer you")
     if data.whatsapp_enabled and not data.whatsapp_template:
@@ -141,14 +161,15 @@ async def update_settings(data: IntegrationUpdate, ctx: AuthContext = Depends(re
     if data.leadsquared_secret_key:
         s.leadsquared_secret_key = data.leadsquared_secret_key.strip()
 
-    # WhatsApp 2-Way AI Chatbot
-    if data.whatsapp_bot_id and data.whatsapp_bot_id.strip():
-        owned = (await db.execute(select(Bot.bot_id).where(
-            Bot.bot_id == data.whatsapp_bot_id.strip(), Bot.user_id == ctx.owner_id))).first()
+    # WhatsApp 2-Way AI Chatbot. Only re-check values that changed, so saving another tab
+    # (e.g. Email) never fails on WhatsApp settings saved earlier.
+    bot_id = (data.whatsapp_bot_id or "").strip()
+    if bot_id and bot_id != (s.whatsapp_bot_id or ""):
+        owned = (await db.execute(select(Bot.bot_id).where(Bot.bot_id == bot_id, Bot.user_id == ctx.owner_id))).first()
         if not owned:
             raise HTTPException(status_code=400, detail="Choose one of your own assistants for WhatsApp")
     pid = (data.whatsapp_phone_number_id or "").strip()
-    if pid:
+    if pid and pid != (s.whatsapp_phone_number_id or ""):
         taken = (await db.execute(select(IntegrationSettings.user_id).where(
             IntegrationSettings.whatsapp_phone_number_id == pid, IntegrationSettings.user_id != ctx.owner_id))).first()
         if taken:
@@ -175,11 +196,14 @@ class TestRequest(BaseModel):
     channel: str  # email, email_automation, webhook, leadsquared, whatsapp
     to_phone: Optional[str] = None
     message: Optional[str] = None
-    automation: Optional[str] = None  # chat_lead, call_lead
+    automation: Optional[str] = None  # chat_lead, or chat_lead#2 for a follow-up
+    subject: Optional[str] = Field(None, max_length=200)  # bulk email drafts (channel "email_draft")
+    body: Optional[str] = Field(None, max_length=10000)
 
 
 @router.post("/test")
 async def send_test(req: TestRequest, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    await plans.require(db, ctx.owner_id, "integrations")
     s, owner = await _load(ctx.owner_id, db)
     sample = {"name": "Test Lead", "phone": "+919876543210", "email": "test@example.com", "bot": "Test assistant",
               "summary": "This is a test from Nimmi AI.", "fields": {"Name": "Test Lead"}, "source": "test"}
@@ -190,20 +214,28 @@ async def send_test(req: TestRequest, ctx: AuthContext = Depends(require_manager
                     for a in to]
             if not any(sent):
                 raise channels.ChannelError("Email isn't configured on the server")
-        elif req.channel == "email_automation":
-            auto = automations.automations(s).get(req.automation or "")
-            if not auto:
-                raise HTTPException(status_code=400, detail="Unknown email automation")
+        elif req.channel in ("email_automation", "email_draft"):
+            if req.channel == "email_draft":
+                if not ((req.subject or "").strip() and (req.body or "").strip()):
+                    raise channels.ChannelError("Add a subject and message first")
+                subject, template = req.subject, req.body
+            else:
+                key, _, n = (req.automation or "").partition("#")
+                auto = automations.automations(s).get(key)
+                step = int(n) if n.isdigit() else 1
+                if not auto or not 1 <= step <= len(auto["steps"]):
+                    raise HTTPException(status_code=400, detail="Unknown email automation")
+                subject, template = auto["steps"][step - 1]["subject"], auto["steps"][step - 1]["body"]
             business = s.sender_name or "Your business"
             values = {"name": "Priya", "business": business, "assistant": "Nimmi", "email": "priya@example.com",
-                      "phone": "+91 98765 43210",
+                      "phone": "+91 98765 43210", "details": "Visit date: Saturday, 11 AM\nBudget: 60-70 lakh",
                       "summary": "Priya asked about weekend site visits for a 2BHK and booked Saturday at 11am."}
-            body = automations.render(auto["body"], values)
+            body = automations.render(template, values)
             to = recipients(s, owner)[0] if recipients(s, owner) else owner
-            ok = await email.send_email(to, "[Test] " + automations.render(auto["subject"], values), body,
+            ok = await email.send_email(to, "[Test] " + automations.render(subject, values), body,
                                         automations.html_email(body, business, None), reply_to=s.reply_to, from_name=business)
             if not ok:
-                raise channels.ChannelError("Email isn't configured on the server")
+                raise channels.ChannelError(email.last_error() or "Email isn't configured on the server")
         elif req.channel == "webhook":
             if not s.webhook_url:
                 raise channels.ChannelError("Save a webhook URL first")
@@ -248,6 +280,18 @@ async def email_unsubscribe(token: str = ""):
     owner_id, address = subject.split("|", 1)
     await automations.unsubscribe(owner_id, address)
     return HTMLResponse(_page("You're unsubscribed", f"{address} won't get any more automatic emails from this business."))
+
+
+@router.post("/email/unsubscribe")
+async def email_unsubscribe_one_click(token: str = ""):
+    """Mail apps' one-click unsubscribe (List-Unsubscribe-Post) posts to the same link."""
+    from auth import decode_scoped_token
+    subject = decode_scoped_token(token, "email_unsub")
+    if not subject or "|" not in subject:
+        raise HTTPException(status_code=400, detail="This link has expired")
+    owner_id, address = subject.split("|", 1)
+    await automations.unsubscribe(owner_id, address)
+    return {"status": "unsubscribed"}
 
 
 def _page(title: str, text: str) -> str:

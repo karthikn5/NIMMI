@@ -4,10 +4,13 @@
     window.__NIMMI_WIDGET_LOADED__ = true;
 
     // Configuration
-    const script = document.currentScript || (function() {
-        const scripts = document.getElementsByTagName('script');
-        return scripts[scripts.length - 1];
-    })();
+    // currentScript is null when a page builder or tag manager inserts the tag; then find it by its bot id.
+    const script = document.currentScript
+        || document.querySelector('script[data-bot-id][src*="nimmi-widget"]')
+        || (function() {
+            const scripts = document.getElementsByTagName('script');
+            return scripts[scripts.length - 1];
+        })();
 
     const botId = script.getAttribute('data-bot-id');
     const apiBase = script.getAttribute('data-api-url') || 'https://api.nimmiai.in';
@@ -242,10 +245,32 @@
     const launcher = document.createElement('div');
     launcher.id = 'nimmi-launcher';
     
-    if (logoUrl) {
-        launcher.innerHTML = `<img src="${logoUrl}" alt="Chat" onerror="this.outerHTML='<svg class=\\'fallback\\' viewBox=\\'0 0 24 24\\'><path d=\\'M12 2C6.477 2 2 6.477 2 12c0 1.821.487 3.53 1.338 5L2.5 21.5l4.5-.838A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2zm0 18c-1.476 0-2.886-.313-4.156-.872l-2.618.487.487-2.618A7.955 7.955 0 014 12c0-4.411 3.589-8 8-8s8 3.589 8 8-3.589 8-8 8z\\'/></svg>'" />`;
+    // Built with DOM calls, never HTML strings: the logo URL comes from settings and this runs on the
+    // customer's own website, so it must not be able to inject markup or script there.
+    const chatIcon = () => {
+        const ns = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('class', 'fallback');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        const path = document.createElementNS(ns, 'path');
+        path.setAttribute('d', 'M12 2C6.477 2 2 6.477 2 12c0 1.821.487 3.53 1.338 5L2.5 21.5l4.5-.838A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2zm0 18c-1.476 0-2.886-.313-4.156-.872l-2.618.487.487-2.618A7.955 7.955 0 014 12c0-4.411 3.589-8 8-8s8 3.589 8 8-3.589 8-8 8z');
+        svg.appendChild(path);
+        return svg;
+    };
+    const safeLogo = (() => {
+        try {
+            const u = new URL(String(logoUrl || ''), document.baseURI);
+            return (u.protocol === 'https:' || u.protocol === 'http:') ? u.href : '';
+        } catch (e) { return ''; }
+    })();
+    if (safeLogo) {
+        const img = document.createElement('img');
+        img.alt = 'Chat';
+        img.src = safeLogo;
+        img.addEventListener('error', () => img.replaceWith(chatIcon()), { once: true });
+        launcher.appendChild(img);
     } else {
-        launcher.innerHTML = `<svg class="fallback" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12c0 1.821.487 3.53 1.338 5L2.5 21.5l4.5-.838A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2zm0 18c-1.476 0-2.886-.313-4.156-.872l-2.618.487.487-2.618A7.955 7.955 0 014 12c0-4.411 3.589-8 8-8s8 3.589 8 8-3.589 8-8 8z"/></svg>`;
+        launcher.appendChild(chatIcon());
     }
     if (labelText) {
         launcher.classList.add('labelled');
@@ -269,6 +294,7 @@
         
     const isDemo = script.getAttribute('data-is-demo') === 'true';
     iframe.src = `${dashboardBase}/widget/${botId}?t=` + Date.now() + (isDemo ? '&is_demo=true' : '');
+    iframe.setAttribute('allow', 'microphone'); // the chat's mic button (the visitor still has to allow it)
     chatWindow.appendChild(iframe);
     shadow.appendChild(chatWindow);
 
@@ -326,8 +352,10 @@
         }, autoOpenDelay * 1000);
     }
 
-    // Listen for messages from iframe (e.g. close request)
+    // Listen for messages from iframe (e.g. close request), and an "open" request from the host
+    // page itself (e.g. an "Open the assistant" button); other frames can't open it.
     window.addEventListener('message', (event) => {
         if (event.data === 'close-nimmi-widget') setOpen(false);
+        if (event.data === 'open-nimmi-widget' && event.source === window) setOpen(true);
     });
 })();

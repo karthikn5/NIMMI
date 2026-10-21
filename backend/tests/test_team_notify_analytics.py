@@ -16,13 +16,20 @@ def test_team_roles_and_workspace_switching(client, make_user):
     invited = client.post("/api/team/invite", json={"email": "agent.person@example.com", "role": "agent"}, headers=owner.h()).json()
     assert invited["status"] == "invited"
 
-    # The invitee signs up with the invited email: the invite activates on sign-in.
+    # Signing up with the invited email is not enough: a password signup doesn't prove the person owns
+    # that inbox. They join with the link from the invite email, whose token is the proof.
     import auth
     auth._hits.clear()
     signup = client.post("/api/auth/signup", json={"email": "agent.person@example.com", "name": "Agent", "password": "password123"}).json()
-    agent_headers = {"Authorization": f"Bearer {signup['token']}", "X-Workspace": owner.id}
+    me = {"Authorization": f"Bearer {signup['token']}"}
+    agent_headers = {**me, "X-Workspace": owner.id}
+    assert [s["role"] for s in client.get("/api/team/workspaces", headers=me).json()] == ["owner"]
+    assert client.get("/api/bots", headers=agent_headers).status_code == 403
 
-    spaces = client.get("/api/team/workspaces", headers={"Authorization": f"Bearer {signup['token']}"}).json()
+    token = invited["invite_link_path"].split("token=")[1]
+    assert client.post("/api/team/accept", json={"token": "wrong"}, headers=me).status_code == 404
+    assert client.post("/api/team/accept", json={"token": token}, headers=me).json()["role"] == "agent"
+    spaces = client.get("/api/team/workspaces", headers=me).json()
     assert [s["role"] for s in spaces] == ["owner", "agent"]
 
     assert [b["id"] for b in client.get("/api/bots", headers=agent_headers).json()] == [bot]

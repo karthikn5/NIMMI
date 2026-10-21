@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import AppHeader from "@/components/AppHeader";
 import { ToastProvider, cn } from "@/components/ui";
 import { currentUserId } from "@/lib/api";
+import { PaidOnly, useLimits } from "@/lib/plan";
 
 const tabs = [
     { href: "/dashboard/voice", label: "Overview", exact: true },
@@ -21,6 +22,7 @@ export default function VoiceLayout({ children }: { children: ReactNode }) {
     const pathname = usePathname();
     const router = useRouter();
     const [ready, setReady] = useState(false);
+    const limits = useLimits();
 
     useEffect(() => {
         if (!currentUserId()) router.push("/auth/signup");
@@ -60,6 +62,11 @@ export default function VoiceLayout({ children }: { children: ReactNode }) {
                 </div>
 
                 <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 pb-24">
+                    {limits && !limits.voice && (
+                        <PaidOnly feature="Voice calls">
+                            Look around and set up your agents. Turning on calls, test calls, numbers and campaigns needs a plan for one of your assistants.
+                        </PaidOnly>
+                    )}
                     {ready ? children : null}
                 </main>
             </div>

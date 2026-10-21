@@ -33,14 +33,16 @@ async def get_wallet(db: AsyncSession, owner_id: str) -> VoiceWallet:
     wallet = (await db.execute(select(VoiceWallet).where(VoiceWallet.user_id == owner_id))).scalars().first()
     now = datetime.utcnow()
     if not wallet:
-        wallet = VoiceWallet(user_id=owner_id, plan_minutes=0, plan_minutes_used=0,
-                             topup_minutes=TRIAL_MINUTES, cycle_end=now + timedelta(days=30))
-        db.add(wallet)
+        # In a savepoint: if another process creates it at the same moment, only this insert is undone,
+        # not the caller's other work in the session (e.g. the dialler's half-done jobs).
         try:
-            await db.commit()
+            async with db.begin_nested():
+                db.add(VoiceWallet(user_id=owner_id, plan_minutes=0, plan_minutes_used=0,
+                                   topup_minutes=TRIAL_MINUTES, cycle_end=now + timedelta(days=30)))
         except IntegrityError:  # created concurrently
-            await db.rollback()
-            wallet = (await db.execute(select(VoiceWallet).where(VoiceWallet.user_id == owner_id))).scalars().first()
+            pass
+        await db.commit()
+        wallet = (await db.execute(select(VoiceWallet).where(VoiceWallet.user_id == owner_id))).scalars().first()
     if not wallet.cycle_end or _naive(wallet.cycle_end) <= now:
         wallet.plan_minutes = await _plan_allowance(db, owner_id)
         wallet.plan_minutes_used = 0

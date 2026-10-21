@@ -15,7 +15,8 @@ import assist
 from auth import AuthContext, get_owned_bot, rate_limit, require_manager
 from database import get_db
 from backend.models import Bot, CallbackJob, CallLog, Campaign, DncEntry, PhoneNumber, VoiceAgent
-from phone import display, to_e164
+from phone import callable_destination, display, to_e164
+import plans
 
 router = APIRouter(prefix="/api/voice", tags=["voice-campaigns"])
 
@@ -130,6 +131,7 @@ async def list_campaigns(ctx: AuthContext = Depends(require_manager), db: AsyncS
 
 @router.post("/campaigns")
 async def create_campaign(data: CampaignCreate, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    await plans.require(db, ctx.owner_id, "voice")
     rate_limit(f"campaign:{ctx.owner_id}", 10, 3600)
     if not data.consent:
         raise HTTPException(status_code=400, detail="Confirm that everyone on the list agreed to be called")
@@ -153,7 +155,7 @@ async def create_campaign(data: CampaignCreate, ctx: AuthContext = Depends(requi
     clean: list[tuple[str, Contact]] = []
     for contact in data.contacts:
         e164 = to_e164(contact.phone)
-        if not e164:
+        if not e164 or not callable_destination(e164):
             invalid += 1
         elif e164 in seen:
             duplicates += 1
@@ -163,7 +165,7 @@ async def create_campaign(data: CampaignCreate, ctx: AuthContext = Depends(requi
             seen.add(e164)
             clean.append((e164, contact))
     if not clean:
-        raise HTTPException(status_code=400, detail="None of the numbers can be called (invalid, repeated or on your do-not-call list)")
+        raise HTTPException(status_code=400, detail="None of the numbers can be called (invalid, in a country we don't call, repeated or on your do-not-call list)")
 
     start = data.start_at.astimezone(timezone.utc).replace(tzinfo=None) if data.start_at and data.start_at.tzinfo else data.start_at
     start = max(start or datetime.utcnow(), datetime.utcnow())

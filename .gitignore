@@ -22,12 +22,15 @@ coverage.xml
 *.db
 *.sqlite
 
-# Environment variables
+# Environment variables: never commit real ones (only the .example templates)
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
+!dashboard/.env.production
+backend/.env.railway
+
+# Database backups (encrypted, but still customer data)
+*.backup
 
 # Next.js / Node
 node_modules/
@@ -54,6 +57,7 @@ test_ai.py
 Thumbs.db
 desktop.ini
 backend/static/uploads/
+backend/site_files/
 
 # Private runtime files: call recordings, KYC documents, voice samples, service keys
 backend/storage/

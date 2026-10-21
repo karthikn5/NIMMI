@@ -346,7 +346,7 @@ function Builder({ params }: { params: Promise<{ id: string }> }) {
 
             {showExport && (
                 <div className="fixed inset-0 z-[90]">
-                    <ExportModal botId={id} onClose={() => setShowExport(false)} />
+                    <ExportModal botId={id} botName={botName || undefined} onClose={() => setShowExport(false)} />
                 </div>
             )}
         </div>

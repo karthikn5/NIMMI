@@ -20,3 +20,13 @@ def headers(key: str, content_type: Optional[str] = None) -> dict:
     if content_type:
         h["Content-Type"] = content_type
     return h
+
+
+async def ensure_bucket(client, url: str, key: str, name: str, public: bool) -> bool:
+    """Create a storage bucket if it doesn't exist (needs the service key). True if it exists now."""
+    hdrs = headers(key)
+    if (await client.get(f"{url}/storage/v1/bucket/{name}", headers=hdrs)).status_code == 200:
+        return True
+    resp = await client.post(f"{url}/storage/v1/bucket", headers={**hdrs, "Content-Type": "application/json"},
+                             json={"id": name, "name": name, "public": public})
+    return resp.status_code in (200, 201, 409)

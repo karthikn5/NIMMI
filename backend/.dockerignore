@@ -1,0 +1,14 @@
+# Never bake local secrets, databases or dev files into the production image.
+venv/
+**/__pycache__/
+*.pyc
+tests/
+.pytest_cache/
+*.db
+*.sqlite
+*.backup
+*.log
+.env
+.env.*
+!.env.example
+storage/

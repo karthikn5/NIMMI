@@ -5,16 +5,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Mail, Lock, Eye, EyeOff, ArrowRight, ArrowLeft } from "lucide-react";
 import Image from "next/image";
-import { useEffect } from "react";
-import { createClient } from "@/utils/supabase/client";
+import { GoogleFinishing, nextPath, startGoogleSignIn, useGoogleReturn } from "@/lib/googleSignIn";
 import { motion } from "framer-motion";
 import { apiBase, saveSession } from "@/lib/api";
 
-/** Where to go after signing in: the page that sent you here, or the dashboard. */
-function nextPath() {
-    const next = new URLSearchParams(window.location.search).get("next");
-    return next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
-}
 
 export default function Login() {
     const [formData, setFormData] = useState({ email: "", password: "" });
@@ -22,50 +16,10 @@ export default function Login() {
     const [error, setError] = useState("");
     const [showPassword, setShowPassword] = useState(false);
     const router = useRouter();
-    const supabase = createClient();
 
-    useEffect(() => {
-        const checkOAuth = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (session?.user) {
-                const user = session.user;
-                // Sync with our backend
-                try {
-                    const apiUrl = typeof window !== "undefined" && window.location.hostname.includes("nimmiai.in")
-                        ? "https://api.nimmiai.in"
-                        : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
-                    const res = await fetch(`${apiUrl}/api/auth/social`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            access_token: session.access_token,
-                            name: user.user_metadata.full_name || user.user_metadata.name || "",
-                        })
-                    });
-                    const data = await res.json();
-                    if (res.ok) {
-                        saveSession(data);
-                        router.push(nextPath());
-                    } else {
-                        setError(data.detail || "Google sign-in failed. Please try again.");
-                    }
-                } catch (err) {
-                    console.error("OAuth Sync Error:", err);
-                }
-            }
-        };
-        checkOAuth();
-    }, [supabase, router]);
+    const google = useGoogleReturn();
 
-    const handleGoogleLogin = async () => {
-        const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || window.location.origin;
-        await supabase.auth.signInWithOAuth({
-            provider: 'google',
-            options: {
-                redirectTo: `${siteUrl}/auth/login`
-            }
-        });
-    };
+    const handleGoogleLogin = () => startGoogleSignIn("/auth/login");
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -90,6 +44,8 @@ export default function Login() {
             setLoading(false);
         }
     };
+
+    if (google.finishing) return <GoogleFinishing />;
 
     return (
         <div className="min-h-screen bg-[#fcfcfd] flex items-center justify-center p-6 relative overflow-hidden">
@@ -185,9 +141,9 @@ export default function Login() {
                                 </div>
                             </div>
 
-                            {error && (
+                            {(error || google.error) && (
                                 <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm font-medium text-center animate-shake">
-                                    {error}
+                                    {error || google.error}
                                 </div>
                             )}
 

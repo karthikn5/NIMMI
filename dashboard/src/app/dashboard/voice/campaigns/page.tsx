@@ -9,6 +9,7 @@ import {
 } from "@/components/ui";
 import { CampaignProgress, CAMPAIGN_STATUS } from "@/components/voice/CampaignBits";
 import { parseCsv } from "@/lib/csv";
+import { readXlsx, toCsv } from "@/lib/xlsx";
 import { apiSave, useApi } from "@/lib/useApi";
 import { formatDate } from "@/lib/voice/api";
 import type { CampaignSummary, PhoneNumber, VoiceAgentSummary } from "@/lib/voice/types";
@@ -110,8 +111,13 @@ function NewCampaign({ open, onClose }: { open: boolean; onClose: () => void }) 
 
     const loadFile = async (file?: File) => {
         if (!file) return;
-        setFileName(file.name);
-        setList(await file.text());
+        try {
+            // Excel sheets are turned into the same text list, so you can check and edit it before starting.
+            setList(/\.xlsx?$/i.test(file.name) ? toCsv(await readXlsx(file)) : await file.text());
+            setFileName(file.name);
+        } catch (e) {
+            toast((e as Error).message || "Couldn't read that file");
+        }
     };
 
     const submit = async () => {
@@ -173,8 +179,9 @@ function NewCampaign({ open, onClose }: { open: boolean; onClose: () => void }) 
                     <div className="flex items-center justify-between">
                         <span className={label}>People to call</span>
                         <label className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-line-strong text-[13px] cursor-pointer hover:bg-stone-50 focus-within:outline-2 focus-within:outline-plum">
-                            <Upload size={13} /> {fileName || "Upload CSV"}
-                            <input type="file" accept=".csv,.txt,text/csv" className="sr-only" onChange={(e) => loadFile(e.target.files?.[0])} />
+                            <Upload size={13} /> {fileName || "Upload Excel or CSV"}
+                            <input type="file" accept=".xlsx,.xls,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                   className="sr-only" onChange={(e) => { loadFile(e.target.files?.[0]); e.target.value = ""; }} />
                         </label>
                     </div>
                     <Textarea aria-label="Paste your list" className="mt-1.5 font-mono text-xs" rows={5} value={list} onChange={(e) => { setList(e.target.value); setFileName(""); }}
@@ -214,7 +221,7 @@ function NewCampaign({ open, onClose }: { open: boolean; onClose: () => void }) 
                         </Select>
                     </div>
                 </div>
-                <p className="text-xs text-stone-500 -mt-3">Retries happen an hour apart. A Twilio trial account can only make one call at a time.</p>
+                <p className="text-xs text-stone-500 -mt-3">Retries happen an hour apart. "Calls at once" is how many people ring at the same time (a Twilio trial account allows only 1).</p>
 
                 <div>
                     <span className={label}>Start</span>

@@ -107,6 +107,7 @@ async def lead_captured(conversation_id: str) -> None:
 
     # Automatic email to the customer (if they gave an email and the automation is on).
     await automations.schedule(bot.user_id, "chat_lead", conversation_id, contact.get("email"), {
+        **{automations.field_key(k): v for k, v in fields.items()}, "details": automations.details_text(fields),
         "name": contact.get("name"), "email": contact.get("email"), "phone": display(contact.get("phone")) if contact.get("phone") else "",
         "business": _business(settings, bot), "assistant": bot.bot_name, "summary": "",
     })
@@ -155,10 +156,15 @@ async def call_completed(call_id: str) -> None:
             f"Summary: {call.summary or '-'}\n\n{_lines(captured) if captured else ''}\n\n"
             f"Listen and read the transcript: {email.dashboard_url()}/dashboard/voice/calls?call={call.id}"))
 
-    await automations.schedule(call.user_id, "call_lead", call.id, contact.get("email"), {
+    # Automatic email to the customer. A call that reached its goal gets the "goal met" email when that's on.
+    values = {
+        **{automations.field_key(k): v for k, v in captured.items()},
         "name": contact.get("name"), "email": contact.get("email"), "phone": display(call.caller_e164) if call.caller_e164 else "",
         "business": _business(settings, bot), "assistant": bot_name, "summary": call.summary or "",
-    })
+        "details": automations.details_text(captured),
+    }
+    if not (call.successful and await automations.schedule(call.user_id, "goal_met", call.id, contact.get("email"), values)):
+        await automations.schedule(call.user_id, "call_lead", call.id, contact.get("email"), values)
 
     if settings.webhook_url:
         await _once(call.user_id, "call_webhook", call.id,
@@ -202,6 +208,41 @@ async def handoff_requested(conversation_id: str, message: str = "") -> None:
         recipients(settings, owner.email), f"{who} wants to talk to a person ({bot.bot_name})",
         f"{who} asked for a person in {channel}.\n\n" + (f"Their message: {message}\n\n" if message else "") +
         f"Reply now from Live chat: {email.dashboard_url()}/dashboard/live-chat"))
+
+
+async def call_missed(owner_id: str, ref_id: str, phone: Optional[str], variables: Optional[dict], bot_id: Optional[str]) -> None:
+    """We called someone (call-back or campaign) and never reached them: the "couldn't reach them" email."""
+    variables = variables or {}
+    contact = extract_contact(variables)
+    if not contact.get("email"):
+        return
+    async with async_session() as db:
+        bot = (await db.execute(select(Bot).where(Bot.bot_id == bot_id))).scalars().first() if bot_id else None
+        settings = await _settings(db, owner_id)
+    await automations.schedule(owner_id, "call_missed", ref_id, contact["email"], {
+        **{automations.field_key(k): v for k, v in variables.items()},
+        "name": contact.get("name"), "email": contact["email"], "phone": display(phone) if phone else "",
+        "business": _business(settings, bot), "assistant": bot.bot_name if bot else "", "summary": "",
+    })
+
+
+async def handoff_closed(conversation_id: str) -> None:
+    """Someone from the team finished a Live chat: the "after your team helps" email."""
+    async with async_session() as db:
+        conv = (await db.execute(select(Conversation).where(Conversation.conversation_id == conversation_id))).scalars().first()
+        bot = (await db.execute(select(Bot).where(Bot.bot_id == conv.bot_id))).scalars().first() if conv else None
+        if not bot:
+            return
+        settings = await _settings(db, bot.user_id)
+    captured = conv.captured_data or {}
+    contact = extract_contact(captured)
+    await automations.schedule(bot.user_id, "handoff_done", conversation_id, contact.get("email"), {
+        **{automations.field_key(k): v for k, v in captured.items()},
+        "name": contact.get("name"), "email": contact.get("email"),
+        "phone": display(contact["phone"]) if contact.get("phone") else "",
+        "business": _business(settings, bot), "assistant": bot.bot_name, "summary": "",
+        "details": automations.details_text(captured),
+    })
 
 
 async def _none(coro: Awaitable) -> None:

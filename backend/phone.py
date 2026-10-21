@@ -69,3 +69,27 @@ def extract_contact(captured: Optional[dict]) -> dict:
         elif "name" in k and "name" not in out:
             out["name"] = v
     return out
+
+
+# Country calling codes we place calls to (India, US/Canada, UK, Australia), set with CALL_COUNTRY_CODES.
+# Anything else is refused, so a web form or an uploaded list can't make us ring premium-rate numbers
+# abroad (international revenue share fraud).
+_DEFAULT_CALL_CODES = "91,1,44,61"
+# +1 numbers outside the US and Canada (the Caribbean), a common target of that fraud.
+_RISKY_NANP = {"242", "246", "264", "268", "284", "345", "441", "473", "649", "658", "664", "721", "758",
+               "767", "784", "809", "829", "849", "868", "869", "876"}
+
+
+def callable_destination(e164: Optional[str]) -> bool:
+    """True if we're willing to dial this number."""
+    import os
+    if not e164 or not e164.startswith("+"):
+        return False
+    digits = e164[1:]
+    codes = [c.strip() for c in (os.getenv("CALL_COUNTRY_CODES") or _DEFAULT_CALL_CODES).split(",") if c.strip()]
+    code = next((c for c in sorted(codes, key=len, reverse=True) if digits.startswith(c)), None)
+    if code is None:
+        return False
+    if code == "1" and digits[1:4] in _RISKY_NANP:
+        return False
+    return True

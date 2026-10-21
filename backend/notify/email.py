@@ -8,12 +8,32 @@ import html
 import logging
 import os
 import smtplib
+from contextvars import ContextVar
 from email.message import EmailMessage
 from typing import Optional
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+_last_error: ContextVar[Optional[str]] = ContextVar("email_last_error", default=None)
+
+
+def last_error() -> Optional[str]:
+    """Why the last send_email in this task failed, in words a business owner understands."""
+    return _last_error.get()
+
+
+def _resend_reason(status: int, body: str) -> str:
+    try:
+        message = str(httpx.Response(status, content=body).json().get("message") or "")
+    except Exception:
+        message = body
+    if "testing emails" in message or "verify a domain" in message:
+        return "Resend is in test mode: it only sends to your own Resend address until your domain is verified"
+    if status in (401, 403) and "API key" in message:
+        return "Resend rejected the API key"
+    return f"Resend: {message[:200]}" if message else f"Resend returned {status}"
 
 
 def dashboard_url() -> str:
@@ -39,12 +59,18 @@ def _from(from_name: Optional[str]) -> str:
 
 
 async def send_email(to: str, subject: str, text: str, html_body: Optional[str] = None,
-                     reply_to: Optional[str] = None, from_name: Optional[str] = None) -> bool:
+                     reply_to: Optional[str] = None, from_name: Optional[str] = None,
+                     unsubscribe_url: Optional[str] = None) -> bool:
+    # One-click unsubscribe (RFC 8058): Gmail and Yahoo expect it on emails to customers.
+    extra = {"List-Unsubscribe": f"<{unsubscribe_url}>", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"} if unsubscribe_url else {}
+    _last_error.set(None)
     if os.getenv("RESEND_API_KEY"):
         try:
             payload = {"from": _from(from_name), "to": [to], "subject": subject, "text": text, "html": html_body or _plain_html(text)}
             if reply_to:
                 payload["reply_to"] = [reply_to]
+            if extra:
+                payload["headers"] = extra
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(
                     "https://api.resend.com/emails",
@@ -53,10 +79,12 @@ async def send_email(to: str, subject: str, text: str, html_body: Optional[str] 
                 )
             if resp.status_code >= 300:
                 logger.error(f"Resend rejected email to {to}: {resp.status_code} {resp.text[:200]}")
+                _last_error.set(_resend_reason(resp.status_code, resp.text))
                 return False
             return True
         except Exception as e:
             logger.error(f"Resend error: {e}")
+            _last_error.set("Couldn't reach Resend")
             return False
 
     host, user, password = os.getenv("SMTP_HOST"), os.getenv("SMTP_USER"), os.getenv("SMTP_PASS")
@@ -65,6 +93,8 @@ async def send_email(to: str, subject: str, text: str, html_body: Optional[str] 
         msg["Subject"], msg["From"], msg["To"] = subject, _from(from_name), to
         if reply_to:
             msg["Reply-To"] = reply_to
+        for k, v in extra.items():
+            msg[k] = v
         msg.set_content(text)
         msg.add_alternative(html_body or _plain_html(text), subtype="html")
 
@@ -79,9 +109,11 @@ async def send_email(to: str, subject: str, text: str, html_body: Optional[str] 
             return True
         except Exception as e:
             logger.error(f"SMTP error: {e}")
+            _last_error.set(f"SMTP: {str(e)[:200]}")
             return False
 
     logger.warning(f"Email not configured; would have sent '{subject}' to {to}")
+    _last_error.set("Email sending isn't set up on the server")
     return False
 
 
@@ -93,7 +125,11 @@ def _plain_html(text: str) -> str:
 async def send_reset_email(email: str, token: str) -> bool:
     link = f"{dashboard_url()}/auth/reset-password?token={token}"
     if not is_configured():
-        logger.warning(f"Email not configured. Password reset link for {email}: {link}")
+        from security import is_production
+        if is_production():  # a reset link in the logs would let anyone who reads them take over the account
+            logger.error("Email isn't configured, so a password reset email couldn't be sent")
+        else:
+            logger.warning(f"Email not configured. Password reset link for {email}: {link}")
         return False
     return await send_email(
         email,

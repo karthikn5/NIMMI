@@ -114,7 +114,7 @@ export function Switch({ checked, onChange, label, disabled }: { checked: boolea
 }
 
 export function Segmented<T extends string>({ value, onChange, options, label }: {
-    value: T; onChange: (v: T) => void; options: { value: T; label: string }[]; label: string;
+    value: T; onChange: (v: T) => void; options: { value: T; label: string; icon?: ReactNode }[]; label: string;
 }) {
     return (
         <div role="radiogroup" aria-label={label} className="inline-flex p-0.5 bg-stone-100 rounded-md">
@@ -126,11 +126,12 @@ export function Segmented<T extends string>({ value, onChange, options, label }:
                     aria-checked={value === o.value}
                     onClick={() => onChange(o.value)}
                     className={cn(
-                        "h-7 px-3 text-[13px] rounded-[5px] transition-colors",
+                        "inline-flex items-center gap-1.5 h-7 px-3 text-[13px] rounded-[5px] transition-colors",
                         focusRing,
                         value === o.value ? "bg-white text-ink font-medium shadow-[0_1px_2px_rgba(0,0,0,0.08)]" : "text-stone-500 hover:text-ink",
                     )}
                 >
+                    {o.icon && <span aria-hidden className={cn("flex", value === o.value ? "text-plum" : "text-stone-400")}>{o.icon}</span>}
                     {o.label}
                 </button>
             ))}

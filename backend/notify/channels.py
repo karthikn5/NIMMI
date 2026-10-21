@@ -1,6 +1,7 @@
 """WhatsApp (Meta Cloud API), signed CRM webhooks and LeadSquared."""
 import hashlib
 import hmac
+import re
 import json
 import logging
 import os
@@ -8,7 +9,7 @@ from typing import Optional
 
 import httpx
 
-from netsafe import UnsafeUrl, assert_public_url
+from netsafe import UnsafeUrl, assert_public_url, safe_client
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ async def post_webhook(url: str, secret: Optional[str], event: str, data: dict) 
     headers = {"Content-Type": "application/json", "X-Nimmi-Event": event}
     if secret:
         headers["X-Nimmi-Signature"] = sign(secret, body)
-    async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+    async with safe_client(timeout=10) as client:
         resp = await client.post(url, content=body, headers=headers)
     if resp.status_code >= 300:
         raise ChannelError(f"Webhook returned {resp.status_code}")
@@ -126,8 +127,8 @@ async def post_webhook(url: str, secret: Optional[str], event: str, data: dict) 
 
 async def push_leadsquared(host: str, access_key: str, secret_key: str, lead: dict) -> None:
     """Create or update a lead in LeadSquared (Lead.Capture de-duplicates on phone/email)."""
-    host = host.replace("https://", "").replace("http://", "").strip("/")
-    if not host.endswith("leadsquared.com"):
+    host = host.replace("https://", "").replace("http://", "").strip("/").lower()
+    if not re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)*\.leadsquared\.com", host):
         raise ChannelError("LeadSquared host should look like api-in21.leadsquared.com")
     attributes = [
         ("FirstName", lead.get("name")),
@@ -137,7 +138,7 @@ async def push_leadsquared(host: str, access_key: str, secret_key: str, lead: di
         ("Notes", lead.get("summary")),
     ]
     body = [{"Attribute": k, "Value": v} for k, v in attributes if v]
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with safe_client(timeout=15) as client:
         resp = await client.post(
             f"https://{host}/v2/LeadManagement.svc/Lead.Capture",
             params={"accessKey": access_key, "secretKey": secret_key},

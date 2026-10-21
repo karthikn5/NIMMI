@@ -1,5 +1,6 @@
 """HTTP and WebSocket API for voice. Shapes match dashboard/src/lib/voice/types.ts."""
 import asyncio
+import hmac
 import logging
 import os
 import re
@@ -16,15 +17,17 @@ from sqlalchemy.future import select
 
 from auth import (AuthContext, client_ip, decode_scoped_token, get_ctx, get_owned_bot, issue_scoped_token,
                   rate_limit, require_manager, require_owner)
+from security import is_production, local_dev
 from database import async_session, get_db
 from backend.models import (Bot, CallbackJob, CallbackSettings, CallLog, Campaign, ComplianceSettings, Conversation, DncEntry,
                             PhoneNumber, VoiceAgent)
 from notify.email import send_email
-from phone import display, extract_contact, mask, to_e164
+from phone import callable_destination, display, extract_contact, mask, to_e164
 import assist
 from voice import accounts, ambience, catalog, exotel, llm, metering, recording, sarvam, scheduler, twilio
 from voice.pipeline import CallSession, CallSetup
 from voice.transports import BrowserTransport, ExotelTransport, TwilioTransport
+import plans
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/voice", tags=["voice"])
@@ -184,7 +187,7 @@ async def overview(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depen
 # ─── agents & voices ──────────────────────────────────────────────
 @router.get("/agents")
 async def list_agents(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depends(get_db)):
-    is_local = os.getenv("LOCAL_DEV", "false").lower() == "true"
+    is_local = local_dev()
     if is_local:
         bots = (await db.execute(select(Bot).order_by(Bot.created_at.desc()))).scalars().all()
         agents = {a.bot_id: a for a in (await db.execute(select(VoiceAgent))).scalars().all()}
@@ -247,6 +250,8 @@ class AgentUpdate(BaseModel):
 
 @router.put("/agents/{bot_id}")
 async def update_agent(bot_id: str, data: AgentUpdate, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    if data.enabled:
+        await plans.require(db, ctx.owner_id, "voice")
     bot = await get_owned_bot(bot_id, ctx, db)
     if data.language not in catalog.LANGUAGES:
         raise HTTPException(status_code=400, detail="Unsupported language")
@@ -315,6 +320,7 @@ class SessionRequest(BaseModel):
 
 @router.post("/session")
 async def create_session(req: SessionRequest, ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depends(get_db)):
+    await plans.require(db, ctx.owner_id, "voice")
     bot = await get_owned_bot(req.bot_id, ctx, db)
     if not sarvam.configured():
         raise HTTPException(status_code=503, detail="The voice engine needs SARVAM_API_KEY on the server")
@@ -328,12 +334,15 @@ async def browser_call(ws: WebSocket, token: str = ""):
     if not subject:
         await ws.close(code=4401)
         return
-    owner_id, bot_id = subject.split(":", 1)
+    _, bot_id = subject.split(":", 1)
     async with async_session() as db:
-        bot = (await db.execute(select(Bot).where(Bot.bot_id == bot_id, Bot.user_id == owner_id))).scalars().first()
+        # The signed token is only issued after /session checked access to this bot, so trust it,
+        # and run the call in the bot's own workspace (its minutes, compliance and logs).
+        bot = (await db.execute(select(Bot).where(Bot.bot_id == bot_id))).scalars().first()
         if not bot:
             await ws.close(code=4404)
             return
+        owner_id = bot.user_id
         agent, _ = await _agent_for(bot, owner_id, db)
         compliance = await _compliance(owner_id, db)
     await ws.accept()
@@ -445,6 +454,14 @@ async def _log_unanswered(db: AsyncSession, sid: Optional[str], job_id: Optional
     else:
         scheduler.schedule_retry(job, await scheduler.max_attempts_for(db, job), f"{provider}: {status}")
     await db.commit()
+    _email_if_gave_up(job)
+
+
+def _email_if_gave_up(job: CallbackJob) -> None:
+    """No more attempts left: the "couldn't reach them" email, if they gave an email and it's on."""
+    if job.status == "failed" and not (job.consent_source or "").startswith(TEST_CALL):
+        from notify import events
+        events.fire_and_forget(events.call_missed(job.user_id, job.id, job.e164, {**(job.variables or {}), **({"name": job.name} if job.name else {})}, job.bot_id))
 
 
 @router.websocket("/ws/exotel/{secret}")
@@ -504,10 +521,15 @@ async def _twilio_scope(secret: str, request: Request, form) -> object:
     if scope is None:
         raise HTTPException(status_code=403, detail="Forbidden")
     if scope != accounts.NIMMI:
-        url = twilio.public_base() + request.url.path + (f"?{request.url.query}" if request.url.query else "")
         _, token = accounts.twilio_creds(scope)
+    else:
+        # Nimmi's own account: the secret in the URL plus Twilio's signature, so a leaked URL alone isn't enough.
+        token = os.getenv("TWILIO_AUTH_TOKEN") if os.getenv("TWILIO_VERIFY_SIGNATURES", "true").lower() != "false" else None
+    if token:
+        url = twilio.public_base() + request.url.path + (f"?{request.url.query}" if request.url.query else "")
         params = {k: str(v) for k, v in form.items()}
         if not twilio.valid_signature(token, url, params, request.headers.get("X-Twilio-Signature", "")):
+            logger.warning("Rejected a Twilio webhook with a missing or invalid signature")
             raise HTTPException(status_code=403, detail="Invalid signature")
     return scope
 
@@ -570,6 +592,7 @@ async def twilio_outbound(secret: str, request: Request, job: str = "", db: Asyn
                        ended_at=datetime.utcnow()))
         scheduler.schedule_retry(cb, await scheduler.max_attempts_for(db, cb), "Reached voicemail")
         await db.commit()
+        _email_if_gave_up(cb)
     return _xml(twilio.hangup_twiml())
 
 
@@ -615,11 +638,14 @@ class TestCallRequest(BaseModel):
 @router.post("/test-call")
 async def test_call(req: TestCallRequest, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
     """Ring your own phone from one of your numbers and talk to the assistant (uses minutes)."""
+    await plans.require(db, ctx.owner_id, "voice")
     rate_limit(f"testcall:{ctx.owner_id}", 5, 600)
     bot = await get_owned_bot(req.bot_id, ctx, db)
     e164 = to_e164(req.phone)
     if not e164:
         raise HTTPException(status_code=400, detail="Enter a valid phone number, with the country code for non-Indian numbers")
+    if not callable_destination(e164):
+        raise HTTPException(status_code=400, detail="We can't place calls to that country")
     numbers = (await db.execute(select(PhoneNumber).where(
         PhoneNumber.user_id == ctx.owner_id, PhoneNumber.status == "active", PhoneNumber.e164.is_not(None)
     ))).scalars().all()
@@ -720,6 +746,7 @@ class NumberRequest(BaseModel):
 
 @router.post("/numbers")
 async def request_number(req: NumberRequest, ctx: AuthContext = Depends(require_owner), db: AsyncSession = Depends(get_db)):
+    await plans.require(db, ctx.owner_id, "voice")
     if req.city not in catalog.CITIES:
         raise HTTPException(status_code=400, detail="Choose a city from the list")
     open_requests = (await db.execute(select(func.count()).select_from(PhoneNumber).where(
@@ -815,7 +842,9 @@ class ActivateNumber(BaseModel):
 async def admin_activate_number(number_id: str, data: ActivateNumber, request: Request, db: AsyncSession = Depends(get_db)):
     """Ops: after provisioning the ExoPhone in Exotel, attach it to the request."""
     key = os.getenv("ADMIN_API_KEY")
-    if not key or request.headers.get("x-admin-key") != key:
+    if key and len(key) < 24 and is_production():
+        raise HTTPException(status_code=503, detail="ADMIN_API_KEY is too short. Use at least 24 random characters.")
+    if not key or not hmac.compare_digest(request.headers.get("x-admin-key", ""), key):
         raise HTTPException(status_code=403, detail="Forbidden")
     number = (await db.execute(select(PhoneNumber).where(PhoneNumber.id == number_id))).scalars().first()
     e164 = to_e164(data.e164)
@@ -865,6 +894,8 @@ async def get_callbacks(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = 
 
 @router.put("/callbacks")
 async def update_callbacks(data: CallbackUpdate, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    if data.enabled:
+        await plans.require(db, ctx.owner_id, "voice")
     if data.delay not in scheduler.DELAYS:
         raise HTTPException(status_code=400, detail="Unknown delay")
     if not (_TIME.match(data.window_start) and _TIME.match(data.window_end)):
@@ -910,7 +941,7 @@ async def request_callback(req: CallbackRequest, request: Request, db: AsyncSess
     if not req.consent:
         raise HTTPException(status_code=400, detail="We can only call if you agree to a callback")
     e164 = to_e164(req.phone)
-    if not e164:
+    if not e164 or not callable_destination(e164):
         raise HTTPException(status_code=400, detail="Enter a valid phone number")
     rate_limit(f"cbreq-num:{e164}", 3, 3600)
     bot = (await db.execute(select(Bot).where(Bot.bot_id == req.bot_id))).scalars().first()
@@ -928,10 +959,16 @@ async def request_callback(req: CallbackRequest, request: Request, db: AsyncSess
     if recent:
         return {"status": "queued"}
     now = datetime.utcnow()
+    # Their email from the chat, so we can write if the call never gets through.
+    conv = (await db.execute(select(Conversation).where(
+        Conversation.bot_id == bot.bot_id, Conversation.visitor_session_id == req.session_id,
+    ).order_by(Conversation.created_at.desc()))).scalars().first() if req.session_id else None
+    address = extract_contact(conv.captured_data or {}).get("email") if conv else None
     db.add(CallbackJob(
         user_id=bot.user_id, bot_id=bot.bot_id, e164=e164, name=(req.name or "")[:80] or None,
         consent_source=f"Asked for a callback in the {bot.bot_name} chat on {now:%d %b %Y at %H:%M} UTC",
         next_attempt_at=now + timedelta(seconds=scheduler.DELAYS.get(settings.delay, 60)),
+        variables={"email": address} if address else None,
     ))
     await db.commit()
     return {"status": "queued"}

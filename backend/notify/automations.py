@@ -1,10 +1,19 @@
 """
-Automatic emails to customers: a thank-you after a chat lead, a follow-up after a call.
+Automatic emails to customers.
 
-A trigger queues one EmailJob per (kind, conversation/call); the scheduler sends it
-when due. Every email carries the business's name, replies go to the business,
-and there's an unsubscribe link that's honoured before each send.
+Triggers (each can be a short sequence of up to three emails):
+  chat_lead     someone shares their email in chat or on WhatsApp
+  call_lead     a caller gives their email on a call
+  goal_met      a call reached the agent's goal (e.g. a booking); replaces call_lead for that call
+  call_missed   we called (call-back or campaign) and never reached them
+  handoff_done  a person from the team finished helping them in Live chat
+
+A trigger queues one EmailJob per step; the scheduler sends each when due. Follow-up steps stop
+when the customer unsubscribes, when a later call with them reaches its goal, or when the business
+stops them. Every email carries the business's name, replies go to the business, and there's an
+unsubscribe link that's honoured before each send. Bulk emails (broadcasts) use the same queue.
 """
+import hashlib
 import html
 import logging
 import os
@@ -12,46 +21,84 @@ import re
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import delete, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 
 from database import async_session
-from backend.models import EmailJob, EmailUnsubscribe, IntegrationSettings
+from backend.models import CallLog, EmailJob, EmailUnsubscribe, IntegrationSettings, NotificationLog
 from notify import email
 
 logger = logging.getLogger(__name__)
 
-DELAYS = {"now": 0, "1h": 3600, "1d": 86400}
-PLACEHOLDERS = ["name", "business", "assistant", "email", "phone", "summary"]
+# How long after the trigger each email goes out.
+DELAYS = {"now": 0, "1h": 3600, "1d": 86400, "2d": 2 * 86400, "3d": 3 * 86400, "5d": 5 * 86400, "7d": 7 * 86400, "14d": 14 * 86400}
+MAX_STEPS = 3
+PLACEHOLDERS = ["name", "business", "assistant", "email", "phone", "summary", "details"]
 EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]{2,}")
+BATCH = 50  # emails sent per scheduler pass (about every 20 seconds)
+
+
+def _step(delay: str, subject: str, body: str) -> dict:
+    return {"delay": delay, "subject": subject, "body": body}
+
 
 DEFAULTS: dict[str, dict] = {
-    "chat_lead": {
-        "enabled": False, "delay": "now",
-        "subject": "Thanks for reaching out to {{business}}",
-        "body": ("Hi {{name}},\n\nThanks for chatting with us. We have your details, and someone from our team "
-                 "will get back to you shortly.\n\nIf there's anything else you'd like us to know, just reply to this email.\n\n"
-                 "Regards,\n{{business}}"),
-    },
-    "call_lead": {
-        "enabled": False, "delay": "now",
-        "subject": "Following up on your call with {{business}}",
-        "body": ("Hi {{name}},\n\nThank you for speaking with us. Here's a short summary of the call:\n\n{{summary}}\n\n"
-                 "Reply to this email if anything needs correcting or you have more questions.\n\nRegards,\n{{business}}"),
-    },
+    "chat_lead": {"enabled": False, "steps": [_step(
+        "now", "Thanks for reaching out to {{business}}",
+        "Hi {{name}},\n\nThanks for chatting with us. We have your details, and someone from our team "
+        "will get back to you shortly.\n\nIf there's anything else you'd like us to know, just reply to this email.\n\n"
+        "Regards,\n{{business}}")]},
+    "call_lead": {"enabled": False, "steps": [_step(
+        "now", "Following up on your call with {{business}}",
+        "Hi {{name}},\n\nThank you for speaking with us. Here's a short summary of the call:\n\n{{summary}}\n\n"
+        "Reply to this email if anything needs correcting or you have more questions.\n\nRegards,\n{{business}}")]},
+    "goal_met": {"enabled": False, "steps": [_step(
+        "now", "Confirmed: your details with {{business}}",
+        "Hi {{name}},\n\nThanks for speaking with us. Here's what we noted:\n\n{{details}}\n\n{{summary}}\n\n"
+        "If anything needs changing, just reply to this email.\n\nRegards,\n{{business}}")]},
+    "call_missed": {"enabled": False, "steps": [_step(
+        "now", "We tried to call you",
+        "Hi {{name}},\n\nWe tried calling you on {{phone}} but couldn't get through. "
+        "Reply to this email with a good time to call, or any questions you have.\n\nRegards,\n{{business}}")]},
+    "handoff_done": {"enabled": False, "steps": [_step(
+        "now", "Thanks for chatting with {{business}}",
+        "Hi {{name}},\n\nThanks for chatting with our team today. If there's anything else we can help with, "
+        "just reply to this email.\n\nRegards,\n{{business}}")]},
 }
+
+LABELS = {"chat_lead": "After a chat", "call_lead": "After a call", "goal_met": "Goal met on a call",
+          "call_missed": "Couldn't reach them", "handoff_done": "After your team helps", "broadcast": "Bulk email"}
+
+
+def _normalize(saved: Optional[dict], default: dict) -> dict:
+    """Saved settings over the defaults. Older saves had one email: {enabled, delay, subject, body}."""
+    saved = saved or {}
+    steps = saved.get("steps")
+    if steps is None and saved.get("subject") is not None:
+        steps = [_step(saved.get("delay") or "now", saved.get("subject") or "", saved.get("body") or "")]
+    return {"enabled": bool(saved.get("enabled", default["enabled"])), "steps": steps or default["steps"]}
 
 
 def automations(settings: Optional[IntegrationSettings]) -> dict[str, dict]:
     saved = (settings.email_automations if settings else None) or {}
-    return {k: {**v, **{f: saved.get(k, {}).get(f) for f in v if saved.get(k, {}).get(f) is not None}} for k, v in DEFAULTS.items()}
+    return {k: _normalize(saved.get(k), v) for k, v in DEFAULTS.items()}
 
 
 def render(template: str, values: dict) -> str:
     def sub(m):
         return str(values.get(m.group(1).strip().lower()) or "")
-    return re.sub(r"\{\{\s*(\w+)\s*\}\}", sub, template or "").strip()
+    out = re.sub(r"\{\{\s*(\w+)\s*\}\}", sub, template or "")
+    return re.sub(r"\n{3,}", "\n\n", out).strip()  # an empty placeholder shouldn't leave a gap
+
+
+def field_key(label: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", (label or "").lower()).strip("_")
+
+
+def details_text(fields: Optional[dict]) -> str:
+    """Collected details as lines ("Visit date: Sunday, 10 AM") for {{details}}."""
+    return "\n".join(f"{k}: {v}" for k, v in (fields or {}).items() if str(v).strip())
 
 
 def html_email(body: str, business: str, unsubscribe_url: Optional[str]) -> str:
@@ -81,8 +128,12 @@ async def is_unsubscribed(db, owner_id: str, to: str) -> bool:
         EmailUnsubscribe.user_id == owner_id, EmailUnsubscribe.email == to.lower()))).first() is not None
 
 
+def job_kind(automation: str, step: int) -> str:
+    return automation if step == 1 else f"{automation}#{step}"
+
+
 async def schedule(owner_id: str, kind: str, ref_id: str, to: Optional[str], values: dict) -> bool:
-    """Queue this automation for one customer, if it's on. Returns True if queued (once per kind + ref)."""
+    """Queue this automation's emails for one customer, if it's on. True if queued (once per kind + ref)."""
     to = (to or "").strip()
     if not to or not EMAIL_RE.fullmatch(to):
         return False
@@ -91,15 +142,51 @@ async def schedule(owner_id: str, kind: str, ref_id: str, to: Optional[str], val
         auto = automations(settings).get(kind)
         if not auto or not auto["enabled"] or await is_unsubscribed(db, owner_id, to):
             return False
+        if await _looks_abusive(db, owner_id, kind, to):
+            return False
         values = {**values, "name": values.get("name") or "there"}
-        db.add(EmailJob(user_id=owner_id, kind=kind, ref_id=ref_id, to_email=to,
-                        subject=render(auto["subject"], values)[:200], body=render(auto["body"], values),
-                        send_at=datetime.utcnow() + timedelta(seconds=DELAYS.get(auto["delay"], 0))))
+        now = datetime.utcnow()
+        for i, step in enumerate(auto["steps"][:MAX_STEPS], start=1):
+            db.add(EmailJob(user_id=owner_id, kind=job_kind(kind, i), ref_id=ref_id, to_email=to, automation=kind, step=i,
+                            subject=render(step["subject"], values)[:200], body=render(step["body"], values),
+                            send_at=now + timedelta(seconds=DELAYS.get(step["delay"], 0))))
         try:
             await db.commit()
         except IntegrityError:
             return False  # already queued for this lead
     return True
+
+
+DAILY_CAP = int(os.getenv("AUTOMATION_DAILY_CAP", "500"))  # automatic emails one workspace can queue per day
+
+
+async def _looks_abusive(db, owner_id: str, kind: str, to: str) -> bool:
+    """
+    Chat details are typed by website visitors, so anyone could enter a stranger's address over and over
+    to make us email them. Each address gets a given automation at most once a day, and a workspace has
+    a daily ceiling, which protects people's inboxes and our sending reputation.
+    """
+    since = datetime.utcnow() - timedelta(days=1)
+    again = (await db.execute(select(EmailJob.id).where(
+        EmailJob.user_id == owner_id, EmailJob.automation == kind, func.lower(EmailJob.to_email) == to.lower(),
+        EmailJob.created_at >= since).limit(1))).first()
+    if again:
+        return True
+    today = (await db.execute(select(func.count()).select_from(EmailJob).where(
+        EmailJob.user_id == owner_id, EmailJob.broadcast_id.is_(None), EmailJob.created_at >= since))).scalar_one()
+    if today >= DAILY_CAP:
+        logger.warning(f"Automatic email cap reached for workspace {owner_id[:8]}; not queuing more today")
+        return True
+    return False
+
+
+async def _reached_goal_since(db, job: EmailJob) -> bool:
+    """Did a later call with this person reach the agent's goal (e.g. they booked)? Then stop follow-ups."""
+    calls = (await db.execute(select(CallLog.captured).where(
+        CallLog.user_id == job.user_id, CallLog.successful.is_(True), CallLog.started_at > job.created_at,
+    ).order_by(CallLog.started_at.desc()).limit(200))).scalars().all()
+    target = job.to_email.lower()
+    return any(target in str(v).lower() for captured in calls for v in (captured or {}).values())
 
 
 async def process_due() -> None:
@@ -108,12 +195,24 @@ async def process_due() -> None:
     now = datetime.utcnow()
     async with async_session() as db:
         jobs = (await db.execute(select(EmailJob).where(EmailJob.status == "queued", EmailJob.send_at <= now)
-                                 .order_by(EmailJob.send_at).limit(20))).scalars().all()
+                                 .order_by(EmailJob.send_at).limit(BATCH))).scalars().all()
         for job in jobs:
             settings = (await db.execute(select(IntegrationSettings).where(IntegrationSettings.user_id == job.user_id))).scalars().first()
-            if await is_unsubscribed(db, job.user_id, job.to_email) or not automations(settings)[job.kind]["enabled"]:
-                job.status, job.error = "cancelled", "Unsubscribed or automation turned off"
+            if await is_unsubscribed(db, job.user_id, job.to_email):
+                job.status, job.error = "cancelled", "They unsubscribed"
                 continue
+            if not job.broadcast_id:
+                key = job.automation or job.kind.split("#")[0]
+                auto = automations(settings).get(key)
+                if not auto or not auto["enabled"]:
+                    job.status, job.error = "cancelled", "Automation turned off"
+                    continue
+                if (job.step or 1) > len(auto["steps"]):
+                    job.status, job.error = "cancelled", "Follow-up removed"
+                    continue
+                if (job.step or 1) > 1 and await _reached_goal_since(db, job):
+                    job.status, job.error = "cancelled", "Stopped: a later call reached its goal"
+                    continue
             business = (settings.sender_name if settings else None) or "Our team"
             link = unsubscribe_url(job.user_id, job.to_email)
             text = f"{job.body}\n\n--\n{business}\nUnsubscribe: {link}"
@@ -121,23 +220,45 @@ async def process_due() -> None:
 
             async def send(job=job, text=text, business=business, link=link, result=result):
                 ok = await email.send_email(job.to_email, job.subject, text, html_email(job.body, business, link),
-                                            reply_to=settings.reply_to if settings else None, from_name=business)
-                result["ok"] = ok
-                return None if ok else "email not configured"
+                                            reply_to=settings.reply_to if settings else None, from_name=business,
+                                            unsubscribe_url=link)
+                result["ok"], result["error"] = ok, email.last_error()
+                return None if ok else (result["error"] or "email not configured")
+            await db.commit()  # _once writes in its own session; SQLite allows one writer at a time
             await _once(job.user_id, f"auto_{job.kind}", job.ref_id, send)
-            job.status = "sent" if result.get("ok") else "failed"
-            job.error = None if result.get("ok") else "Email provider not configured or rejected the message"
+            if result.get("ok"):
+                job.status, job.error, job.sent_at = "sent", None, datetime.utcnow()
+            else:
+                job.status, job.error = "failed", result.get("error") or "Email provider not configured or rejected the message"
         await db.commit()
+
+
+async def requeue(job: EmailJob, db) -> None:
+    """Send a failed or cancelled email again, now."""
+    await db.execute(delete(NotificationLog).where(NotificationLog.kind == f"auto_{job.kind}", NotificationLog.ref_id == job.ref_id))
+    job.status, job.error, job.send_at, job.sent_at = "queued", None, datetime.utcnow(), None
+
+
+async def stop_for(db, owner_id: str, to: str, reason: str) -> int:
+    """Cancel everything still queued for this address. Returns how many."""
+    jobs = (await db.execute(select(EmailJob).where(
+        EmailJob.user_id == owner_id, func.lower(EmailJob.to_email) == to.lower(), EmailJob.status == "queued"))).scalars().all()
+    for job in jobs:
+        job.status, job.error = "cancelled", reason
+    return len(jobs)
 
 
 async def unsubscribe(owner_id: str, to: str) -> None:
     async with async_session() as db:
         if not await is_unsubscribed(db, owner_id, to):
             db.add(EmailUnsubscribe(user_id=owner_id, email=to.lower()))
-        for job in (await db.execute(select(EmailJob).where(
-            EmailJob.user_id == owner_id, func.lower(EmailJob.to_email) == to.lower(), EmailJob.status == "queued"))).scalars().all():
-            job.status, job.error = "cancelled", "Unsubscribed"
+        await stop_for(db, owner_id, to, "They unsubscribed")
         try:
             await db.commit()
         except IntegrityError:
             pass
+
+
+def recipient_ref(address: str) -> str:
+    """A stable 32-character id per address, so a bulk email reaches each person once."""
+    return hashlib.sha256(address.lower().encode()).hexdigest()[:32]

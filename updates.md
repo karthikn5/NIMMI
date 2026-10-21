@@ -51,7 +51,7 @@ Effort: **S** = days, **M** = 1 to 3 weeks, **L** = 1 month or more.
 | Module | What it does | Effort |
 |---|---|---|
 | **WhatsApp broadcasts** | Approved template campaigns to segments, with delivery, read and reply stats; Wati and Interakt's core product | L |
-| Drip sequences | Day 0 / 2 / 7 follow-ups across WhatsApp, email and calls | M |
+| Drip sequences | Day 0 / 2 / 7 follow-ups across WhatsApp and calls (email sequences are built) | M |
 | Proactive website messages | "Need help choosing a plan?" after 20 seconds on the pricing page | S |
 | Lead forms and landing pages | Hosted forms that feed the assistant and the contacts list | M |
 | QR codes | QR code that starts a WhatsApp chat or call-back, with tracking per poster or store | S |

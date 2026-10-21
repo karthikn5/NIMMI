@@ -2,10 +2,16 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
-import { Button, Dialog, Input, Segmented, Select, Textarea } from "@/components/ui";
+import { ArrowRight, Check, X } from "lucide-react";
+import { Button, Dialog, Input, Segmented, Select, Textarea, cn } from "@/components/ui";
 import { Field, Section, ToggleRow } from "./controls";
-import { LANGUAGES, type Behaviour } from "./design";
+import { LANGUAGES, MAX_CUSTOM_FIELDS, STANDARD_FIELDS, type Behaviour, type Collect } from "./design";
+
+const TIMING_HINT: Record<Collect["timing"], string> = {
+    early: "Asks for the first detail right after its first answer. Best when every chat should become a lead.",
+    after_answer: "Answers the question first, then asks for one detail when it fits. Works for most businesses.",
+    interest: "Asks only once the visitor shows real interest: prices, booking, a visit, a quote or a callback.",
+};
 
 /** Starting points for the instructions; each is a complete, editable brief. */
 const TEMPLATES = [
@@ -57,11 +63,11 @@ export default function BehaviourPanel({ instructions, setInstructions, behaviou
                         {LANGUAGES.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
                     </Select>
                 </Field>
-                <ToggleRow label="Ask interested visitors for their contact details" hint="Once, politely, when someone wants to buy, book or get a quote."
-                           checked={b.ask_for_contact} onChange={(v) => setBehaviour({ ask_for_contact: v })} />
                 <ToggleRow label="Offer a person when it can't help" hint="Tells visitors they can ask for someone from your team, who replies from Live chat."
                            checked={b.offer_human} onChange={(v) => setBehaviour({ offer_human: v })} />
             </Section>
+
+            <CollectSettings collect={b.collect} onChange={(patch) => setBehaviour({ collect: { ...b.collect, ...patch } })} />
 
             <Section title="When it doesn't know" description="It never makes things up. It says it doesn't have that information, then adds your next step.">
                 <Field label="Then say" htmlFor="fallback">
@@ -96,5 +102,73 @@ export default function BehaviourPanel({ instructions, setInstructions, behaviou
                 <p className="text-[13px] text-stone-600 leading-relaxed">{pending?.text}</p>
             </Dialog>
         </div>
+    );
+}
+
+/** Which details the assistant finds out during the chat (see backend/brain.py). */
+function CollectSettings({ collect: c, onChange }: { collect: Collect; onChange: (patch: Partial<Collect>) => void }) {
+    const [draft, setDraft] = useState("");
+    const taken = (label: string) => [...STANDARD_FIELDS.map((f) => f.label), ...c.custom].some((l) => l.toLowerCase() === label.toLowerCase());
+    const label = draft.replace(/\s+/g, " ").trim().slice(0, 40);
+    const canAdd = !!label && !taken(label) && c.custom.length < MAX_CUSTOM_FIELDS;
+    const add = () => {
+        if (!canAdd) return;
+        onChange({ custom: [...c.custom, label] });
+        setDraft("");
+    };
+    const toggle = (field: Collect["fields"][number]) =>
+        onChange({ fields: c.fields.includes(field) ? c.fields.filter((f) => f !== field) : STANDARD_FIELDS.map((f) => f.value).filter((f) => f === field || c.fields.includes(f)) });
+    const nothing = !c.fields.length && !c.custom.length;
+
+    return (
+        <Section title="Details to collect" description="The assistant asks for these during the chat, one at a time and never twice. Details a visitor mentions on their own are saved too. You'll find them in Leads.">
+            <ToggleRow label="Collect visitor details" hint="Turn off if the assistant should only answer questions."
+                       checked={c.enabled} onChange={(v) => onChange({ enabled: v })} />
+            {c.enabled && (
+                <>
+                    <Field label="Ask for">
+                        <div className="flex flex-wrap gap-1.5">
+                            {STANDARD_FIELDS.map((f) => {
+                                const on = c.fields.includes(f.value);
+                                return (
+                                    <button key={f.value} type="button" role="checkbox" aria-checked={on} onClick={() => toggle(f.value)}
+                                            className={cn("inline-flex items-center gap-1.5 h-8 px-3 rounded-md border text-[13px] transition-colors",
+                                                          on ? "border-plum bg-plum/5 text-ink" : "border-line-strong bg-white text-stone-500 hover:text-ink")}>
+                                        {on && <Check size={13} className="text-plum" aria-hidden />} {f.label}
+                                    </button>
+                                );
+                            })}
+                            {c.custom.map((l) => (
+                                <span key={l} className="inline-flex items-center gap-1 h-8 pl-3 pr-1 rounded-md border border-plum bg-plum/5 text-[13px] text-ink">
+                                    {l}
+                                    <button type="button" onClick={() => onChange({ custom: c.custom.filter((x) => x !== l) })} aria-label={`Stop asking for ${l}`}
+                                            className="p-1 rounded text-stone-400 hover:text-signal hover:bg-red-50">
+                                        <X size={13} />
+                                    </button>
+                                </span>
+                            ))}
+                        </div>
+                    </Field>
+                    {c.custom.length < MAX_CUSTOM_FIELDS && (
+                        <Field label="Your own details" htmlFor="custom-detail" hint="For example Budget, City, Preferred date or Number of guests.">
+                            <div className="flex gap-2">
+                                <Input id="custom-detail" value={draft} maxLength={40} onChange={(e) => setDraft(e.target.value)}
+                                       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} placeholder="e.g. Budget" />
+                                <Button onClick={add} disabled={!canAdd}>Add</Button>
+                            </div>
+                            {!!label && taken(label) && <p className="mt-1.5 text-[12px] text-stone-500">{label} is already on the list.</p>}
+                        </Field>
+                    )}
+                    {nothing ? (
+                        <p className="text-[13px] text-amber-700">Choose at least one detail, or turn collecting off.</p>
+                    ) : (
+                        <Field label="When to ask" hint={TIMING_HINT[c.timing]}>
+                            <Segmented label="When to ask" value={c.timing} onChange={(v) => onChange({ timing: v })}
+                                       options={[{ value: "early", label: "Early" }, { value: "after_answer", label: "After answering" }, { value: "interest", label: "When interested" }]} />
+                        </Field>
+                    )}
+                </>
+            )}
+        </Section>
     );
 }

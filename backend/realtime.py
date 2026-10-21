@@ -4,13 +4,27 @@ Socket.io wiring shared by all routers.
 Rooms:
   admin_<owner_id>   dashboard users of a workspace (joined with a valid token)
   <visitor_session>  one chat visitor plus the agent who accepted them
+  wa:<phone>         a WhatsApp customer; only that workspace's team may join
+
+Who may do what:
+  - A web visitor joins only their own room. Its name is a random id kept in their browser,
+    so knowing it is the visitor's proof.
+  - A dashboard user joins a visitor room only if the conversation belongs to a workspace they
+    own or are an active member of, and only then can they speak as "agent" in that room.
+  - WhatsApp rooms are named after phone numbers, which aren't secret, so visitors can't join them.
+    The same customer can message several businesses on Nimmi, so an agent's socket is tied to their
+    own workspace's conversation, and WhatsApp traffic uses a per-assistant room behind the scenes:
+    one business never sees another's replies, and replies are saved to and sent from the right one.
 """
 import logging
+import time
+from collections import defaultdict, deque
 from typing import Optional
 
 from sqlalchemy.future import select
 
-from auth import decode_token
+from auth import user_for_token
+from database import async_session
 try:
     from backend.models import Bot, Conversation, IntegrationSettings, Message, TeamMember
 except ImportError:
@@ -20,6 +34,15 @@ logger = logging.getLogger(__name__)
 
 sio = None  # set by main.py once the SocketManager exists
 _agent_sids: dict = {}  # sid -> user_id for sockets that proved they are dashboard users
+_agent_rooms: dict = defaultdict(set)  # sid -> visitor rooms where this socket may speak as the agent
+_joined: dict = defaultdict(set)  # sid -> rooms the socket joined (it may only post to these)
+_recent: dict = defaultdict(deque)  # sid -> times of recent messages, for flood protection
+_agent_conv: dict = defaultdict(dict)  # sid -> {room: conversation id this agent is answering}
+_actual: dict = defaultdict(dict)  # sid -> {room as the client names it: socket.io room actually used}
+
+MAX_ROOM = 120
+MAX_MESSAGE = 4000
+FLOOD = (20, 10.0)  # at most 20 messages in 10 seconds per socket
 
 
 async def emit(event: str, data: dict, room: str) -> None:
@@ -49,6 +72,41 @@ async def _can_join_admin_room(user_id: str, owner_id: str) -> bool:
         return member is not None
 
 
+async def _agent_conversation(user_id: str, room: str) -> Optional[Conversation]:
+    """The conversation with this visitor in a workspace the user owns or works in, if any."""
+    async with async_session() as db:
+        workspaces = {user_id} | set((await db.execute(select(TeamMember.owner_id).where(
+            TeamMember.member_id == user_id, TeamMember.status == "active"))).scalars().all())
+        return (await db.execute(
+            select(Conversation).join(Bot, Bot.bot_id == Conversation.bot_id)
+            .where(Conversation.visitor_session_id == room, Bot.user_id.in_(workspaces))
+            .order_by(Conversation.created_at.desc())
+        )).scalars().first()
+
+
+def _socket_room(room: str, bot_id: str) -> str:
+    """WhatsApp rooms are per phone number, which several businesses can share: keep each assistant's apart."""
+    return f"{room}#{bot_id}" if room.startswith("wa:") else room
+
+
+async def _token_user(token) -> Optional[str]:
+    if not isinstance(token, str) or not token:
+        return None
+    async with async_session() as db:
+        return await user_for_token(token, db)
+
+
+def _flooding(sid: str) -> bool:
+    limit, window = FLOOD
+    now, q = time.monotonic(), _recent[sid]
+    while q and now - q[0] > window:
+        q.popleft()
+    if len(q) >= limit:
+        return True
+    q.append(now)
+    return False
+
+
 async def _relay_to_whatsapp(db, conv: Conversation, phone: str, text: str) -> None:
     """Send a dashboard agent's reply to the customer's WhatsApp, from the workspace's own number."""
     from notify import channels
@@ -73,38 +131,58 @@ def register(socket_manager) -> None:
 
     @socket_manager.on("join")
     async def handle_join(sid, data):
-        room = (data or {}).get("room")
-        if not room:
+        data = data if isinstance(data, dict) else {}
+        room = data.get("room")
+        if not isinstance(room, str) or not room or len(room) > MAX_ROOM:
             return
+        token = data.get("token")
         if room.startswith("admin_"):
-            user_id = decode_token((data or {}).get("token") or "")
+            user_id = await _token_user(token)
             if not user_id or not await _can_join_admin_room(user_id, room[len("admin_"):]):
-                logger.warning(f"Socket {sid} refused admin room {room}")
+                logger.warning(f"Socket {sid} refused admin room")
                 return
             _agent_sids[sid] = user_id
-        elif (data or {}).get("token"):
-            # An agent joining a visitor room: remember they are authenticated.
-            user_id = decode_token(data["token"])
-            if user_id:
-                _agent_sids[sid] = user_id
-        await socket_manager.enter_room(sid, room)
+        elif token:
+            # A dashboard user opening a conversation: only their own workspace's.
+            user_id = await _token_user(token)
+            conv = await _agent_conversation(user_id, room) if user_id else None
+            if not conv:
+                logger.warning(f"Socket {sid} refused visitor room")
+                return
+            _agent_sids[sid] = user_id
+            _agent_rooms[sid].add(room)
+            _agent_conv[sid][room] = conv.conversation_id
+            _actual[sid][room] = _socket_room(room, conv.bot_id)
+        elif room.startswith("wa:"):
+            return  # WhatsApp customers don't use sockets; their rooms are for the team only
+        _joined[sid].add(room)
+        await socket_manager.enter_room(sid, _actual[sid].get(room, room))
 
     @socket_manager.on("message")
     async def handle_message(sid, data):
-        room = (data or {}).get("room")
-        message = (data or {}).get("message")
-        if not room or not message or room.startswith("admin_"):
+        data = data if isinstance(data, dict) else {}
+        room, message = data.get("room"), data.get("message")
+        if not isinstance(room, str) or not isinstance(message, str) or not message.strip() or room.startswith("admin_"):
             return
-        # Only authenticated dashboard sockets may speak as the agent.
-        sender = "agent" if (data.get("sender") == "agent" and sid in _agent_sids) else "visitor"
-        data = {**data, "sender": sender}
+        if room not in _joined.get(sid, ()) or _flooding(sid):
+            return  # only rooms this socket was allowed to join
+        message = message[:MAX_MESSAGE]
+        # Only a dashboard user authorised for this conversation speaks as the agent.
+        sender = "agent" if (data.get("sender") == "agent" and room in _agent_rooms.get(sid, ())) else "visitor"
+        if room.startswith("wa:") and sender != "agent":
+            return
+        data = {"room": room, "message": message, "sender": sender}
         try:
             async with async_session() as db:
-                conv = (await db.execute(
-                    select(Conversation)
-                    .where(Conversation.visitor_session_id == room)
-                    .order_by(Conversation.created_at.desc())
-                )).scalars().first()
+                if sender == "agent":  # the exact conversation this agent was authorised for
+                    conv = (await db.execute(select(Conversation).where(
+                        Conversation.conversation_id == _agent_conv[sid].get(room)))).scalars().first()
+                else:  # a web visitor's own session (ids are random and per assistant)
+                    conv = (await db.execute(
+                        select(Conversation)
+                        .where(Conversation.visitor_session_id == room)
+                        .order_by(Conversation.created_at.desc())
+                    )).scalars().first()
                 if conv:
                     db.add(Message(
                         conversation_id=conv.conversation_id,
@@ -126,11 +204,12 @@ def register(socket_manager) -> None:
                             })
         except Exception as e:
             logger.error(f"Error saving socket message: {e}")
-        await socket_manager.emit("message", data, room=room)
+        await socket_manager.emit("message", data, room=_actual.get(sid, {}).get(room, room))
 
     @socket_manager.on("disconnect")
     async def handle_disconnect(sid):
-        _agent_sids.pop(sid, None)
+        for store in (_agent_sids, _agent_rooms, _joined, _recent, _agent_conv, _actual):
+            store.pop(sid, None)
 
 
 def is_agent_socket(sid: str) -> Optional[str]:

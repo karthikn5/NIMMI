@@ -33,7 +33,7 @@ def test_unanswered_questions_are_collected_answered_and_used(client, make_user,
     contexts = []
 
     def fake_ai(system, context, question, **kw):
-        contexts.append(context)
+        contexts.append(system + context)  # the knowledge is part of the assistant's instructions
         return "I'm sorry, I don't have that information in my current knowledge base."
     monkeypatch.setattr(chat_router, "generate_ai_response", fake_ai)
 

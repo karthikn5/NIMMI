@@ -318,3 +318,28 @@ def test_collected_data_table(client, make_user, run):
     row = data["rows"][0]
     assert row["values"]["Budget"] == "45" and row["successful"] is True and row["caller"] == "+91 98000 00001"
     assert len(client.get(f"/api/voice/data?bot_id={bot}&include_tests=true", headers=u.h()).json()["rows"]) == 2
+
+
+def test_each_campaign_call_is_dialled_once_even_with_several_server_processes(client, make_user, run, monkeypatch):
+    # Production ran 4 server processes; each ran the dialler and everyone was called 4 times.
+    import asyncio
+    u = make_user()
+    bot = u.bot()
+    client.put(f"/api/voice/agents/{bot}", json=AGENT, headers=u.h())
+    number_id = _number(run, u.id)
+    body = {"name": "Reminders", "bot_id": bot, "from_number_id": number_id, "purpose": "Remind {{name}} about the visit",
+            "contacts": [{"phone": f"98000 1000{i}"} for i in range(3)], "window_start": "00:00", "window_end": "23:59",
+            "max_attempts": 1, "concurrency": 3, "consent": True}
+    assert client.post("/api/voice/campaigns", json=body, headers=u.h()).status_code == 200
+    dialled = []
+
+    async def fake_place(to, frm, job_id, **_):
+        await asyncio.sleep(0.05)  # dialling takes a moment: the other "processes" run meanwhile
+        dialled.append(to)
+        return f"CA-multi-{len(dialled)}"
+    monkeypatch.setattr(twilio, "place_call", fake_place)
+
+    async def four_processes_at_once():
+        await asyncio.gather(*(scheduler.dispatch_due_callbacks() for _ in range(4)))
+    run(four_processes_at_once)
+    assert sorted(dialled) == ["+919800010000", "+919800010001", "+919800010002"]  # each person once

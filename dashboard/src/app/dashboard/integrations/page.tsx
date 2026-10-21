@@ -12,6 +12,7 @@ import type { PanelProps, TestChannel } from "@/components/integrations/shared";
 import { apiJson, currentUserId } from "@/lib/api";
 import type { IntegrationSettings, LogRow } from "@/lib/integrations";
 import { useApi, useDraft } from "@/lib/useApi";
+import { PaidOnly, useLimits } from "@/lib/plan";
 
 type Tab = "email" | "whatsapp" | "webhook" | "leadsquared" | "activity";
 type Tone = "good" | "neutral" | "warn" | "bad";
@@ -45,6 +46,18 @@ function status(tab: Tab, s: IntegrationSettings, log: LogRow[] | null): { label
     }
 }
 
+function IntegrationsPlan() {
+    const limits = useLimits();
+    if (!limits || limits.integrations) return null;
+    return (
+        <div className="mt-6 -mb-2">
+            <PaidOnly feature="Integrations">
+                Email alerts, WhatsApp, webhooks and LeadSquared can be set up once one of your assistants is on a plan.
+            </PaidOnly>
+        </div>
+    );
+}
+
 export default function IntegrationsPage() {
     return (
         <ToastProvider>
@@ -53,6 +66,7 @@ export default function IntegrationsPage() {
                 <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 pb-28">
                     <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
                     <p className="text-sm text-stone-500 mt-1">Where leads, calls and conversations go after your assistants handle them.</p>
+                    <IntegrationsPlan />
                     <Suspense fallback={<Skeleton className="h-96 mt-8" />}>
                         <Integrations />
                     </Suspense>

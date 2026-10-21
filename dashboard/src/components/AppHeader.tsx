@@ -11,10 +11,11 @@ import { useWaitingCount } from "@/lib/liveChat";
 
 const nav = [
     { href: "/dashboard", label: "Assistants", exact: true },
+    { href: "/dashboard/deployments", label: "Deployments", managerOnly: true },
     { href: "/dashboard/live-chat", label: "Live chat" },
     { href: "/dashboard/questions", label: "Questions", managerOnly: true },
     { href: "/dashboard/voice", label: "Voice" },
-    { href: "/dashboard/integrations", label: "Integrations" },
+    { href: "/dashboard/integrations", label: "Integrations", managerOnly: true }, // agents can't change settings
     { href: "/dashboard/analytics", label: "Analytics" },
     { href: "/dashboard/billing", label: "Billing", ownerOnly: true },
 ] as { href: string; label: string; exact?: boolean; ownerOnly?: boolean; managerOnly?: boolean }[];

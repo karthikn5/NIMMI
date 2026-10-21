@@ -13,7 +13,7 @@
         if (v !== null) s.setAttribute(name, v);
     });
     if (!current.getAttribute('data-api-url')) s.setAttribute('data-api-url', api);
-    s.src = api.replace(/\/$/, '') + '/static/nimmi-widget.js?v=5';
+    s.src = api.replace(/\/$/, '') + '/static/nimmi-widget.js?v=8';
     s.async = true;
     document.body.appendChild(s);
 })();

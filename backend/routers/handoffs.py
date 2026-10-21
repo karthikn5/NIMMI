@@ -67,6 +67,8 @@ async def close_handoff(conversation_id: str, ctx: AuthContext = Depends(get_ctx
                    content="The agent has left the chat. The assistant is here to help."))
     await db.commit()
     await emit("agent_left", {"conversation_id": conversation_id}, room=conv.visitor_session_id)
+    from notify import events
+    events.fire_and_forget(events.handoff_closed(conv.conversation_id))
     return {"status": "success"}
 
 

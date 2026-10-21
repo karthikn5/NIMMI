@@ -1,13 +1,15 @@
 "use client";
 
 import { use, useCallback, useEffect, useRef, useState, Suspense } from "react";
-import { authHeaders } from "@/lib/api";
-import { Send, User, Bot, X, Clock, Paperclip, Phone, ThumbsUp, ThumbsDown } from "lucide-react";
+import { apiBase as apiBaseUrl, authHeaders } from "@/lib/api";
+import { Send, User, Bot, X, Clock, Paperclip, Phone, ThumbsUp, ThumbsDown, Mic, Square, Loader2 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { io, type Socket } from "socket.io-client";
 import { motion, AnimatePresence } from "framer-motion";
 import { Flow, evaluate, questionFor, validate, variableName, type FlowNode, type InputType } from "./flow";
 import { isLight } from "@/lib/color";
+import { RichText } from "./rich";
+import { speechLang, useVoiceInput } from "./voice";
 
 interface Message {
     id: string;
@@ -53,6 +55,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     const { botId } = use(params);
     const searchParams = useSearchParams();
     const isDemo = searchParams.get("is_demo") === "true";
+    const inApp = searchParams.get("app") === "1"; // a phone app shows this page full screen: no close button
     const [aiMessages, setAiMessages] = useState<Message[]>([]);
     const [humanMessages, setHumanMessages] = useState<Message[]>([]);
     const [input, setInput] = useState("");
@@ -70,9 +73,8 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     const varsRef = useRef<Record<string, string>>({});
     const flowStarted = useRef(false);
 
-    const apiBase = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
-        ? "http://localhost:8000"
-        : "https://api.nimmiai.in";
+    // Same address the rest of the dashboard uses (NEXT_PUBLIC_API_URL locally, api.nimmiai.in live).
+    const apiBase = apiBaseUrl();
     const aiSession = "widget-session-ai-" + visitorId(botId);
     const humanSession = "widget-session-human-" + visitorId(botId);
     const demoHeaders = isDemo ? authHeaders() : {};
@@ -136,12 +138,22 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     const proxy = (url: string, method: string, body: Record<string, unknown>) => fetch(`${apiBase}/api/chat/proxy-http`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, method, body }),
+        body: JSON.stringify({ bot_id: botId, url, method, body }),
     }).then((r) => r.json()).catch(() => ({}));
 
     const run = useCallback(async (node: FlowNode | null): Promise<void> => {
         const flow = flowRef.current;
-        if (!node || !flow) { setPending(null); setFlowDone(true); return; } // flow finished: free chat with the assistant
+        if (!node || !flow) {
+            // The flow ran out of steps without an End block: close it politely and hand over to the assistant.
+            setPending(null);
+            setFlowDone(true);
+            if (flow) {
+                await sleep(400);
+                const first = String(varsRef.current.name || "").trim().split(" ")[0];
+                say(`Thanks${first ? `, ${first}` : ""}! How can I help you today?`);
+            }
+            return;
+        }
         const d = node.data || {};
         switch (node.type) {
             case "message":
@@ -407,7 +419,10 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                     if (!line.startsWith("data: ")) continue;
                     const data = line.slice(6);
                     if (data.trim() === "[DONE]") continue;
-                    reply += data;
+                    // Pieces are JSON strings, so line breaks inside the answer survive; older servers sent plain text.
+                    let piece = data;
+                    if (data.startsWith('"')) { try { piece = JSON.parse(data); } catch { /* keep as is */ } }
+                    reply += piece;
                     setAiMessages((prev) => prev.map((m) => (m.id === botMsgId ? { ...m, text: reply } : m)));
                 }
             }
@@ -418,6 +433,20 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
             setLoading(false);
         }
     };
+
+    // Mic: speak instead of typing. Words appear as they're heard and are sent when the visitor stops.
+    const voice = useVoiceInput({
+        lang: speechLang(botConfig?.language), apiBase, botId, headers: demoHeaders,
+        onText: (text, final) => {
+            if (!final) return setInput(text);
+            setInput("");
+            handleSend(text);
+        },
+        onError: (message) => {
+            if (mode === "ai") say(message);
+            else setHumanMessages((prev) => [...prev, { id: uid(), text: message, sender: "bot", timestamp: new Date() }]);
+        },
+    });
 
     const visual = botConfig?.visual_config || {};
     const primaryColor = visual.color || "#9d55ac";
@@ -475,10 +504,12 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                         <span className="font-bold text-sm tracking-tight truncate">{botConfig?.bot_name || "Assistant"}</span>
                         <span className="text-[11px] opacity-75 font-medium truncate">{mode === "human" ? "Chatting with our team" : (visual.subtitle || "Usually replies instantly")}</span>
                     </div>
-                    <button onClick={() => window.parent.postMessage("close-nimmi-widget", "*")} aria-label="Close chat"
-                            className="p-2 -mr-1 hover:bg-white/10 rounded-full opacity-70 hover:opacity-100 transition-opacity shrink-0">
-                        <X size={18} />
-                    </button>
+                    {!inApp && (
+                        <button onClick={() => window.parent.postMessage("close-nimmi-widget", "*")} aria-label="Close chat"
+                                className="p-2 -mr-1 hover:bg-white/10 rounded-full opacity-70 hover:opacity-100 transition-opacity shrink-0">
+                            <X size={18} />
+                        </button>
+                    )}
                 </div>
                 {visual.show_human_toggle !== false && (
                     <div role="radiogroup" aria-label="Chat with" className="grid grid-cols-2 bg-black/20 p-0.5 rounded-full border border-white/10">
@@ -519,7 +550,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                             ) : (
                                 <div className="flex flex-col gap-1 max-w-[85%] min-w-0">
                                 <div
-                                    className="px-4 py-3 text-[13px] leading-relaxed whitespace-pre-wrap shadow-sm"
+                                    className={`px-4 py-3 text-[13px] leading-relaxed shadow-sm ${msg.sender === "bot" ? "" : "whitespace-pre-wrap"}`}
                                     style={{
                                         borderRadius,
                                         backgroundColor: msg.sender === "user" ? (visual.user_bubble_bg || visual.userBubbleBg || primaryColor) : (visual.assistant_bubble_bg || visual.assistantBubbleBg || "#E5E7EB"),
@@ -528,7 +559,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                                         borderTopLeftRadius: msg.sender === "bot" ? 0 : undefined,
                                     }}
                                 >
-                                    {msg.text || (loading ? <span className="flex gap-1 py-1 animate-pulse"><span className="w-1 h-1 bg-slate-400 rounded-full" /><span className="w-1 h-1 bg-slate-400 rounded-full" /><span className="w-1 h-1 bg-slate-400 rounded-full" /></span> : "")}
+                                    {msg.text ? (msg.sender === "bot" ? <RichText text={msg.text} /> : msg.text) : (loading ? <span className="flex gap-1 py-1 animate-pulse"><span className="w-1 h-1 bg-slate-400 rounded-full" /><span className="w-1 h-1 bg-slate-400 rounded-full" /><span className="w-1 h-1 bg-slate-400 rounded-full" /></span> : "")}
                                 </div>
                                 {visual.answer_feedback && mode === "ai" && msg.question && msg.text && !(loading && msg.id === aiMessages[aiMessages.length - 1]?.id) && (
                                     <div className={`flex items-center gap-1 px-1 text-[11px] ${chatLight ? "text-stone-500" : "text-white/60"}`}>
@@ -657,15 +688,39 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                         className={`flex-1 rounded-xl border h-12 px-4 text-sm outline-none ${onFooter("border-black/10", "border-white/5")}`}
                         style={{ backgroundColor: visual.input_bg_color || visual.inputBgColor || "#ffffff", color: visual.input_text_color || visual.inputTextColor || "#000000" }}
                     />
-                    <button
-                        type="submit"
-                        disabled={!input.trim() || loading}
-                        aria-label="Send"
-                        className="w-12 h-12 shrink-0 rounded-xl flex items-center justify-center active:scale-95 transition-transform disabled:opacity-50"
-                        style={{ backgroundColor: primaryColor, color: textColor }}
-                    >
-                        <Send size={18} />
-                    </button>
+                    {voice.supported && !input.trim() && !voice.listening ? (
+                        <button
+                            type="button"
+                            onClick={voice.start}
+                            disabled={loading || voice.busy}
+                            aria-label="Speak your message"
+                            title="Speak your message"
+                            className="w-12 h-12 shrink-0 rounded-xl flex items-center justify-center active:scale-95 transition-transform disabled:opacity-50"
+                            style={{ backgroundColor: primaryColor, color: textColor }}
+                        >
+                            {voice.busy ? <Loader2 size={18} className="animate-spin" /> : <Mic size={18} />}
+                        </button>
+                    ) : voice.listening ? (
+                        <button
+                            type="button"
+                            onClick={voice.stop}
+                            aria-label="Stop and send"
+                            title="Stop and send"
+                            className="w-12 h-12 shrink-0 rounded-xl flex items-center justify-center bg-red-500 text-white animate-pulse"
+                        >
+                            <Square size={16} fill="currentColor" />
+                        </button>
+                    ) : (
+                        <button
+                            type="submit"
+                            disabled={!input.trim() || loading}
+                            aria-label="Send"
+                            className="w-12 h-12 shrink-0 rounded-xl flex items-center justify-center active:scale-95 transition-transform disabled:opacity-50"
+                            style={{ backgroundColor: primaryColor, color: textColor }}
+                        >
+                            <Send size={18} />
+                        </button>
+                    )}
                 </form>
             </footer>
 

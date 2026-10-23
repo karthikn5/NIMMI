@@ -42,7 +42,7 @@ from sqlalchemy.pool import NullPool
 is_sqlite = DATABASE_URL.startswith("sqlite")
 
 if is_sqlite:
-    # One connection per session (NullPool), like Postgres. A single shared connection
+    # One connection per session (NullPool); opening a local file costs nothing. A single shared connection
     # (StaticPool) lets one session's rollback silently undo another session's writes.
     # `timeout` makes a writer wait for SQLite's lock instead of failing.
     engine = create_async_engine(
@@ -62,10 +62,17 @@ if is_sqlite:
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 else:
+    # A small pool of open connections, reused across requests. Opening a connection to Supabase
+    # (TLS + login over a long network path) measured ~2.4 s, against ~0.75 s for a query on an
+    # open one; without a pool every request paid that. No pre-ping (it would add a round trip to
+    # every request); connections are replaced after a few minutes instead.
     engine = create_async_engine(
         DATABASE_URL,
         echo=False,
-        poolclass=NullPool,
+        pool_size=int(os.getenv("DB_POOL_SIZE", "5")),
+        max_overflow=int(os.getenv("DB_POOL_OVERFLOW", "5")),
+        pool_recycle=int(os.getenv("DB_POOL_RECYCLE_SEC", "240")),
+        pool_timeout=30,
         connect_args={
             "ssl": "require",
             "prepared_statement_cache_size": 0,

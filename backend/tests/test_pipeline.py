@@ -128,8 +128,7 @@ def test_greets_listens_replies_and_logs(run, make_user):
 
     t, log = run(scenario)
     said = t.said()
-    assert said[0].startswith("Hi, I'm Nimmi, an automated assistant for Sri Ramana College.")
-    assert "This call may be recorded" in said[0]
+    assert said[0].startswith("Hi, Nimmi here, Sri Ramana College's AI assistant. This call is recorded.")
     assert "Tuition is one lakh a year." in said
     assert said[-1] == __import__("voice.pipeline", fromlist=["GOODBYES"]).GOODBYES["en-IN"]
     assert log.outcome == "lead_captured" and log.billed_minutes == 1

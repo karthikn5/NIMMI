@@ -7,6 +7,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
@@ -630,6 +631,21 @@ async def _place(db: AsyncSession, number: PhoneNumber, to: str, job_id: str) ->
     return await accounts.dial(db, number, to, job_id)
 
 
+async def _publicly_reachable() -> bool:
+    """Twilio/Exotel fetch the call's instructions from PUBLIC_BACKEND_URL when it's answered; if that address is
+    dead (an expired tunnel), the call drops a second or two after pick-up with nothing said."""
+    base = twilio.public_base()
+    if os.getenv("VOICE_CHECK_PUBLIC_URL", "true").lower() == "false":
+        return True  # the test suite (its public URL is a placeholder)
+    if not base:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            return (await client.get(f"{base}/")).status_code < 500
+    except httpx.HTTPError:
+        return False
+
+
 class TestCallRequest(BaseModel):
     bot_id: str
     phone: str
@@ -659,6 +675,9 @@ async def test_call(req: TestCallRequest, ctx: AuthContext = Depends(require_man
     wallet = await metering.get_wallet(db, ctx.owner_id)
     if metering.minutes_left(wallet) <= 0:
         raise HTTPException(status_code=402, detail="You're out of voice minutes")
+    if not await _publicly_reachable():
+        raise HTTPException(status_code=503, detail="The phone company can't reach this server right now, so the call would "
+                                                    "drop as soon as you answer. Check PUBLIC_BACKEND_URL (or restart the tunnel) and try again.")
     job = CallbackJob(user_id=ctx.owner_id, bot_id=bot.bot_id, e164=e164, consent_source=f"{TEST_CALL} for {display(e164)}",
                       status="calling", attempts=1)
     db.add(job)

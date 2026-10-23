@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -53,9 +53,10 @@ FEATURE_NAMES = {"voice": "Voice calls", "integrations": "Integrations", "custom
 
 
 async def is_paid(db: AsyncSession, owner_id: str) -> bool:
+    """Paid while an active plan covers one of the workspace's assistants, or one it paid for itself."""
     now = datetime.utcnow()
-    ends = (await db.execute(select(Subscription.end_date).join(Bot, Bot.bot_id == Subscription.bot_id).where(
-        Bot.user_id == owner_id, Subscription.status == "active"))).scalars().all()
+    ends = (await db.execute(select(Subscription.end_date).outerjoin(Bot, Bot.bot_id == Subscription.bot_id).where(
+        or_(Bot.user_id == owner_id, Subscription.user_id == owner_id), Subscription.status == "active"))).scalars().all()
     return any(end and end.replace(tzinfo=None) > now for end in ends)
 
 

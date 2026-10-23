@@ -4,11 +4,12 @@ import json
 import logging
 import os
 import re
+import time
 from typing import AsyncIterator, Iterator, Optional
 
+import ai
+import knowledge_sources
 from backend.models import Bot, VoiceAgent
-from utils import SAFETY_SETTINGS, generate_ai_response
-from vector_store import query_knowledge
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ DEFAULT_GREETINGS = {
 }
 
 DISCLOSURES = {
-    "en-IN": "Hi, I'm {assistant}, an automated assistant for {company}. This call may be recorded for quality.",
+    "en-IN": "Hi, {assistant} here, {company}'s AI assistant. This call is recorded.",  # ~6 s with the greeting
     "ta-IN": "வணக்கம், நான் {company}-க்கான தானியங்கி உதவியாளர் {assistant}. தரக்கட்டுப்பாட்டிற்காக இந்த அழைப்பு பதிவு செய்யப்படலாம்.",
     "hi-IN": "नमस्ते, मैं {company} के लिए स्वचालित सहायक {assistant} हूँ। गुणवत्ता के लिए यह कॉल रिकॉर्ड की जा सकती है।",
     "te-IN": "నమస్కారం, నేను {company} కోసం ఆటోమేటెడ్ అసిస్టెంట్ {assistant}. నాణ్యత కోసం ఈ కాల్ రికార్డ్ చేయబడవచ్చు.",
@@ -72,12 +73,18 @@ FALLBACK_ERRORS = {
 
 _SENTENCE_END = re.compile(r"(?<=[.!?।])\s+")
 
-# Measured: Gemini Flash-Lite starts answering in ~1.7 s; plain "flash-latest" took 6-11 s,
-# so voice pins the model. Groq (if configured) is faster still and is tried first.
+# Measured (Oct 2026): Groq answers in 0.1-0.5 s; Gemini Flash-Lite over REST in ~1.8 s; the old
+# google-generativeai SDK took ~30 s, so it isn't used. Each Groq model has its own per-minute
+# token allowance (8,000 on the free tier), so a rate-limited model is skipped for a while and
+# the next one answers; Gemini is the last resort.
 VOICE_GEMINI_MODEL = os.getenv("VOICE_GEMINI_MODEL", "gemini-flash-lite-latest")
-VOICE_GROQ_MODEL = os.getenv("VOICE_GROQ_MODEL", "qwen/qwen3.8-27b")  # measured 0.1-0.2 s to first word
-# Knowledge this small goes straight into the prompt: no search round-trip (~1.8 s saved).
-KB_INLINE_LIMIT = 12000
+VOICE_GROQ_MODEL = os.getenv("VOICE_GROQ_MODEL", "qwen/qwen3.8-27b")
+VOICE_GROQ_MODELS = list(dict.fromkeys([VOICE_GROQ_MODEL] + [m.strip() for m in os.getenv(
+    "VOICE_GROQ_FALLBACKS", "openai/gpt-oss-20b,openai/gpt-oss-120b").split(",") if m.strip()]))
+# The business knowledge a call carries in every reply: small enough that a turn stays well inside
+# the models' token allowance and answers fast. Bigger knowledge uses the "Business summary".
+KB_INLINE_LIMIT = int(os.getenv("VOICE_KNOWLEDGE_CHARS", "7000"))
+_rate_limited: dict[str, float] = {}  # Groq model -> when it can be used again
 
 
 _PLACEHOLDER = re.compile(r"\{\{\s*([\w .-]+?)\s*\}\}")
@@ -90,12 +97,15 @@ def fill(text: str, variables: Optional[dict]) -> str:
     return re.sub(r"\s{2,}", " ", _PLACEHOLDER.sub(lambda m: lookup.get(m.group(1).strip().lower(), ""), text or "")).strip()
 
 
-def disclosure(agent: VoiceAgent, variables: Optional[dict] = None) -> str:
-    """The required opening: automated assistant + may be recorded. Localized per agent language."""
+def disclosure(agent: VoiceAgent, variables: Optional[dict] = None, recorded: bool = True) -> str:
+    """The required opening: an automated assistant (and that the call may be recorded, when it is), then the
+    greeting. Kept short, since the caller waits for it before speaking."""
     lang = agent.language or "en-IN"
     company = (agent.company_name or "").strip() or ("this business" if lang == "en-IN" else "எங்கள் நிறுவனம்" if lang == "ta-IN" else "हमारी कंपनी")
     assistant = agent.assistant_name or ("Nimmi" if lang == "en-IN" else "நிம்மி" if lang == "ta-IN" else "निम्मी")
     template = DISCLOSURES.get(lang, DISCLOSURES["en-IN"])
+    if not recorded:  # every template is "<who I am>. <may be recorded>."; keep the first sentence
+        template = re.split(r"(?<=[.।|])\s+", template, maxsplit=1)[0]
     prefix = template.format(assistant=assistant, company=company)
     greeting = (agent.greeting or "").strip()
     if lang != "en-IN" and (not greeting or greeting.lower() in ("how can i help you today?", "how can i help you?")):
@@ -185,6 +195,9 @@ How to speak:
 - You already greeted the caller and said your name when the call started. Never introduce yourself or give a formal greeting again (no hello, namaste, or vanakkam). If the caller only says hello, acknowledge with a warm "Hmm, yes, how can I help?" or natural equivalent.
 - No lists, markdown, emojis, URLs or symbols. Say numbers the way people say them aloud.
 - Ask one question at a time. Confirm names and numbers by repeating them back.
+- Phone numbers: read them back in small groups of digits. An Indian mobile number has 10 digits (12 with 91 in front);
+  if you heard a different count, say so and ask them to repeat it slowly.
+- If what you heard doesn't quite make sense, the line may have garbled it: ask a short clarifying question instead of guessing.
 
 {_collect_lines(agent)}
 
@@ -202,22 +215,31 @@ Business information:
 {knowledge[:KB_INLINE_LIMIT]}"""
 
 
-async def knowledge_for(bot: Bot, query: str) -> str:
+async def call_knowledge(bot: Bot) -> str:
+    """What the agent knows for a whole call, worked out once when the call starts (a search on every
+    turn added up to 2.5 s and failed on a cold connection). Small knowledge is used as is; bigger
+    knowledge uses the business summary written from it (brain.refresh_summary)."""
     import assist
-    return await assist.verified_answers(bot.bot_id) + await _knowledge_only(bot, query)
-
-
-async def _knowledge_only(bot: Bot, query: str) -> str:
     knowledge = bot.knowledge_base or ""
-    if len(knowledge) <= KB_INLINE_LIMIT:
-        return knowledge
+    if len(knowledge) > KB_INLINE_LIMIT:
+        written, blocks = knowledge_sources.split(knowledge)
+        summary = dict(blocks).get(knowledge_sources.SUMMARY, "")
+        if summary:
+            knowledge = "\n\n".join(p for p in (written[:1500], summary) if p)
+        else:
+            import brain
+            from notify.events import fire_and_forget
+            fire_and_forget(brain.refresh_summary(bot.bot_id))  # ready for the next call
     try:
-        matches = await asyncio.wait_for(query_knowledge(bot.bot_id, query, 4), timeout=2.5)
-        if matches:
-            return "\n\n".join(m["text"] for m in matches)
-    except Exception as e:
-        logger.warning(f"Voice knowledge search failed: {e}")
-    return knowledge[:KB_INLINE_LIMIT]
+        verified = await asyncio.wait_for(assist.verified_answers(bot.bot_id), timeout=2)
+    except Exception:
+        verified = ""
+    return (verified + knowledge)[: KB_INLINE_LIMIT + 2000]
+
+
+async def knowledge_for(bot: Bot, query: str) -> str:
+    """Kept for callers outside a live call."""
+    return await call_knowledge(bot)
 
 
 _groq_client = None
@@ -242,21 +264,37 @@ def warm_up() -> None:
         logger.debug(f"Groq warm-up skipped: {e}")
 
 
-def _reasoning_params() -> dict:
+def _reasoning_params(model: str) -> dict:
     # These are reasoning models: keep thinking off/low and hidden so the first spoken word comes fast.
     params = {"reasoning_format": "hidden"}
-    if "gpt-oss" in VOICE_GROQ_MODEL:
+    if "gpt-oss" in model:
         params["reasoning_effort"] = "low"
-    elif "qwen" in VOICE_GROQ_MODEL:
+    elif "qwen" in model:
         params["reasoning_effort"] = "none"
     return params
 
 
-def _stream_groq(prompt: str, history: list[dict], user_text: str) -> Iterator[str]:
+def _groq_models() -> list[str]:
+    now = time.monotonic()
+    return [m for m in VOICE_GROQ_MODELS if _rate_limited.get(m, 0) <= now]
+
+
+def _note_limit(model: str, error: Exception) -> None:
+    """A model out of its per-minute allowance is skipped until it refills (Groq says when)."""
+    if getattr(error, "status_code", None) in (413, 429) or "rate_limit" in str(error):
+        wait = 20.0
+        try:
+            wait = float(getattr(error, "response").headers.get("retry-after") or wait)
+        except (AttributeError, TypeError, ValueError):
+            pass
+        _rate_limited[model] = time.monotonic() + min(max(wait, 5.0), 60.0)
+
+
+def _stream_groq(model: str, prompt: str, history: list[dict], user_text: str) -> Iterator[str]:
     stream = _groq().chat.completions.create(
-        model=VOICE_GROQ_MODEL, stream=True, temperature=0.4, max_tokens=400,
-        messages=[{"role": "system", "content": prompt}, *history[-12:], {"role": "user", "content": user_text}],
-        **_reasoning_params(),
+        model=model, stream=True, temperature=0.4, max_tokens=300,
+        messages=[{"role": "system", "content": prompt}, *history[-10:], {"role": "user", "content": user_text}],
+        **_reasoning_params(model),
     )
     for chunk in stream:
         delta = chunk.choices[0].delta.content if chunk.choices else None
@@ -265,32 +303,28 @@ def _stream_groq(prompt: str, history: list[dict], user_text: str) -> Iterator[s
 
 
 def _stream_gemini(prompt: str, history: list[dict], user_text: str, api_key: Optional[str]) -> Iterator[str]:
-    import google.generativeai as genai
-    genai.configure(api_key=api_key or os.getenv("GEMINI_API_KEY"), transport="rest")
-    model = genai.GenerativeModel(VOICE_GEMINI_MODEL, system_instruction=prompt, safety_settings=SAFETY_SETTINGS,
-                                  generation_config={"temperature": 0.4, "max_output_tokens": 220})
-    contents = [{"role": "user" if h["role"] == "user" else "model", "parts": [h["content"]]} for h in history[-12:]]
-    contents.append({"role": "user", "parts": [user_text]})
-    for chunk in model.generate_content(contents, stream=True):
-        try:
-            if chunk.text:
-                yield chunk.text
-        except ValueError:
-            continue  # a chunk with no text part (e.g. safety metadata)
+    """Gemini over REST (ai.py), the fast model first."""
+    messages = [{"role": "user" if h["role"] == "user" else "assistant", "content": h["content"]} for h in history[-10:]]
+    messages.append({"role": "user", "content": user_text})
+    yield from ai.chat_stream(prompt, messages, model=VOICE_GEMINI_MODEL, api_key=api_key, temperature=0.4, max_tokens=220)
 
 
 def stream_reply(bot: Bot, prompt: str, history: list[dict], user_text: str) -> Iterator[str]:
-    """Groq first when configured (fastest to first word), then Gemini Flash-Lite."""
+    """Groq (fastest to the first word), moving to the next Groq model when one is rate-limited, then Gemini."""
     if os.getenv("GROQ_API_KEY"):
-        try:
+        for model in _groq_models():
             yielded = False
-            for text in _stream_groq(prompt, history, user_text):
-                yielded = True
-                yield text
-            if yielded:
-                return
-        except Exception as e:
-            logger.warning(f"Groq failed, using Gemini: {e}")
+            try:
+                for text in _stream_groq(model, prompt, history, user_text):
+                    yielded = True
+                    yield text
+                if yielded:
+                    return
+            except Exception as e:
+                _note_limit(model, e)
+                logger.warning(f"Groq {model} failed{' mid-answer' if yielded else ''}: {str(e)[:160]}")
+                if yielded:
+                    return  # part of the answer was already spoken; don't start a second one
     own_key = bot.ai_api_key if (bot.ai_provider or "google") == "google" else None
     yield from _stream_gemini(prompt, history, user_text, own_key)
 
@@ -302,12 +336,15 @@ def _clean_for_speech(text: str) -> str:
 
 async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user_text: str,
                           direction: str, consent_source: Optional[str], variables: Optional[dict] = None,
-                          purpose: Optional[str] = None, after_hours: Optional[str] = None) -> AsyncIterator[tuple[str, Optional[str]]]:
+                          purpose: Optional[str] = None, after_hours: Optional[str] = None,
+                          knowledge: Optional[str] = None) -> AsyncIterator[tuple[str, Optional[str]]]:
     """
     Yields (sentence, control) pairs as the model streams. `control` is None, or
     TRANSFER / END_CALL once the model signals it (with any final sentence).
+    `knowledge` is the call's knowledge, worked out once per call by CallSession.
     """
-    knowledge = await knowledge_for(bot, user_text)
+    if knowledge is None:
+        knowledge = await call_knowledge(bot)
     prompt = system_prompt(agent, bot, knowledge, direction, consent_source, variables, purpose, after_hours)
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
@@ -400,22 +437,37 @@ def _clean_value(field: dict, value):
     return text[:200]
 
 
-async def _complete(bot: Bot, system: str, user: str, max_tokens: int = 600) -> str:
-    """One non-streamed answer: Groq first, Gemini as the fallback."""
-    if os.getenv("GROQ_API_KEY"):
+async def _complete(bot: Bot, system: str, user: str, max_tokens: int = 600, urgent: bool = False) -> str:
+    """One non-streamed answer. After a call (summaries) Gemini goes first, saving Groq's per-minute
+    allowance for live conversations; during a call (`urgent`, e.g. a transfer brief) Groq goes first."""
+    own_key = bot.ai_api_key if (bot.ai_provider or "google") == "google" else None
+
+    async def gemini() -> str:
+        return await asyncio.to_thread(ai.chat, system, [{"role": "user", "content": user}], model=VOICE_GEMINI_MODEL,
+                                       api_key=own_key, temperature=0.2, max_tokens=max_tokens)
+
+    async def groq() -> str:
+        for model in _groq_models():
+            try:
+                resp = await asyncio.to_thread(
+                    _groq().chat.completions.create, model=model, temperature=0.2, max_tokens=max_tokens,
+                    messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                    **_reasoning_params(model))
+                if resp.choices[0].message.content:
+                    return resp.choices[0].message.content
+            except Exception as e:
+                _note_limit(model, e)
+                logger.warning(f"Groq {model} completion failed: {str(e)[:160]}")
+        raise ai.AIError("no Groq model answered")
+
+    order = ([groq, gemini] if urgent else [gemini, groq]) if os.getenv("GROQ_API_KEY") else [gemini]
+    last: Optional[Exception] = None
+    for attempt in order:
         try:
-            resp = await asyncio.to_thread(
-                _groq().chat.completions.create, model=VOICE_GROQ_MODEL, temperature=0.2, max_tokens=max_tokens,
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-                **_reasoning_params(),
-            )
-            raw = resp.choices[0].message.content
-            if raw:
-                return raw
+            return await attempt()
         except Exception as e:
-            logger.warning(f"Groq completion failed, using Gemini: {e}")
-    return await asyncio.to_thread(generate_ai_response, system, "", user,
-                                   provider=bot.ai_provider, model_name=bot.ai_model, api_key=bot.ai_api_key)
+            last = e
+    raise ai.AIError(f"no model answered: {last}")
 
 
 def _lines(transcript: list[dict]) -> str:
@@ -467,6 +519,7 @@ async def transfer_brief(bot: Bot, transcript: list[dict], caller: Optional[str]
     if not lines.strip():
         return ""
     raw = await _complete(bot, "You brief a staff member who is about to take over a phone call. In at most two short "
-                               "sentences, say who is calling (name if given) and what they want. Plain text only.", lines, 120)
+                               "sentences, say who is calling (name if given) and what they want. Plain text only.", lines, 120,
+                          urgent=True)
     text = re.sub(r"\s+", " ", re.sub(r"[*_#`>\[\]]", "", raw or "")).strip()
     return text[:400]

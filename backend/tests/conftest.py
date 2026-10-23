@@ -24,6 +24,7 @@ os.environ.update({
     "ENFORCE_PLAN_LIMITS": "false",  # most tests aren't about plans; test_sites turns the limits on
     "SITES_DOMAIN": "sites.test", "SITES_DIR": os.path.join(os.path.dirname(_DB), "site_files"),
     "CLOUDFLARE_API_TOKEN": "", "CLOUDFLARE_ZONE_ID": "", "SITES_EDGE_KEY": "edge-key",
+    "VOICE_CHECK_PUBLIC_URL": "false",
 })
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

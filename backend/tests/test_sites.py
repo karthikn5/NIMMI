@@ -317,3 +317,19 @@ def test_limits_follow_the_plan_module():
     assert plans.PAID.custom_domains and plans.PAID.deploy_bytes > plans.FREE.deploy_bytes
     assert site_serve.with_assistant(b"<body>x</body>", "b1").count(b"nimmi-widget.js") == 1
     assert site_serve.with_assistant(b'<script src="/static/nimmi-widget.js"></script>', "b1").count(b"nimmi-widget.js") == 1
+
+
+def test_paying_for_a_plan_counts_even_for_an_assistant_owned_elsewhere(client, make_user, run, monkeypatch):
+    monkeypatch.setenv("ENFORCE_PLAN_LIMITS", "true")
+    owner, payer = make_user(), make_user()
+    bot = owner.bot()
+
+    async def pay():
+        async with async_session() as db:
+            db.add(Subscription(user_id=payer.id, bot_id=bot, plan_name="1 Month Plan", price_paid=1,
+                                end_date=datetime.utcnow() + timedelta(days=30), status="active"))
+            await db.commit()
+    assert client.get("/api/account/limits", headers=payer.h()).json()["paid"] is False
+    run(pay)
+    assert client.get("/api/account/limits", headers=payer.h()).json()["paid"] is True
+    assert client.get("/api/account/limits", headers=owner.h()).json()["paid"] is True

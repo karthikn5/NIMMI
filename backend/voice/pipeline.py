@@ -120,6 +120,34 @@ TIMEOUT_REPLIES = {
 
 FRAME_SEC = 0.1   # with background sound, audio goes out in real-time frames
 LEAD_SEC = 0.25   # how far ahead of real time we keep the line fed
+STT_BATCH_SEC = 0.1  # phone audio arrives in 20 ms frames; the recognizer ends turns ~0.3 s sooner fed 100 ms at a time
+HELLO_WAIT_SEC = 2.5  # outbound: give the person who answered a moment to say hello before the greeting
+# What people say when they pick up (or over the greeting); not a question for the assistant.
+HELLO_WORDS = {
+    "hello", "helo", "halo", "hallo", "allo", "hi", "hey", "hai", "yes", "yeah", "yep", "ya", "haan", "han", "ha", "ji",
+    "haan ji", "ok", "okay", "speaking", "who", "is", "this", "it", "sir", "madam", "ma'am", "mam", "vanakkam",
+    "namaste", "namaskar", "namaskaram", "sollunga", "bolo", "boliye", "bolie", "hm", "hmm", "ஹலோ", "வணக்கம்",
+    "சொல்லுங்க", "हेलो", "हैलो", "हाँ", "हां", "जी", "नमस्ते", "బోలో", "హలో", "ಹಲೋ", "ഹലോ",
+}
+
+
+_DIGIT_RUN = re.compile(r"\+?\d[\d\s-]{5,}\d")
+
+
+def number_check(text: str) -> str:
+    """A private note for the model when a phone number came through with the wrong number of digits
+    (phone lines and recognizers drop or double a digit now and then); empty when it looks right."""
+    for run in _DIGIT_RUN.findall(text or ""):
+        digits = re.sub(r"\D", "", run)
+        if 7 <= len(digits) <= 13 and len(digits) not in (10, 12):
+            return (f" [Note for the assistant, not said by the caller: the number heard, {digits}, has {len(digits)} digits;"
+                    " an Indian mobile number has 10. Say you may have missed a digit and ask them to repeat it slowly.]")
+    return ""
+
+
+def _just_hello(text: str) -> bool:
+    words = _normalize(text).split()
+    return 0 < len(words) <= 4 and all(w.strip("'") in HELLO_WORDS for w in words)
 
 
 def _normalize(text: str) -> str:
@@ -156,6 +184,7 @@ class CallSession:
         self.history: list[dict] = []
         self.speaking_until = 0.0
         self.last_heard = time.monotonic()
+        self.caller_talking_since: Optional[float] = None  # between the recognizer's speech start and end
         self.silence_prompts = 0
         self.reply_task: Optional[asyncio.Task] = None
         self.turn_spoken = False  # has the current reply produced any speech yet?
@@ -170,6 +199,12 @@ class CallSession:
         self.caller_bytes = 0
         self.caller_peak = 0
         self.stt_events = {"speech_start": 0, "transcript": 0, "error": 0}
+        # The opening: replies wait for it, and it can't be cut off by a "hello" over it.
+        self.greeted = asyncio.Event()
+        self.heard_hello = asyncio.Event()
+        self.greeting_until = 0.0
+        self.knowledge_task: Optional[asyncio.Task] = None
+        self.stt_batch = int(self.rate * STT_BATCH_SEC) * 2 if self.rate == 8000 else 0  # phone lines only
 
     # ── helpers ────────────────────────────────────────────────
     def _elapsed(self) -> int:
@@ -291,6 +326,9 @@ class CallSession:
     # ── events ────────────────────────────────────────────────
     async def on_speech_start(self) -> None:
         self.last_heard = time.monotonic()
+        self.caller_talking_since = self.last_heard
+        if time.monotonic() < self.greeting_until:
+            return  # the opening (who we are, recorded line) always plays in full; it's a few seconds
         if self.speaking and self.s.agent.allow_interruptions:
             if self.reply_task and not self.reply_task.done():
                 self.reply_task.cancel()
@@ -305,6 +343,10 @@ class CallSession:
         self.silence_prompts = 0
         self._log("caller", text)
         await self.t.event({"type": "caller", "text": text})
+        opening = not self.greeted.is_set() or time.monotonic() < self.greeting_until + 0.5
+        self.heard_hello.set()
+        if opening and _just_hello(text):
+            return  # "Hello?" as they pick up, or over the greeting: the greeting is the answer
 
         if _matches(text, self.s.opt_out_phrases):
             self.opted_out = True
@@ -330,13 +372,21 @@ class CallSession:
         self.turn_spoken = False
         said: list[str] = []
         try:
-            async for sentence, control in self.replier(self.s.bot, self.s.agent, self.history[:-1], text,
+            knowledge = None
+            if self.knowledge_task is not None:
+                try:
+                    knowledge = await asyncio.wait_for(asyncio.shield(self.knowledge_task), 3)
+                except Exception:
+                    knowledge = None
+            extra = {"knowledge": knowledge} if knowledge is not None else {}
+            async for sentence, control in self.replier(self.s.bot, self.s.agent, self.history[:-1], text + number_check(text),
                                                         self.s.direction, self.s.consent_source,
                                                         variables=self.s.variables, purpose=self.s.purpose,
-                                                        after_hours=self.s.after_hours):
+                                                        after_hours=self.s.after_hours, **extra):
                 if sentence:
                     said.append(sentence)
                     self.turn_spoken = True
+                    await self.greeted.wait()  # never over the opening (the answer itself is already being written)
                     await self.speak(sentence)
                 if control == llm.TRANSFER:
                     await self._transfer()
@@ -390,6 +440,7 @@ class CallSession:
 
     # ── loops ────────────────────────────────────────────────
     async def _pump_audio(self, stt) -> None:
+        pending = bytearray()
         while not self.ended.is_set():
             pcm = await self.t.receive()
             if pcm is None:
@@ -402,7 +453,13 @@ class CallSession:
             samples.frombytes(pcm[: len(pcm) - len(pcm) % 2])
             if samples:
                 self.caller_peak = max(self.caller_peak, max(abs(s) for s in samples))
-            await stt.send(pcm)
+            if not self.stt_batch:
+                await stt.send(pcm)
+                continue
+            pending.extend(pcm)
+            if len(pending) >= self.stt_batch:
+                await stt.send(bytes(pending))
+                pending.clear()
 
     async def _consume_stt(self, stt) -> None:
         async for ev in stt.events():
@@ -410,6 +467,9 @@ class CallSession:
                 self.stt_events[ev.kind] += 1
             if ev.kind == "speech_start":
                 await self.on_speech_start()
+            elif ev.kind == "speech_end":
+                self.caller_talking_since = None
+                self.last_heard = time.monotonic()
             elif ev.kind == "transcript":
                 await self.on_caller_text(ev.text)
             elif ev.kind == "error":
@@ -428,7 +488,9 @@ class CallSession:
                 await self.end()
                 return
             busy = self.speaking or (self.reply_task is not None and not self.reply_task.done())
-            if busy:
+            # Someone talking for a long while (spelling an address, explaining a problem) isn't silence.
+            talking = self.caller_talking_since is not None and time.monotonic() - self.caller_talking_since < 60
+            if busy or talking:
                 continue
             quiet_for = time.monotonic() - max(self.last_heard, self.speaking_until)
             if quiet_for >= silence:
@@ -443,6 +505,16 @@ class CallSession:
                     return
 
     # ── lifecycle ───────────────────────────────────────────────
+    async def _greet(self) -> None:
+        """The opening. Protected from barge-in while it plays; replies wait for it."""
+        self.greeting_until = float("inf")
+        try:
+            await self.speak(llm.disclosure(self.s.agent, self.s.variables, recorded=self.s.record))
+        finally:
+            self.greeting_until = self.speaking_until
+            self.last_heard = time.monotonic()
+            self.greeted.set()
+
     async def _open_log(self) -> None:
         async with async_session() as db:
             log = CallLog(user_id=self.s.owner_id, bot_id=self.s.bot.bot_id, direction=self.s.direction,
@@ -486,24 +558,42 @@ class CallSession:
         tasks: list[asyncio.Task] = []
         if self.ambience:
             tasks.append(asyncio.create_task(self._playout()))
+        if self.replier is llm.reply_sentences:
+            tasks.append(asyncio.create_task(asyncio.to_thread(llm.warm_up)))
+            self.knowledge_task = asyncio.create_task(llm.call_knowledge(self.s.bot))  # once, for the whole call
+        # Inbound: greet straight away, while the recognizer connects. Outbound: let the person who
+        # answered say hello first (the greeting then answers it), or start after a short pause.
+        wait_for_hello = self.s.direction == "outbound" and self.s.channel == "phone"
+        greeting: Optional[asyncio.Task] = None if wait_for_hello else asyncio.create_task(self._greet())
+        stt_cm = self.stt_factory(self.s.agent.language, self.rate, bool(self.s.agent.understand_code_mixed))
+        stt = None
         try:
-            async with self.stt_factory(self.s.agent.language, self.rate, bool(self.s.agent.understand_code_mixed)) as stt:
-                tasks += [asyncio.create_task(self._pump_audio(stt)), asyncio.create_task(self._consume_stt(stt)),
-                          asyncio.create_task(self._watchdog())]
-                if self.replier is llm.reply_sentences:
-                    tasks.append(asyncio.create_task(asyncio.to_thread(llm.warm_up)))
-                await self.speak(llm.disclosure(self.s.agent, self.s.variables))
-                self.last_heard = time.monotonic()
-                await self.ended.wait()
+            stt = await stt_cm.__aenter__()
+            tasks += [asyncio.create_task(self._pump_audio(stt)), asyncio.create_task(self._consume_stt(stt)),
+                      asyncio.create_task(self._watchdog())]
+            if greeting is None:
+                try:
+                    await asyncio.wait_for(self.heard_hello.wait(), HELLO_WAIT_SEC)
+                except asyncio.TimeoutError:
+                    pass
+                greeting = asyncio.create_task(self._greet())
+            await greeting
+            await self.ended.wait()
         except Exception as e:
             logger.error(f"Call {self.call_id} failed: {e}")
             self.failure = str(e)[:300]
             await self.t.event({"type": "error", "code": "engine", "message": "The voice engine had a problem."})
             self.ended.set()
         finally:
-            for task in tasks + ([self.reply_task] if self.reply_task else []):
+            extra = [t for t in (greeting, self.reply_task, self.knowledge_task) if t]
+            for task in tasks + extra:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*tasks, *extra, return_exceptions=True)
+            if stt is not None:
+                try:
+                    await stt_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
             if self.tts_stream:
                 await self.tts_stream.close()
             await self._finish()

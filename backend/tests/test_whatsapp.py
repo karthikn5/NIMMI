@@ -104,10 +104,14 @@ def test_reply_goes_to_the_owning_workspace_only(client, make_user, monkeypatch,
     assert "Context:" not in prompts[0]  # knowledge isn't pasted twice
 
     async def conv():
-        async with async_session() as db:
-            c = (await db.execute(select(Conversation).where(Conversation.visitor_session_id == "wa:919800000001"))).scalars().first()
-            msgs = (await db.execute(select(Message).where(Message.conversation_id == c.conversation_id))).scalars().all()
-            return c, [m.content for m in msgs]
+        for _ in range(100):  # the messages are saved just after the reply goes out
+            async with async_session() as db:
+                c = (await db.execute(select(Conversation).where(Conversation.visitor_session_id == "wa:919800000001"))).scalars().first()
+                msgs = (await db.execute(select(Message).where(Message.conversation_id == c.conversation_id))).scalars().all()
+            if len(msgs) >= 2:
+                break
+            await asyncio.sleep(0.05)
+        return c, [m.content for m in msgs]
     c, msgs = run(conv)
     assert c.bot_id == bot and msgs == ["When do you open?", "We open at 9am."]
 

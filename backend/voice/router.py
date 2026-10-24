@@ -26,7 +26,7 @@ from notify.email import send_email
 from phone import callable_destination, display, extract_contact, mask, to_e164
 import assist
 from voice import accounts, ambience, catalog, exotel, llm, metering, recording, sarvam, scheduler, twilio
-from voice.pipeline import CallSession, CallSetup
+from voice.pipeline import CallSession, CallSetup, prepare_opening
 from voice.transports import BrowserTransport, ExotelTransport, TwilioTransport
 import plans
 
@@ -53,6 +53,7 @@ def _agent_json(agent: VoiceAgent, bot: Bot) -> dict:
     return {
         "bot_id": bot.bot_id, "bot_name": bot.bot_name, "enabled": bool(agent.enabled), "language": agent.language,
         "understand_code_mixed": bool(agent.understand_code_mixed), "voice_id": agent.voice_id,
+        "follow_caller_language": agent.follow_caller_language is not False,
         "speaking_rate": agent.speaking_rate or 1.0, "assistant_name": agent.assistant_name or "",
         "company_name": agent.company_name or "", "greeting": agent.greeting or "",
         "allow_interruptions": bool(agent.allow_interruptions), "silence_timeout_sec": agent.silence_timeout_sec or 8,
@@ -226,6 +227,7 @@ class AgentUpdate(BaseModel):
     enabled: bool
     language: str
     understand_code_mixed: bool
+    follow_caller_language: bool = True
     voice_id: Optional[str] = None
     speaking_rate: float = Field(1.0, ge=0.7, le=1.3)
     assistant_name: str = Field("", max_length=40)
@@ -279,6 +281,8 @@ async def update_agent(bot_id: str, data: AgentUpdate, ctx: AuthContext = Depend
     if not exists:
         db.add(agent)
     await db.commit()
+    if agent.enabled and agent.voice_id:  # its opening, ready for the next call coming in
+        prepare_opening(agent, {}, bool((await _compliance(ctx.owner_id, db)).record_calls))
     return _agent_json(agent, bot)
 
 
@@ -374,6 +378,21 @@ def _owner_of(scope) -> Optional[str]:
 TEST_CALL = "Test call requested from the dashboard"
 
 
+async def _first(query):
+    """One lookup on its own connection, so a call's lookups can run side by side."""
+    async with async_session() as db:
+        return (await db.execute(query)).scalars().first()
+
+
+async def _compliance_for(owner_id: str) -> ComplianceSettings:
+    async with async_session() as db:
+        return await _compliance(owner_id, db)
+
+
+async def _nothing():
+    return None
+
+
 async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[str], to_raw: Optional[str],
                          job_id: Optional[str] = None, voicemail: bool = False, scope=accounts.NIMMI) -> None:
     """
@@ -389,15 +408,12 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
             job = (await db.execute(select(CallbackJob).where(CallbackJob.provider_call_id == call_sid))).scalars().first()
         if job and owner and job.user_id != owner:
             job = None
-        variables, purpose = {}, None
+        variables = {}
         if job:
             owner_id, bot_id, caller, direction, consent = job.user_id, job.bot_id, job.e164, "outbound", job.consent_source
             variables = dict(job.variables or {})
             if job.name:
                 variables.setdefault("name", job.name)
-            if job.campaign_id:
-                campaign = (await db.execute(select(Campaign).where(Campaign.id == job.campaign_id))).scalars().first()
-                purpose = campaign.purpose if campaign else None
         else:
             called = to_e164(to_raw)
             number = (await db.execute(select(PhoneNumber).where(
@@ -409,17 +425,26 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
                 await transport.hangup("done")
                 return
             owner_id, bot_id, caller, direction, consent = number.user_id, number.bot_id, to_e164(from_raw), "inbound", None
-        bot = (await db.execute(select(Bot).where(Bot.bot_id == bot_id))).scalars().first()
-        agent = (await db.execute(select(VoiceAgent).where(VoiceAgent.bot_id == bot_id))).scalars().first()
-        if bot and not agent and job and (job.consent_source or "").startswith(TEST_CALL):
-            agent, _ = await _agent_for(bot, owner_id, db)  # test calls work before voice is switched on
-        compliance = await _compliance(owner_id, db)
+
+    # Everything else the call needs, fetched side by side on separate connections: the caller is
+    # waiting in silence, and each lookup is a round trip to the database.
+    campaign_id = job.campaign_id if job else None
+    bot, agent, campaign, compliance, settings = await asyncio.gather(
+        _first(select(Bot).where(Bot.bot_id == bot_id)),
+        _first(select(VoiceAgent).where(VoiceAgent.bot_id == bot_id)),
+        _first(select(Campaign).where(Campaign.id == campaign_id)) if campaign_id else _nothing(),
+        _compliance_for(owner_id),
+        assist.workspace(owner_id),
+    )
+    purpose = campaign.purpose if campaign else None
+    if bot and not agent and job and (job.consent_source or "").startswith(TEST_CALL):
+        agent = _agent_defaults(bot, owner_id)  # test calls work before voice is switched on
     is_test = bool(job and (job.consent_source or "").startswith(TEST_CALL))
     if not bot or not agent or not (agent.enabled or is_test):
         await transport.hangup("done")
         return
 
-    hours = assist.hours_config(await assist.workspace(owner_id))
+    hours = assist.hours_config(settings)
     setup = CallSetup(owner_id=owner_id, bot=bot, agent=agent, direction=direction, channel="phone", caller_e164=caller,
                       consent_source=consent, provider_call_id=call_sid, callback_job_id=job.id if job else None,
                       record=bool(compliance.record_calls), opt_out_phrases=compliance.opt_out_phrases or [],
@@ -678,6 +703,9 @@ async def test_call(req: TestCallRequest, ctx: AuthContext = Depends(require_man
     if not await _publicly_reachable():
         raise HTTPException(status_code=503, detail="The phone company can't reach this server right now, so the call would "
                                                     "drop as soon as you answer. Check PUBLIC_BACKEND_URL (or restart the tunnel) and try again.")
+    # Make the opening while the phone rings, so the assistant speaks the moment it's answered.
+    agent, _ = await _agent_for(bot, ctx.owner_id, db)
+    prepare_opening(agent, {}, bool((await _compliance(ctx.owner_id, db)).record_calls))
     job = CallbackJob(user_id=ctx.owner_id, bot_id=bot.bot_id, e164=e164, consent_source=f"{TEST_CALL} for {display(e164)}",
                       status="calling", attempts=1)
     db.add(job)

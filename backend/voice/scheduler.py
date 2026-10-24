@@ -119,6 +119,14 @@ async def dispatch_due_callbacks() -> None:
             await db.refresh(job)
             if job.campaign_id:
                 in_flight[job.campaign_id] += 1
+            if agent:  # make the opening while the phone rings, so it's spoken the moment they answer
+                from voice.pipeline import prepare_opening
+                variables = dict(job.variables or {})
+                if job.name:
+                    variables.setdefault("name", job.name)
+                compliance = (await db.execute(select(ComplianceSettings).where(
+                    ComplianceSettings.user_id == job.user_id))).scalars().first()
+                prepare_opening(agent, variables, bool(compliance.record_calls) if compliance else True)
             try:
                 job.last_error = None
                 # Through Nimmi's account, or the customer's own Twilio/Exotel account for their numbers.

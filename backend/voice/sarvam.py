@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 
 import httpx
 import websockets
+from websockets.protocol import State
 
 from voice.catalog import STT_MODEL, TTS_MODEL
 
@@ -36,7 +37,7 @@ async def _connect_ws(url: str, attempts: int = 3):
     for attempt in range(attempts):
         try:
             return await websockets.connect(url, additional_headers={"Api-Subscription-Key": api_key()},
-                                            max_size=2**22, open_timeout=8)
+                                            max_size=2**22, open_timeout=8, close_timeout=2)
         except (asyncio.TimeoutError, OSError, websockets.exceptions.InvalidHandshake) as e:
             last = e
             logger.warning(f"Sarvam connect attempt {attempt + 1} failed: {e}")
@@ -133,6 +134,7 @@ class TtsStream:
     """
 
     def __init__(self, language: str, speaker: str, pace: float, sample_rate: int):
+        self.language = language  # fixed for the connection; another language needs another stream
         self.config = {
             "language_code": language, "speaker": speaker, "model": TTS_MODEL,
             "pace": max(0.5, min(2.0, pace)), "speech_sample_rate": str(sample_rate), "output_audio_codec": "linear16",
@@ -141,16 +143,23 @@ class TtsStream:
         self._ws = None
 
     async def _connect(self):
-        self._ws = await _connect_ws(f"{TTS_WS_URL}?model={TTS_MODEL}&send_completion_event=true")
-        await self._ws.send(json.dumps({"type": "config", "data": self.config}))
+        ws = await _connect_ws(f"{TTS_WS_URL}?model={TTS_MODEL}&send_completion_event=true")
+        try:
+            await ws.send(json.dumps({"type": "config", "data": self.config}))
+        except BaseException:
+            await _close_quietly(ws)
+            raise
+        self._ws = ws
+
+    async def open(self) -> None:
+        """Connect ahead of the first sentence (otherwise the first sentence connects)."""
+        if self._ws is None:
+            await self._connect()
 
     async def close(self):
-        if self._ws is not None:
-            try:
-                await self._ws.close()
-            except Exception:
-                pass
-            self._ws = None
+        ws, self._ws = self._ws, None  # detached first: a sentence started meanwhile opens a fresh connection
+        if ws is not None:
+            await _close_quietly(ws)
 
     async def __aenter__(self):
         await self._connect()
@@ -160,13 +169,15 @@ class TtsStream:
         await self.close()
 
     async def speak(self, text: str) -> AsyncIterator[bytes]:
+        if self._ws is not None and self._ws.state is not State.OPEN:
+            self._ws = None  # Sarvam closed it while the caller talked: reconnect (~0.4 s), not REST (~2 s)
         if self._ws is None:
             await self._connect()
-        finished = False
+        ws, finished = self._ws, False
         try:
-            await self._ws.send(json.dumps({"type": "text", "data": {"text": text[:2500]}}))
-            await self._ws.send(json.dumps({"type": "flush"}))
-            async for raw in self._ws:
+            await ws.send(json.dumps({"type": "text", "data": {"text": text[:2500]}}))
+            await ws.send(json.dumps({"type": "flush"}))
+            async for raw in ws:
                 msg = json.loads(raw)
                 kind = msg.get("type")
                 if kind == "audio":
@@ -178,8 +189,17 @@ class TtsStream:
                 elif kind == "error":
                     raise SarvamError(str((msg.get("data") or {}).get("message")))
         finally:
-            if not finished:
-                await self.close()  # interrupted or failed: start clean next time
+            if not finished:  # interrupted or failed: start clean next time
+                if self._ws is ws:
+                    self._ws = None
+                await _close_quietly(ws)
+
+
+async def _close_quietly(ws) -> None:
+    try:
+        await ws.close()
+    except Exception:
+        pass
 
 
 def _wav_to_pcm(wav_bytes: bytes) -> bytes:

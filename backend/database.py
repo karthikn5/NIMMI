@@ -66,11 +66,14 @@ else:
     # (TLS + login over a long network path) measured ~2.4 s, against ~0.75 s for a query on an
     # open one; without a pool every request paid that. No pre-ping (it would add a round trip to
     # every request); connections are replaced after a few minutes instead.
+    # Supabase's session pooler (port 5432) allows 15 clients in all, shared by every server process
+    # (gunicorn runs 4), so the default is 2 kept open + 1 extra each: 12 at most. The transaction
+    # pooler (port 6543) allows far more; raise DB_POOL_SIZE / DB_POOL_OVERFLOW there.
     engine = create_async_engine(
         DATABASE_URL,
         echo=False,
-        pool_size=int(os.getenv("DB_POOL_SIZE", "5")),
-        max_overflow=int(os.getenv("DB_POOL_OVERFLOW", "5")),
+        pool_size=int(os.getenv("DB_POOL_SIZE", "2")),
+        max_overflow=int(os.getenv("DB_POOL_OVERFLOW", "1")),
         pool_recycle=int(os.getenv("DB_POOL_RECYCLE_SEC", "240")),
         pool_timeout=30,
         connect_args={

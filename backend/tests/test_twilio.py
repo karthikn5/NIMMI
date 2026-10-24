@@ -8,7 +8,7 @@ from sqlalchemy.future import select
 
 from database import async_session
 from backend.models import CallbackJob, CallLog
-from voice import scheduler, twilio
+from voice import router as voice_router, scheduler, twilio
 from voice.transports import TwilioTransport
 
 
@@ -106,11 +106,13 @@ def test_dashboard_test_call(client, make_user, monkeypatch, run):
     bot = u.bot()
     assert client.post("/api/voice/test-call", json={"bot_id": bot, "phone": "9876543210"}, headers=u.h()).status_code == 400
 
-    placed = {}
+    placed, warmed = {}, []
 
     async def fake_place(to, frm, job_id, **_):
-        placed.update(to=to, frm=frm, job=job_id)
+        placed.update(to=to, frm=frm, job=job_id, opening_ready=bool(warmed))
         return "CA-test"
+    monkeypatch.setattr(voice_router, "prepare_opening",
+                        lambda agent, variables, recorded, rate=8000: warmed.append((agent.bot_id, variables, recorded)))
 
     async def no_webhook(e164):
         return None
@@ -121,6 +123,7 @@ def test_dashboard_test_call(client, make_user, monkeypatch, run):
     r = client.post("/api/voice/test-call", json={"bot_id": bot, "phone": "98765 43210"}, headers=u.h())
     assert r.status_code == 200, r.text
     assert placed["to"] == "+919876543210" and placed["frm"] == "+15005550006"
+    assert placed["opening_ready"] and warmed == [(bot, {}, True)]  # the opening is made while the phone rings
 
     # The phone wasn't answered: logged as no answer, and test calls aren't retried.
     client.post("/api/voice/twilio/status/tw-secret", data={"CallSid": "CA-test", "CallStatus": "no-answer"})

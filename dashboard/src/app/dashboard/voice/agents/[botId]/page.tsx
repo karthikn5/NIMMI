@@ -68,7 +68,13 @@ export default function AgentSettingsPage() {
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] items-start">
                 <div className="space-y-6 min-w-0">
                     <Card className="px-5 py-1">
-                        <SettingRow label="Language" htmlFor="language" hint="The assistant speaks and listens in this language.">
+                        <SettingRow
+                            label="Language"
+                            htmlFor="language"
+                            hint={draft.follow_caller_language
+                                ? "Calls start in this language. The assistant switches when a caller speaks another one."
+                                : "The assistant speaks and listens in this language."}
+                        >
                             <Select id="language" value={draft.language} onChange={(e) => handleLanguageChange(e.target.value as VoiceAgentConfig["language"])}>
                                 {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
                             </Select>
@@ -76,6 +82,12 @@ export default function AgentSettingsPage() {
                                 <Switch checked={draft.understand_code_mixed} onChange={(v) => set("understand_code_mixed", v)} label="Understand mixed language" />
                                 <span className="text-[13px] text-stone-600 leading-snug">
                                     Understand callers who mix in English, like Tanglish or Hinglish
+                                </span>
+                            </label>
+                            <label className="flex items-start gap-3 mt-3">
+                                <Switch checked={draft.follow_caller_language} onChange={(v) => set("follow_caller_language", v)} label="Reply in the caller's language" />
+                                <span className="text-[13px] text-stone-600 leading-snug">
+                                    Reply in the caller&apos;s language when they speak another one, like Tamil or Hindi
                                 </span>
                             </label>
                             <div className="mt-3.5 flex items-start gap-2.5 p-3 rounded-md bg-stone-50 border border-line text-xs text-stone-600 leading-relaxed">

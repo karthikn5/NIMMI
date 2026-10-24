@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from typing import AsyncIterator, Iterator, Optional
 
@@ -71,7 +72,9 @@ FALLBACK_ERRORS = {
     "en-IN": "Sorry, I didn't quite catch that. Could you say that again?",
 }
 
-_SENTENCE_END = re.compile(r"(?<=[.!?।])\s+")
+# A sentence ends at . ! ? or । followed by a space, or at ! ? । followed straight by a letter (models
+# writing Tamil or Hindi sometimes leave out the space: "என்ன?ஹ்ம்ம்"). "1.5" and "nimmiai.in" don't split.
+_SENTENCE_END = re.compile(r"(?<=[.!?।])\s+|(?<=[!?।])(?=[^\W\d_])")
 
 # Measured (Oct 2026): Groq answers in 0.1-0.5 s; Gemini Flash-Lite over REST in ~1.8 s; the old
 # google-generativeai SDK took ~30 s, so it isn't used. Each Groq model has its own per-minute
@@ -142,9 +145,16 @@ def _collect_lines(agent: VoiceAgent) -> str:
 
 
 def system_prompt(agent: VoiceAgent, bot: Bot, knowledge: str, direction: str, consent_source: Optional[str],
-                  variables: Optional[dict] = None, purpose: Optional[str] = None, after_hours: Optional[str] = None) -> str:
-    lang_code = agent.language or "en-IN"
+                  variables: Optional[dict] = None, purpose: Optional[str] = None, after_hours: Optional[str] = None,
+                  reply_language: Optional[str] = None) -> str:
+    lang_code = reply_language or agent.language or "en-IN"  # the caller's language once they switch
     lang = LANGUAGE_NAMES.get(lang_code, "Indian English")
+    began_in = agent.language or "en-IN"
+    switched = (f" The call began in {LANGUAGE_NAMES.get(began_in, 'English')}, but the caller is speaking {lang}:"
+                f" answer in {lang} from now on." if lang_code != began_in else "")
+    script = ("" if lang_code == "en-IN" else
+              f"\n- Write {lang} words in {lang} script, never in English letters: the voice reads {lang} script."
+              " English words such as course names or 'fees' can stay in English.")
     transfer = (f"If {agent.transfer_when or 'the caller asks for a person'}, say one short sentence that you'll connect them, "
                 f"then write {TRANSFER} on its own." if agent.transfer_enabled and agent.transfer_number and not after_hours else
                 "If the caller asks for a person, offer to take their name and number so the team can call back.")
@@ -189,12 +199,12 @@ def system_prompt(agent: VoiceAgent, bot: Bot, knowledge: str, direction: str, c
 You are on a live phone call.{reason}{goal}{about}
 
 How to speak:
-- Reply in {lang}. If the caller code-mixes with English, match them naturally.
+- Reply in {lang}.{switched} If the caller code-mixes with English, match them naturally.{script}
 {style_instruction}
 - Keep each reply to one to two short, natural spoken sentences. This is speech, not text.
 - You already greeted the caller and said your name when the call started. Never introduce yourself or give a formal greeting again (no hello, namaste, or vanakkam). If the caller only says hello, acknowledge with a warm "Hmm, yes, how can I help?" or natural equivalent.
-- No lists, markdown, emojis, URLs or symbols. Say numbers the way people say them aloud.
-- Ask one question at a time. Confirm names and numbers by repeating them back.
+- No lists, markdown, emojis, URLs, brackets or symbols. Say numbers the way people say them aloud.
+- Ask one question at a time, then stop and let them answer. Confirm names and numbers by repeating them back.
 - Phone numbers: read them back in small groups of digits. An Indian mobile number has 10 digits (12 with 91 in front);
   if you heard a different count, say so and ask them to repeat it slowly.
 - If what you heard doesn't quite make sense, the line may have garbled it: ask a short clarifying question instead of guessing.
@@ -250,7 +260,9 @@ def _groq():
     global _groq_client
     if _groq_client is None:
         from groq import Groq
-        _groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"), timeout=15)
+        # No retries inside the SDK: on a rate limit it waits out Groq's retry-after (10-20 s of silence
+        # on a live call). stream_reply moves to the next model, then Gemini, straight away instead.
+        _groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"), timeout=15, max_retries=0)
     return _groq_client
 
 
@@ -296,10 +308,13 @@ def _stream_groq(model: str, prompt: str, history: list[dict], user_text: str) -
         messages=[{"role": "system", "content": prompt}, *history[-10:], {"role": "user", "content": user_text}],
         **_reasoning_params(model),
     )
-    for chunk in stream:
-        delta = chunk.choices[0].delta.content if chunk.choices else None
-        if delta:
-            yield delta
+    try:
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                yield delta
+    finally:
+        stream.close()  # stopped early (the answer was cut short): don't keep reading the rest
 
 
 def _stream_gemini(prompt: str, history: list[dict], user_text: str, api_key: Optional[str]) -> Iterator[str]:
@@ -311,11 +326,14 @@ def _stream_gemini(prompt: str, history: list[dict], user_text: str, api_key: Op
 
 def stream_reply(bot: Bot, prompt: str, history: list[dict], user_text: str) -> Iterator[str]:
     """Groq (fastest to the first word), moving to the next Groq model when one is rate-limited, then Gemini."""
+    started = time.monotonic()
     if os.getenv("GROQ_API_KEY"):
         for model in _groq_models():
             yielded = False
             try:
                 for text in _stream_groq(model, prompt, history, user_text):
+                    if not yielded:
+                        logger.info(f"Voice reply from {model}: first words after {time.monotonic() - started:.2f}s")
                     yielded = True
                     yield text
                 if yielded:
@@ -326,18 +344,20 @@ def stream_reply(bot: Bot, prompt: str, history: list[dict], user_text: str) -> 
                 if yielded:
                     return  # part of the answer was already spoken; don't start a second one
     own_key = bot.ai_api_key if (bot.ai_provider or "google") == "google" else None
+    logger.info(f"Voice reply from Gemini (Groq unavailable) after {time.monotonic() - started:.2f}s")
     yield from _stream_gemini(prompt, history, user_text, own_key)
 
 
 def _clean_for_speech(text: str) -> str:
-    text = re.sub(r"[*_#`>\[\]]", "", text.replace(TRANSFER, "").replace(END_CALL, ""))
+    text = re.sub(r"[*_#`>\[\]()]", "", text.replace(TRANSFER, "").replace(END_CALL, ""))
     return re.sub(r"\s+", " ", text).strip()
 
 
 async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user_text: str,
                           direction: str, consent_source: Optional[str], variables: Optional[dict] = None,
                           purpose: Optional[str] = None, after_hours: Optional[str] = None,
-                          knowledge: Optional[str] = None) -> AsyncIterator[tuple[str, Optional[str]]]:
+                          knowledge: Optional[str] = None, reply_language: Optional[str] = None
+                          ) -> AsyncIterator[tuple[str, Optional[str]]]:
     """
     Yields (sentence, control) pairs as the model streams. `control` is None, or
     TRANSFER / END_CALL once the model signals it (with any final sentence).
@@ -345,13 +365,16 @@ async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user
     """
     if knowledge is None:
         knowledge = await call_knowledge(bot)
-    prompt = system_prompt(agent, bot, knowledge, direction, consent_source, variables, purpose, after_hours)
+    prompt = system_prompt(agent, bot, knowledge, direction, consent_source, variables, purpose, after_hours, reply_language)
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
+    stop = threading.Event()
 
     def produce():
         try:
             for chunk in stream_reply(bot, prompt, history, user_text):
+                if stop.is_set():
+                    break  # the answer ended early: stop reading the model (and spending its allowance)
                 loop.call_soon_threadsafe(queue.put_nowait, chunk)
         except Exception as e:
             logger.error(f"Voice LLM error: {e}")
@@ -363,21 +386,26 @@ async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user
     loop.run_in_executor(None, produce)
     buffer = ""
     control: Optional[str] = None
-    while (chunk := await queue.get()) is not None:
-        buffer += chunk
-        if TRANSFER in buffer:
-            control = TRANSFER
-        if END_CALL in buffer:
-            control = control or END_CALL
-        parts = _SENTENCE_END.split(buffer)
-        for sentence in parts[:-1]:
-            spoken = _clean_for_speech(sentence)
-            if spoken:
-                yield spoken, None
-        buffer = parts[-1]
-    tail = _clean_for_speech(buffer)
-    if tail or control:
-        yield tail, control
+    try:
+        while (chunk := await queue.get()) is not None:
+            buffer += chunk
+            if TRANSFER in buffer:
+                control = TRANSFER
+            if END_CALL in buffer:
+                control = control or END_CALL
+            parts = _SENTENCE_END.split(buffer)
+            for sentence in parts[:-1]:
+                spoken = _clean_for_speech(sentence)
+                if spoken:
+                    yield spoken, None
+                    if spoken.endswith("?"):
+                        return  # a question ends the turn: the caller answers it, not the model
+            buffer = parts[-1]
+        tail = _clean_for_speech(buffer)
+        if tail or control:
+            yield tail, control
+    finally:
+        stop.set()
 
 
 SUMMARY_PROMPT = """Read this phone call transcript between a business's assistant and a caller.

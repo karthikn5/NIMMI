@@ -28,6 +28,7 @@ export interface VoiceAgentConfig {
     enabled: boolean;
     language: LanguageCode;
     understand_code_mixed: boolean;
+    follow_caller_language: boolean;   // answer in the caller's language when they speak another one
     voice_id: string | null;
     speaking_rate: number; // 0.8 – 1.2
     assistant_name: string; // how the agent introduces itself

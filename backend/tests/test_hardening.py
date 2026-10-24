@@ -279,3 +279,18 @@ def test_google_sign_in_accepts_accounts_that_linked_google_later(client, monkey
                 "app_metadata": {"provider": "email", "providers": ["email", "google"]}}
     monkeypatch.setattr(auth_routes, "_supabase_user", linked)
     assert client.post("/api/auth/social", json={"access_token": "t"}).status_code == 200
+
+
+def test_a_replaced_encryption_key_can_still_read_old_secrets(monkeypatch):
+    import secretbox
+    monkeypatch.setenv("ENCRYPTION_KEY", "the-first-key-used-on-the-server")
+    sealed = secretbox.seal("twilio-token")
+    monkeypatch.setenv("ENCRYPTION_KEY", "a-new-key-that-replaced-it")
+    try:
+        secretbox.unseal(sealed)
+        raise AssertionError("an unknown key shouldn't decrypt")
+    except secretbox.SecretError:
+        pass
+    monkeypatch.setenv("ENCRYPTION_OLD_KEYS", "the-first-key-used-on-the-server")
+    assert secretbox.unseal(sealed) == "twilio-token"
+    assert secretbox.unseal(secretbox.seal("new")) == "new"  # new secrets use the new key

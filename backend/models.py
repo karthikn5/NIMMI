@@ -115,6 +115,7 @@ class VoiceAgent(Base):
     enabled = Column(Boolean, default=False)
     language = Column(String, default="en-IN")
     understand_code_mixed = Column(Boolean, default=True)
+    follow_caller_language = Column(Boolean, default=True, nullable=True)  # reply in the language the caller speaks
     voice_id = Column(String, nullable=True)
     speaking_rate = Column(Float, default=1.0)
     assistant_name = Column(String, default="Nimmi")

@@ -31,8 +31,11 @@ def _key(material: str) -> Fernet:
 
 
 def _fernet() -> MultiFernet:
+    """The first key encrypts; every key can decrypt. ENCRYPTION_OLD_KEYS (comma-separated) lists keys
+    that were replaced, so secrets saved under them can still be read."""
     from security import is_production
-    keys = [k for k in (os.getenv("ENCRYPTION_KEY"), os.getenv("JWT_SECRET")) if k]
+    old = [k.strip() for k in os.getenv("ENCRYPTION_OLD_KEYS", "").split(",") if k.strip()]
+    keys = [k for k in (os.getenv("ENCRYPTION_KEY"), os.getenv("JWT_SECRET"), *old) if k]
     if not keys and not is_production():
         keys = ["nimmi-local-dev-encryption"]  # development only; production always has JWT_SECRET
     if not keys:

@@ -471,4 +471,24 @@ async def manual_handoff(request: ManualHandoffRequest, http: Request, db: Async
     await db.commit()
     await _request_handoff(bot, conv, "")
     away = await assist.away_reply(bot.user_id)
-    return {"status": "success", "message": away or "Handoff requested", "away": bool(away)}
+    # Replies from an earlier chat in this session: the widget mustn't show them as new ones.
+    earlier = (await db.execute(select(Message.id).where(
+        Message.conversation_id == conv.conversation_id, Message.role == "assistant"))).scalars().all()
+    return {"status": "success", "message": away or "Handoff requested", "away": bool(away), "earlier": list(earlier)}
+
+
+@router.get("/chat/live/{bot_id}/{session_id}")
+async def live_replies(bot_id: str, session_id: str, http: Request, db: AsyncSession = Depends(get_db)):
+    """The team's latest replies in a 'talk to a person' chat. The widget checks this every few seconds as well as
+    listening on its socket, so a reply still arrives if the socket dropped or sits on another server process.
+    The session id is a random id kept in the visitor's browser: knowing it is their proof, as for the socket."""
+    _limit(http, "live", bot_id, 40)
+    if not session_id.startswith("widget-session-human-") or len(session_id) > 120:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    conv = await _conversation(await _load_bot(bot_id, db), session_id, db)
+    if not conv:
+        return {"status": "ai", "messages": []}
+    latest = (await db.execute(select(Message).where(
+        Message.conversation_id == conv.conversation_id, Message.role == "assistant"
+    ).order_by(Message.timestamp.desc()).limit(20))).scalars().all()
+    return {"status": conv.handoff_status, "messages": [{"id": m.id, "text": m.content} for m in reversed(latest)]}

@@ -276,6 +276,9 @@ function ChatWindow({ visual: v, botName, callbacks }: { visual: Visual; botName
                         <Send size={18} />
                     </span>
                 </div>
+                <p className={`text-center text-[10px] leading-none -mb-1 ${footerLight ? "text-stone-400" : "text-white/40"}`}>
+                    Powered by <span className={`font-semibold ${footerLight ? "text-stone-500" : "text-white/60"}`}>Nimmi</span>
+                </p>
             </footer>
         </div>
     );

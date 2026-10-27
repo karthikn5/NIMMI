@@ -11,6 +11,7 @@ python-multipart>=0.0.31
 sse-starlette
 fastapi-socketio
 python-socketio>=5.16.2
+redis>=5.0  # live chat across server processes (REALTIME_REDIS_URL)
 python-engineio>=4.13.2
 websockets
 

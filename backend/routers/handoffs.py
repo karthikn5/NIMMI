@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 import assist
 from backend.models import Bot, Conversation, Message, User
-from realtime import emit, notify_owner
+from realtime import emit, notify_owner, relay_to_whatsapp, socket_room
 
 router = APIRouter(prefix="/api/handoffs", tags=["live chat"])
 
@@ -85,6 +85,32 @@ async def handoff_messages(conversation_id: str, ctx: AuthContext = Depends(get_
          "author": authors.get(m.author_id) if m.author_id else None}
         for m in messages
     ]
+
+
+class ReplyIn(BaseModel):
+    text: str = Field(..., min_length=1, max_length=4000)
+
+
+@router.post("/{conversation_id}/reply")
+async def reply(conversation_id: str, data: ReplyIn, ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depends(get_db)):
+    """A team member's reply to the customer. Sent over HTTP, not the agent's socket: it's saved and delivered
+    even if that socket reconnected, or is connected to another server process than the visitor's."""
+    conv, _ = await _owned_conversation(conversation_id, ctx, db)
+    if conv.handoff_status == "human" and conv.agent_id and conv.agent_id != ctx.user_id:
+        raise HTTPException(status_code=409, detail="A teammate is already handling this chat")
+    text = data.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Write a message first")
+    conv.handoff_status, conv.agent_id = "human", ctx.user_id
+    message = Message(conversation_id=conv.conversation_id, role="assistant", content=text, author_id=ctx.user_id)
+    db.add(message)
+    await db.commit()
+    room = conv.visitor_session_id
+    payload = {"room": room, "message": text, "sender": "agent", "id": message.id, "conversation_id": conversation_id}
+    if room.startswith("wa:"):
+        await relay_to_whatsapp(db, conv, room[3:], text)
+    await emit("message", payload, room=socket_room(room, conv.bot_id))
+    return payload
 
 
 class NoteIn(BaseModel):

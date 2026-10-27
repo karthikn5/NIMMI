@@ -179,7 +179,7 @@ def test_agent_reply_in_live_chat_reaches_whatsapp(client, make_user, monkeypatc
             conv = Conversation(bot_id=bot, visitor_session_id="wa:919800000002", captured_data={})
             db.add(conv)
             await db.commit()
-            await realtime._relay_to_whatsapp(db, conv, "919800000002", "Hi, this is Meena from the clinic.")
+            await realtime.relay_to_whatsapp(db, conv, "919800000002", "Hi, this is Meena from the clinic.")
     run(relay)
     assert sent == [("919800000002", "Hi, this is Meena from the clinic.", "PID-RELAY", "EAAtest")]
 

@@ -137,6 +137,33 @@ def test_internal_notes_stay_internal(client, make_user, monkeypatch):
     assert client.post(f"/api/handoffs/{conv['conversation_id']}/notes", json={"text": "x"}, headers=make_user().h()).status_code == 404
 
 
+def test_a_team_reply_reaches_the_widget_without_the_socket(client, make_user):
+    """The reply is sent over HTTP and the widget also checks for replies, so it arrives even when the team's
+    socket and the visitor's are on different server processes (production runs several)."""
+    u = make_user()
+    bot = u.bot()
+    session = "widget-session-human-r1"
+    assert client.post("/api/chat/handoff", json={"bot_id": bot, "visitor_session_id": session}).json()["earlier"] == []
+    conv = client.get("/api/handoffs/pending", headers=u.h()).json()[0]["conversation_id"]
+
+    r = client.post(f"/api/handoffs/{conv}/reply", json={"text": "Hi, this is Meena. How can I help?"}, headers=u.h())
+    assert r.status_code == 200 and r.json()["sender"] == "agent"
+    reply_id = r.json()["id"]
+    live = client.get(f"/api/chat/live/{bot}/{session}").json()
+    assert live["status"] == "human" and live["messages"] == [{"id": reply_id, "text": "Hi, this is Meena. How can I help?"}]
+    assert client.get(f"/api/handoffs/{conv}/messages", headers=u.h()).json()[-1]["content"].startswith("Hi, this is Meena")
+
+    # The same visitor asks for a person again later: the earlier reply is marked seen, not shown as new.
+    client.post(f"/api/handoffs/{conv}/close", headers=u.h())
+    earlier = client.post("/api/chat/handoff", json={"bot_id": bot, "visitor_session_id": session}).json()["earlier"]
+    assert reply_id in earlier
+
+    # Another workspace can't reply, and a session id that isn't a person chat isn't readable.
+    assert client.post(f"/api/handoffs/{conv}/reply", json={"text": "x"}, headers=make_user().h()).status_code == 404
+    assert client.get(f"/api/chat/live/{bot}/widget-session-ai-r1").status_code == 404
+    assert client.get(f"/api/chat/live/{bot}/widget-session-human-nobody").json() == {"status": "ai", "messages": []}
+
+
 def test_lead_score():
     hot = assist.lead_score({"Name": "Ravi", "Phone": "9876543210", "Budget": "65"}, successful=True, sentiment="positive")
     assert hot["label"] == "hot" and hot["score"] >= 60 and "Goal met" in hot["reasons"]

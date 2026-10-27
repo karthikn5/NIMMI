@@ -65,6 +65,13 @@ backend/google_sheets_key.json
 # Extra Next.js build dirs (NEXT_DIST_DIR)
 dashboard/.next-*/
 
+# Claude Code: private notes, memory and personal settings stay on the owner's machines
+.claude/private-notes.md
+.claude/memory/
+.claude/settings.local.json
+# Local test harnesses (simulated calls, local database helpers, browser checks)
+dev-scripts/
+
 # Debug logs & scratch files
 *debug_log.txt
 *.header_fix

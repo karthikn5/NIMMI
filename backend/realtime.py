@@ -84,7 +84,7 @@ async def _agent_conversation(user_id: str, room: str) -> Optional[Conversation]
         )).scalars().first()
 
 
-def _socket_room(room: str, bot_id: str) -> str:
+def socket_room(room: str, bot_id: str) -> str:
     """WhatsApp rooms are per phone number, which several businesses can share: keep each assistant's apart."""
     return f"{room}#{bot_id}" if room.startswith("wa:") else room
 
@@ -107,7 +107,7 @@ def _flooding(sid: str) -> bool:
     return False
 
 
-async def _relay_to_whatsapp(db, conv: Conversation, phone: str, text: str) -> None:
+async def relay_to_whatsapp(db, conv: Conversation, phone: str, text: str) -> None:
     """Send a dashboard agent's reply to the customer's WhatsApp, from the workspace's own number."""
     from notify import channels
     bot = (await db.execute(select(Bot).where(Bot.bot_id == conv.bot_id))).scalars().first()
@@ -152,7 +152,7 @@ def register(socket_manager) -> None:
             _agent_sids[sid] = user_id
             _agent_rooms[sid].add(room)
             _agent_conv[sid][room] = conv.conversation_id
-            _actual[sid][room] = _socket_room(room, conv.bot_id)
+            _actual[sid][room] = socket_room(room, conv.bot_id)
         elif room.startswith("wa:"):
             return  # WhatsApp customers don't use sockets; their rooms are for the team only
         _joined[sid].add(room)
@@ -184,14 +184,16 @@ def register(socket_manager) -> None:
                         .order_by(Conversation.created_at.desc())
                     )).scalars().first()
                 if conv:
-                    db.add(Message(
+                    saved = Message(
                         conversation_id=conv.conversation_id,
                         role="assistant" if sender == "agent" else "user",
                         content=message,
-                    ))
+                    )
+                    db.add(saved)
                     await db.commit()
+                    data["id"] = saved.id  # the widget also fetches replies; the id stops it showing one twice
                     if sender == "agent" and room.startswith("wa:"):
-                        await _relay_to_whatsapp(db, conv, room[3:], message)
+                        await relay_to_whatsapp(db, conv, room[3:], message)
                     if sender != "agent" and conv.handoff_status == "pending":
                         bot = (await db.execute(select(Bot).where(Bot.bot_id == conv.bot_id))).scalars().first()
                         if bot:

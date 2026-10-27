@@ -90,7 +90,18 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(SecurityMiddleware)  # body size limits and security headers on every API response
 app.add_middleware(SitesMiddleware)  # outermost: visits to published websites are answered before the API
 
-realtime.register(SocketManager(app=app, mount_location="/socket.io", cors_allowed_origins="*"))
+def _socket_bus() -> dict:
+    """The server runs several processes, each with its own sockets: a live-chat reply sent on one must reach a
+    visitor connected to another. With REALTIME_REDIS_URL set they share messages through Redis, instantly;
+    without it the widget still picks replies up by checking every few seconds."""
+    url = os.getenv("REALTIME_REDIS_URL", "").strip()
+    if not url:
+        return {}
+    import socketio
+    return {"client_manager": socketio.AsyncRedisManager(url)}
+
+
+realtime.register(SocketManager(app=app, mount_location="/socket.io", cors_allowed_origins="*", **_socket_bus()))
 
 os.makedirs(os.path.join(_HERE, "static", "uploads"), exist_ok=True)
 app.mount("/static", StaticFiles(directory=os.path.join(_HERE, "static")), name="static")

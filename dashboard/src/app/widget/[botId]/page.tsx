@@ -90,6 +90,17 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
         setHumanMessages((prev) => (prev.some((m) => m.id === newMsg.id) ? prev : [...prev, newMsg]));
     };
 
+    // The team's replies arrive over the socket and are also fetched every few seconds (the socket can drop, or
+    // be on another server process). Each has its saved id, so it shows once; replies from an earlier chat in
+    // this session are marked seen when the chat starts, so they aren't shown as new.
+    const seenReplies = useRef<Set<string>>(new Set());
+    const repliesKnown = useRef(false);
+    const takeReply = useCallback((id: string, text: string) => {
+        if (seenReplies.current.has(id)) return;
+        seenReplies.current.add(id);
+        setHumanMessages((prev) => (prev.some((m) => m.id === id) ? prev : [...prev, { id, text, sender: "bot", timestamp: new Date() }]));
+    }, []);
+
     // ── Human handoff ──────────────────────────────────────────────
     const goHuman = useCallback(async (note?: string) => {
         setMode("human");
@@ -108,6 +119,8 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
             }).catch(() => {})));
             if (res.ok) {
                 const body = await res.json().catch(() => ({}));
+                (body.earlier || []).forEach((id: string) => seenReplies.current.add(id));
+                repliesKnown.current = true;
                 setHumanMessages((prev) => prev.length ? prev : [{
                     id: uid(), sender: "bot", timestamp: new Date(),
                     text: body.away ? body.message : (note || "We've let our team know. Someone will join this chat shortly."),
@@ -302,20 +315,47 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
             addHumanMessageSafely({ id: `system-agent-joined-${Date.now()}`, text: "A person from our team has joined the chat.", sender: "bot", timestamp: new Date() });
         });
         socket.on("message", (data: any) => {
-            if (data.sender === "agent") addHumanMessageSafely({ id: uid(), text: data.message, sender: "bot", timestamp: new Date() });
+            if (data.sender === "agent") takeReply(data.id || uid(), data.message);
         });
         return () => { socket.disconnect(); };
-    }, [apiBase, humanSession]);
+    }, [apiBase, humanSession, takeReply]);
+
+    // While talking to a person: check for the team's replies too, in case the socket missed one.
+    useEffect(() => {
+        if (mode !== "human") return;
+        let stopped = false;
+        const check = async () => {
+            if (document.visibilityState !== "visible") return;
+            try {
+                const res = await fetch(`${apiBase}/api/chat/live/${botId}/${encodeURIComponent(humanSession)}`);
+                if (!res.ok || stopped) return;
+                const { messages: replies = [] } = await res.json();
+                if (!repliesKnown.current) {  // reopened without a record of what was seen: these are old
+                    replies.forEach((r: { id: string }) => seenReplies.current.add(r.id));
+                    repliesKnown.current = true;
+                    return;
+                }
+                replies.forEach((r: { id: string; text: string }) => takeReply(r.id, r.text));
+            } catch { /* offline for a moment: the next check catches up */ }
+        };
+        check();
+        const timer = setInterval(check, 4000);
+        return () => { stopped = true; clearInterval(timer); };
+    }, [mode, apiBase, botId, humanSession, takeReply]);
 
     useEffect(() => {
         const storageKey = `nimmi_chat_history_${botId}`;
         try {
             const saved = localStorage.getItem(storageKey);
             if (saved) {
-                const { messages: savedMessages, timestamp, mode: savedMode } = JSON.parse(saved);
+                const { messages: savedMessages, timestamp, mode: savedMode, seen } = JSON.parse(saved);
                 if (Date.now() - timestamp < 24 * 60 * 60 * 1000 && savedMode === "human") {
                     const unique = (savedMessages || []).filter((m: any, i: number, all: any[]) => i === all.findIndex((x: any) => x.id === m.id));
                     setHumanMessages(unique.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) })));
+                    if (Array.isArray(seen)) {
+                        seen.forEach((id: string) => seenReplies.current.add(id));
+                        repliesKnown.current = true;
+                    }
                     setMode("human");
                 } else {
                     localStorage.removeItem(storageKey);
@@ -351,7 +391,8 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     useEffect(() => {
         if (mode === "human" && humanMessages.length > 0) {
             try {
-                localStorage.setItem(`nimmi_chat_history_${botId}`, JSON.stringify({ messages: humanMessages, timestamp: Date.now(), mode: "human" }));
+                localStorage.setItem(`nimmi_chat_history_${botId}`, JSON.stringify({
+                    messages: humanMessages, timestamp: Date.now(), mode: "human", seen: [...seenReplies.current] }));
             } catch { /* storage unavailable */ }
         }
     }, [humanMessages, mode, botId]);
@@ -378,8 +419,9 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
 
         if (mode === "human") {
             setHumanMessages((prev) => [...prev, { id: uid(), text, sender: "user", timestamp: new Date() }]);
-            // Always through the socket, so the message is stored and the team is notified.
-            if (socketRef.current?.connected) socketRef.current.emit("message", { room: humanSession, message: text, sender: "visitor" });
+            // Always through the socket, so the message is stored and the team is notified. While it's
+            // reconnecting, socket.io holds the message and sends it once connected (it used to be dropped).
+            socketRef.current?.emit("message", { room: humanSession, message: text, sender: "visitor" });
             return;
         }
 
@@ -722,6 +764,13 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                         </button>
                     )}
                 </form>
+                <p className={`text-center text-[10px] leading-none -mb-1 ${onFooter("text-stone-400", "text-white/40")}`}>
+                    Powered by{" "}
+                    <a href="https://nimmiai.in" target="_blank" rel="noopener noreferrer"
+                       className={`font-semibold underline-offset-2 hover:underline ${onFooter("text-stone-500 hover:text-stone-800", "text-white/60 hover:text-white")}`}>
+                        Nimmi
+                    </a>
+                </p>
             </footer>
 
             <style dangerouslySetInnerHTML={{ __html: `

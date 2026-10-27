@@ -24,7 +24,13 @@ type Handoff = {
     channel?: "web" | "whatsapp";
     lead?: Lead;
 };
-type Msg = { text: string; sender: "user" | "agent" | "system" | "note"; at: Date; author?: string | null };
+type Msg = { id?: string; text: string; sender: "user" | "agent" | "system" | "note"; at: Date; author?: string | null };
+type Saved = { id: string; content: string; role: string; timestamp: string | null; author: string | null };
+
+const fromSaved = (m: Saved): Msg => ({
+    id: m.id, text: m.content, author: m.author, at: m.timestamp ? new Date(m.timestamp) : new Date(),
+    sender: m.role === "user" ? "user" : m.role === "note" ? "note" : "agent",
+});
 
 const LEAD_TONE = { hot: "bad", warm: "warn", cold: "neutral" } as const;
 const isLiveSession = (s: string) => s.startsWith("widget-session-human-") || s.startsWith("wa:");
@@ -58,6 +64,25 @@ function LiveChat() {
     useEffect(() => { selectedRef.current = selected; }, [selected]);
     useEffect(() => { bottom.current?.scrollIntoView({ block: "end" }); }, [messages]);
 
+    // Messages come over the socket, from sending, and from re-checking the chat: each saved one shows once.
+    const addMsg = useCallback((m: Msg) => {
+        setMessages((prev) => (m.id && prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+    }, []);
+
+    // Re-check the open chat every few seconds: the visitor's socket can be on another server process than
+    // ours, so their messages don't always arrive live.
+    useEffect(() => {
+        if (!selected) return;
+        const timer = setInterval(async () => {
+            if (document.visibilityState !== "visible") return;
+            try {
+                const saved = await apiJson<Saved[]>(`/api/handoffs/${selected.conversation_id}/messages`);
+                if (selectedRef.current?.conversation_id === selected.conversation_id) saved.map(fromSaved).forEach(addMsg);
+            } catch { /* the next check catches up */ }
+        }, 4000);
+        return () => clearInterval(timer);
+    }, [selected, addMsg]);
+
     const load = useCallback(async () => {
         try {
             const list = await apiJson<Handoff[]>("/api/handoffs/pending");
@@ -78,18 +103,17 @@ function LiveChat() {
         const socket = liveSocket();
         if (!socket) return;
         const onHandoff = () => load();
-        const onMessage = (data: { room: string; message: string; sender: string }) => {
+        const onMessage = (data: { room: string; message: string; sender: string; id?: string }) => {
             const fromVisitor = data.sender !== "agent";
             if (selectedRef.current?.session_id === data.room) {
-                setMessages((m) => [...m, { text: data.message, sender: fromVisitor ? "user" : "agent", at: new Date() }]);
+                addMsg({ id: data.id, text: data.message, sender: fromVisitor ? "user" : "agent", at: new Date() });
             } else if (fromVisitor) {
                 setUnread((u) => ({ ...u, [data.room]: (u[data.room] || 0) + 1 }));
             }
         };
-        const onNote = (data: { conversation_id: string; content: string; author: string | null }) => {
+        const onNote = (data: { conversation_id: string; id: string; content: string; author: string | null }) => {
             if (selectedRef.current?.conversation_id === data.conversation_id) {
-                setMessages((m) => m.some((x) => x.sender === "note" && x.text === data.content && Date.now() - x.at.getTime() < 3000)
-                    ? m : [...m, { text: data.content, sender: "note", at: new Date(), author: data.author }]);
+                addMsg({ id: data.id, text: data.content, sender: "note", at: new Date(), author: data.author });
             }
         };
         socket.on("handoff_requested", onHandoff);
@@ -100,7 +124,7 @@ function LiveChat() {
             socket.off("message", onMessage);
             socket.off("note_added", onNote);
         };
-    }, [router, load]);
+    }, [router, load, addMsg]);
 
     const open = async (h: Handoff) => {
         try {
@@ -114,14 +138,8 @@ function LiveChat() {
         setMode("reply");
         liveSocket()?.emit("join", { room: h.session_id, token: getToken() });
         try {
-            const history = await apiJson<{ content: string; role: string; timestamp: string | null; author: string | null }[]>(`/api/handoffs/${h.conversation_id}/messages`);
-            setMessages([
-                ...history.map((m) => ({
-                    text: m.content, author: m.author, at: m.timestamp ? new Date(m.timestamp) : new Date(),
-                    sender: (m.role === "user" ? "user" : m.role === "note" ? "note" : "agent") as Msg["sender"],
-                })),
-                { text: "You joined the conversation", sender: "system", at: new Date() },
-            ]);
+            const history = await apiJson<Saved[]>(`/api/handoffs/${h.conversation_id}/messages`);
+            setMessages([...history.map(fromSaved), { text: "You joined the conversation", sender: "system", at: new Date() }]);
         } catch {
             setMessages([{ text: "You joined the conversation", sender: "system", at: new Date() }]);
         }
@@ -133,16 +151,23 @@ function LiveChat() {
         if (!text || !selected) return;
         if (mode === "note") {
             try {
-                const note = await apiJson<{ content: string; author: string | null }>(`/api/handoffs/${selected.conversation_id}/notes`, { method: "POST", json: { text } });
-                setMessages((m) => [...m, { text: note.content, sender: "note", at: new Date(), author: note.author }]);
+                const note = await apiJson<{ id: string; content: string; author: string | null }>(`/api/handoffs/${selected.conversation_id}/notes`, { method: "POST", json: { text } });
+                addMsg({ id: note.id, text: note.content, sender: "note", at: new Date(), author: note.author });
                 setInput("");
             } catch (e) {
                 toast((e as Error).message);
             }
             return;
         }
-        liveSocket()?.emit("message", { room: selected.session_id, message: text, sender: "agent" });
+        // Over HTTP, not the socket: it's saved and reaches the visitor even if our socket just reconnected.
         setInput("");
+        try {
+            const sent = await apiJson<{ id: string; message: string }>(`/api/handoffs/${selected.conversation_id}/reply`, { method: "POST", json: { text } });
+            addMsg({ id: sent.id, text: sent.message, sender: "agent", at: new Date() });
+        } catch (e) {
+            setInput(text);
+            toast((e as Error).message);
+        }
     };
 
     const resolve = async () => {

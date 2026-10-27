@@ -138,7 +138,9 @@ def test_live_chat_sockets_only_reach_your_own_conversations(client, make_user, 
     # The workspace's own agent can.
     run(join, "s-agent", {"room": "web-visitor-1", "token": owner.token})
     run(message, "s-agent", {"room": "web-visitor-1", "message": "Hi, how can I help?", "sender": "agent"})
-    assert fake.sent[-1][1] == {"room": "web-visitor-1", "message": "Hi, how can I help?", "sender": "agent"}
+    sent = fake.sent[-1][1]
+    assert {k: sent[k] for k in ("room", "message", "sender")} == {"room": "web-visitor-1", "message": "Hi, how can I help?", "sender": "agent"}
+    assert sent["id"]  # the saved message's id: the widget also fetches replies, and shows each once
 
     async def saved():
         async with async_session() as db:

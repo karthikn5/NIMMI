@@ -72,8 +72,8 @@ only on the owner's machines): @.claude/private-notes.md
 - Database: Supabase Postgres (also auth helpers and storage). The session pooler (port 5432) allows only 15
   clients in total: pool defaults are `DB_POOL_SIZE=2`, `DB_POOL_OVERFLOW=1`; the transaction pooler (6543) allows more.
   New nullable columns are added at startup (no migration tool); other schema changes need care.
-- Regions: Railway US West, Supabase Sydney, users in India: every DB round trip is slow (~0.2-0.75 s);
-  moving both to Singapore is recommended. Deploys happen on push to `main`.
+- Regions: Railway and Supabase both in Singapore since 28 Oct 2026 (before: US West and Sydney, ~0.2-0.75 s per
+  DB round trip; the widget config now answers in ~0.13-0.15 s). Users in India. Deploys happen on push to `main`.
 - DNS at GoDaddy: `api` CNAME to Railway; Google Workspace mail on nimmiai.in (MX smtp.google.com, one SPF record).
 - Transactional email via Resend (`notify/email.py`), SMTP fallback.
 
@@ -109,9 +109,12 @@ only on the owner's machines): @.claude/private-notes.md
   (8k tokens/min/model) is the main cause of slow or stuck turns; the paid tier fixes it. Kdbot's prompt is
   ~9,100 characters per answer (measured Oct 2026). A model with no words after 3 s rests 15 s (`SlowModel`);
   Gemini on a call gets an 8 s limit, not the chat's 30 s.
-  `reply_sentences` splits sentences (also "?word" without a space, never at "..."), ends the turn at a question,
-  and drops filler sounds/empty reactions ("Hmm,", "ஓ, அப்படியா!") in `_clean_for_speech`. The prompt must never
-  give filler examples: models copy them into every reply (seen on real calls, Oct 2026).
+  `reply_sentences` splits sentences (also "?word" without a space or a glued-on "[END_CALL]", never at "..."),
+  ends the turn at a question, and drops filler sounds/empty reactions ("Hmm,", "ஓ, அப்படியா!") in
+  `_clean_for_speech`. The prompt must never give filler examples: models copy them into every reply (seen on real
+  calls, Oct 2026). A question never ends or transfers the call: the gpt-oss fallbacks glue `[END_CALL]` onto
+  questions ("என்ன?[END_CALL]"), which hung up live calls mid-conversation (Oct 2026). The prompt says exactly when
+  to write the markers; "write [END_CALL] on its own" was read as "after every reply".
 - Call behaviour (`pipeline.py`): speaks first the moment the call connects (opening audio cached in memory and
   in `VOICE_OPENINGS_DIR`, made ahead while the phone rings / when the agent is saved); the opening can't be
   interrupted and a "hello" over it is ignored; barge-in only after the caller keeps talking `BARGE_IN_SEC` (1 s;
@@ -123,17 +126,30 @@ only on the owner's machines): @.claude/private-notes.md
   number check for 10-digit Indian numbers; end phrases and opt-out (DNC); silence reminders; "one moment" once
   if an answer takes 3 s, the fallback apology at 15 s; one sentence at a time on the voice connection
   (`self.voice` lock, `aclosing`); every speech step has a time limit (`TTS_FIRST_AUDIO_SEC`, gaps
-  `TTS_CHUNK_GAP_SEC`, then REST) and idle voices are pinged (Sarvam closes them after a minute); if the speech
-  service fails or drops, the call ends within ~2 s, is logged "failed" and isn't billed.
+  `TTS_CHUNK_GAP_SEC`, then REST) and idle voices are pinged (Sarvam closes them after a minute); a recognizer
+  connection that drops is replaced and the call goes on (`_listen`; more than 3 drops a minute, or none reachable,
+  end it with an apology); if the voice fails, the call ends within ~2 s. Both are logged "failed" (reason in the
+  transcript) and aren't billed. A bug handling one sentence is logged and the call goes on.
+- Sound around the caller (`voice/levels.py`): Sarvam takes any speech-like sound for speech, however faint. On real
+  calls the caller's own lines were -12 to -23 dBFS at their loudest, the room's (transcribed as "नमस्कार", "this
+  friend.", "ஆ") -35 to -52. A turn whose loud part (90th percentile of 20 ms levels) is 12+ dB below the caller's
+  usual level is the room: its transcript is ignored, and it can't stop the agent (that needs 0.3 s of their voice in
+  the last 1.6 s). Talk in the room keeps Sarvam from ever ending a turn (no transcript at all under a TV), so the
+  pump `flush`es it (`flush_signal=true`): 0.9 s after the caller's voice stops, and where they start after only the
+  room (that part is ignored). Before their level is known, a voice is >= -24 dBFS. A lone filler ("so", "uh", "ஆ")
+  isn't answered. Sarvam's VAD frame is 64 ms at 8 kHz; it ends a short sound ~0.6 s after it stops.
 - Python's `\w` doesn't match Indic vowel signs: split words with `llm.plain_words`, not `[^\w]` regexes.
 - Minutes: `voice_wallets` (plan minutes + top-up minutes, `metering.py`); every connected call bills at least a minute.
 - Outbound: `scheduler.py` dials call-backs and campaigns; answering-machine detection only when the agent's
   voicemail action isn't "off" (it adds 2-4 s before the call connects).
 - Logs to read: "opening started X s after the call connected", "reply timing: ...", "Voice reply from <model>",
   "the caller kept talking over the agent", "that sounded like <lang>", "the answer is slow; saying one moment",
-  "Streaming TTS failed (...); using REST".
+  "Streaming TTS failed (...); using REST", "ignored a sound from around the caller", "finishing their turn now",
+  "sound over the agent, far quieter than the caller's voice"; the call's "diagnostics" line counts both.
 - Tests for these real-call problems: `tests/test_voice_reliability.py`.
-- Simulated calls without a phone: `dev-scripts/voice/lang_call.py` (git-ignored local harnesses; see `dev-scripts/README.md`).
+- Simulated calls without a phone: `dev-scripts/voice/lang_call.py`, `noisy_call.py` (a TV in the caller's room);
+  `replay_caller.py` replays a real recording's caller side through Sarvam (git-ignored local harnesses; see
+  `dev-scripts/README.md`).
 
 ## Testing conventions
 

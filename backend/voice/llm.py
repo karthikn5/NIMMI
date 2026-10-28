@@ -76,9 +76,10 @@ FALLBACK_ERRORS = {
 }
 
 # A sentence ends at . ! ? or । followed by a space, or at ! ? । followed straight by a letter (models
-# writing Tamil or Hindi sometimes leave out the space: "என்ன?ஹ்ம்ம்"). "1.5" and "nimmiai.in" don't split, nor
+# writing Tamil or Hindi sometimes leave out the space: "என்ன?ஹ்ம்ம்"), or straight before a [TRANSFER] or
+# [END_CALL] marker ("என்ன?[END_CALL]", as gpt-oss writes it). "1.5" and "nimmiai.in" don't split, nor
 # does an ellipsis ("Hmm... let me check" is one sentence, not a filler spoken on its own).
-_SENTENCE_END = re.compile(r"(?<=[.!?।])(?<!\.\.)\s+|(?<=[!?।])(?=[^\W\d_])")
+_SENTENCE_END = re.compile(r"(?<=[.!?।])(?<!\.\.)\s+|(?<=[!?।])(?=[^\W\d_])|(?<=[.!?।])(?=\[)")
 
 # Measured (Oct 2026): Groq answers in 0.1-0.5 s; Gemini Flash-Lite over REST in ~1.8 s; the old
 # google-generativeai SDK took ~30 s, so it isn't used. Each Groq model has its own per-minute
@@ -182,8 +183,9 @@ def system_prompt(agent: VoiceAgent, bot: Bot, knowledge: str, direction: str, c
     script = ("" if lang_code == "en-IN" else
               f"\n- Write {lang} words in {lang} script, never in English letters: the voice reads {lang} script."
               " English words such as course names or 'fees' can stay in English.")
-    transfer = (f"If {agent.transfer_when or 'the caller asks for a person'}, say one short sentence that you'll connect them, "
-                f"then write {TRANSFER} on its own." if agent.transfer_enabled and agent.transfer_number and not after_hours else
+    transfer = (f"If {agent.transfer_when or 'the caller asks for a person'}, say one short sentence that you'll connect them "
+                f"and end that reply with {TRANSFER}. Never write {TRANSFER} in any other reply."
+                if agent.transfer_enabled and agent.transfer_number and not after_hours else
                 "If the caller asks for a person, offer to take their name and number so the team can call back.")
     if after_hours:
         transfer += f" The team is offline right now and back {after_hours}; say so if they ask for a person."
@@ -227,7 +229,8 @@ What you know:
 
 Ending and handing over:
 - {transfer}
-- When the caller is done, say a short, warm goodbye, then write {END_CALL} on its own.
+- Only when the caller has said goodbye, or that they need nothing more: say a short, warm goodbye and end that
+  reply with {END_CALL}, which hangs up. Never write {END_CALL} in any other reply, and never after a question.
 
 {bot.system_prompt or ''}
 
@@ -446,6 +449,11 @@ async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user
                         return  # a question ends the turn: the caller answers it, not the model
             buffer = parts[-1]
         tail = _clean_for_speech(buffer)
+        if control and tail.endswith("?"):
+            # The models (gpt-oss most) add the marker to questions too: hanging up on "What's your number?"
+            # cut live calls mid-conversation. A question is answered first, as everywhere else.
+            logger.warning(f"The model wrote {control} after a question; waiting for the answer instead")
+            control = None
         if tail or control:
             yield tail, control
     finally:

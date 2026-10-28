@@ -96,6 +96,8 @@ class SttStream:
             "vad_signals": "true",
             # Normal sensitivity keeps a whole sentence as one turn; high splits at comma pauses.
             "high_vad_sensitivity": os.getenv("SARVAM_HIGH_VAD_SENSITIVITY", "false"),
+            # flush() finishes the turn it's hearing at once: talk in the caller's room can keep it from ending.
+            "flush_signal": "true",
         }
         self._ws = await _connect_ws(f"{STT_WS_URL}?{urlencode(params)}")
         return self

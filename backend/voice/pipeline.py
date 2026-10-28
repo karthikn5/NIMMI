@@ -29,6 +29,7 @@ import assist
 from notify.events import call_completed, fire_and_forget
 from phone import extract_contact
 from voice import ambience, llm, metering, recording, sarvam, scheduler
+from voice.levels import CallerLevels
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,16 @@ HOLD_PHRASES = {
     "od-IN": "ଗୋଟିଏ ମିନିଟ୍।",
 }
 HOLD_AFTER_SEC = float(os.getenv("VOICE_HOLD_AFTER_SEC", "3"))
+# Said when the call can't go on (the speech recognizer keeps failing), instead of hanging up in silence.
+TROUBLE_REPLIES = {
+    "en-IN": "Sorry, I'm having trouble hearing you on this line, so I'll end the call here. Please try again in a few minutes.",
+    "ta-IN": "மன்னிக்கவும், இந்த லைனில் உங்கள் குரல் சரியாக கேட்கவில்லை. சில நிமிடங்களில் மீண்டும் முயற்சிக்கவும்.",
+    "hi-IN": "माफ़ कीजिए, इस लाइन पर आपकी आवाज़ ठीक से नहीं आ रही है। कृपया कुछ मिनट बाद फिर से कोशिश करें।",
+}
+# The speech recognizer's connection can drop mid-call (a network blip, or the service closing it). Listening goes
+# on over a fresh connection; more drops than this within the window, or no connection at all, end the call.
+STT_RETRIES = 3
+STT_RETRY_WINDOW_SEC = 60.0
 # An answer that hasn't started by now isn't coming (every AI service failed or stalled): the caller is asked to
 # say it again, rather than left in silence.
 REPLY_GIVE_UP_SEC = float(os.getenv("VOICE_REPLY_GIVE_UP_SEC", "15"))
@@ -147,6 +158,14 @@ REPLY_GIVE_UP_SEC = float(os.getenv("VOICE_REPLY_GIVE_UP_SEC", "15"))
 # The agent stops for the caller once they've kept talking this long (a short sound ends sooner), or as soon as
 # words that need an answer come through.
 BARGE_IN_SEC = float(os.getenv("VOICE_BARGE_IN_SEC", "1.0"))
+# The room around the caller (a TV, people nearby, traffic) is speech to the recognizer too; their own voice is much
+# louder (voice/levels.py). For the turn the recognizer is hearing:
+TURN_PRE_SEC = 0.6        # it signals speech ~0.3 s after the sound starts; a turn's audio begins this much earlier
+END_FLUSH_SEC = 0.9       # the caller's voice gone this long, while it still hears speech (the room): finish the turn
+ONSET_FLUSH_SEC = 1.5     # a turn that has been only the room this long is cut when the caller starts talking, so
+                          # the room's words aren't glued to theirs
+BARGE_IN_VOICE_SEC = 0.3  # of the caller's own voice, for talking over the agent to stop it
+VOICE_GONE_SEC = 2.0      # it still hears speech, but their voice stopped this long ago: they aren't talking
 # What people say while listening ("mm", "okay", "சரி", "हाँ जी"): no reason to stop the agent mid-answer.
 BACKCHANNEL_WORDS = {
     "ok", "okay", "k", "hmm", "hm", "mm", "mmm", "mhm", "uh", "huh", "yes", "yeah", "yep", "ya", "right", "fine",
@@ -226,6 +245,19 @@ def switch_now(text: str, language: str, probability: Optional[float]) -> bool:
 def _backchannel(text: str) -> bool:
     words = llm.plain_words(text)
     return 0 < len(words) <= 3 and all(w in BACKCHANNEL_WORDS for w in words)
+
+
+# Sounds people make while they think or before they start ("so", "uh", "ஆ", "वो"). Answered on their own, they got
+# "Could you please tell me what you need help with?" while the caller was still about to say it.
+FILLER_WORDS = {
+    "so", "uh", "uhh", "um", "umm", "uhm", "hmm", "hm", "er", "erm", "ah", "aah", "aa", "eh",
+    "ஆ", "அ", "ஏ", "ஆங்", "வந்து", "அது", "अ", "आ", "उम", "उम्म", "वो", "मतलब", "हम्म",
+}
+
+
+def _just_filler(text: str) -> bool:
+    words = llm.plain_words(text)
+    return 0 < len(words) <= 3 and all(w in FILLER_WORDS for w in words)
 
 
 def _echoes(text: str, said: str) -> bool:
@@ -399,6 +431,18 @@ class CallSession:
         self.lang = setup.agent.language or "en-IN"
         self.follow_language = setup.agent.follow_caller_language is not False
         self.lang_pending: Optional[str] = None  # heard once, not clearly enough to switch yet
+        self.stt = None                            # the recognizer connection in use; None while reconnecting
+        self.stt_problem: Optional[str] = None     # why the current one is being replaced
+        self.levels = CallerLevels(self.rate)
+        # The turn the recognizer is hearing now (between its speech start and end), followed on our side.
+        self.turn_began: Optional[float] = None
+        self.turn_voice_at: Optional[float] = None  # the caller's own voice last heard in it
+        self.turn_cut_at: Optional[float] = None    # cut there: only the room had been heard when the caller started
+        self.turn_flushed = False
+        self.voice_run = 0
+        self.turn_window: Optional[tuple] = None    # the turn just finished: since, until, when it ended, was it cut
+        self.background_ignored = 0
+        self.flushes = 0
         self.barge_in: Optional[asyncio.Task] = None  # the caller started talking over the agent: stop if they go on
         self.recent_speech: deque = deque(maxlen=3)  # the agent's latest sentences (to recognize its own echo)
         self.asking = False  # the sentence being spoken is a question (a "yes" over it is the answer)
@@ -554,6 +598,9 @@ class CallSession:
     def _fallback_reply(self) -> str:
         return llm.FALLBACK_ERRORS.get(self._lang(), llm.FALLBACK_ERRORS["en-IN"])
 
+    def _trouble_reply(self) -> str:
+        return TROUBLE_REPLIES.get(self._lang(), TROUBLE_REPLIES["en-IN"])
+
     def _reminder(self, count: int) -> str:
         reminders = REMINDERS_BY_LANG.get(self._lang(), REMINDERS_BY_LANG["en-IN"])
         return reminders[(count - 1) % len(reminders)]
@@ -597,14 +644,19 @@ class CallSession:
         except Exception as e:
             logger.debug(f"hangup: {e}")
 
-    async def _voice_failed(self, detail: str) -> None:
+    async def _voice_failed(self, detail: str, apologize: bool = False) -> None:
         """The speech service failed (down, unreachable, out of credits). End the call now rather than leave
-        the caller in silence; it's logged as failed, and not billed unless the caller was helped."""
+        the caller in silence; it's logged as failed, and not billed unless the caller was helped. The reason
+        goes in the transcript (it shows on the Calls page). `apologize`: the voice still works (it's the
+        listening that failed), so the caller hears why the call is ending instead of it going quiet."""
         logger.error(f"Call {self.call_id}: {detail}; ending the call")
         if not self.failure:
             self.failure = "The voice service was unavailable, so the call was ended."
+            self._log("system", f"Call ended early because of a technical problem: {detail}")
             await self.t.event({"type": "error", "code": "speech",
                                 "message": "The voice service isn't available right now. Please try again in a few minutes."})
+            if apologize:
+                await self.speak(self._trouble_reply())
         await self.end()
 
     async def _hush(self) -> None:
@@ -631,6 +683,9 @@ class CallSession:
             if self.barge_in is asyncio.current_task():
                 self.barge_in = None  # decided: a speech_end arriving now mustn't stop it half done
             if self.caller_talking_since is not None and self.speaking:
+                if self._room_only(time.monotonic()):
+                    logger.info(f"Call {self.call_id}: sound over the agent, far quieter than the caller's voice; carrying on")
+                    return
                 logger.info(f"Call {self.call_id}: the caller kept talking over the agent; stopping to listen")
                 if self.reply_task and not self.reply_task.done():
                     self.reply_task.cancel()
@@ -653,6 +708,9 @@ class CallSession:
         # Not while it asks something: a caller repeating the number it's reading back is answering.
         if mid_answer and not self.asking and _echoes(text, " ".join(self.recent_speech)):
             logger.info(f"Call {self.call_id}: ignored the agent's own voice coming back on the line: {text[:80]!r}")
+            return
+        if _just_filler(text):
+            logger.info(f"Call {self.call_id}: {text!r} on its own isn't something to answer; waiting for the rest")
             return
         self.caller_spoke = True
         self.last_heard = time.monotonic()
@@ -824,7 +882,9 @@ class CallSession:
                 pass  # already listed
 
     # ── loops ────────────────────────────────────────────────
-    async def _pump_audio(self, stt) -> None:
+    async def _pump_audio(self) -> None:
+        """The caller's audio, to the recording and to whichever recognizer connection is current. Runs for the
+        whole call: a recognizer that drops only loses the audio sent while it reconnects."""
         pending = bytearray()
         while not self.ended.is_set():
             pcm = await self.t.receive()
@@ -838,30 +898,183 @@ class CallSession:
             samples.frombytes(pcm[: len(pcm) - len(pcm) % 2])
             if samples:
                 self.caller_peak = max(self.caller_peak, max(abs(s) for s in samples))
-            if not self.stt_batch:
-                await stt.send(pcm)
+            now = time.monotonic()
+            cut = self._watch_turn(self.levels.add(pcm, now), now)
+            stt = self.stt
+            if stt is None:
+                pending.clear()  # reconnecting
                 continue
-            pending.extend(pcm)
-            if len(pending) >= self.stt_batch:
-                await stt.send(bytes(pending))
-                pending.clear()
+            try:
+                if cut is not None:
+                    if cut == "before" and pending:
+                        await stt.send(bytes(pending))  # the room's audio goes with the part cut off
+                        pending.clear()
+                    await self._finish_turn(stt, cut)
+                if self.stt_batch:
+                    pending.extend(pcm)
+                    if len(pending) < self.stt_batch:
+                        continue
+                    chunk = bytes(pending)
+                    pending.clear()
+                else:
+                    chunk = pcm
+                await stt.send(chunk)
+            except Exception as e:
+                self._stt_lost(stt, f"sending audio to it failed ({type(e).__name__}: {e})")
+
+    # ── the caller's voice and the room ─────────────────────────
+    def _turn_started(self, now: float) -> None:
+        self.turn_began, self.turn_cut_at, self.turn_flushed = now, None, False
+        self.turn_voice_at, self.voice_run = None, 0
+        self._follow_voice([level for t, level in self.levels.frames if t >= now - TURN_PRE_SEC], now)
+
+    def _turn_ended(self, now: float) -> None:
+        if self.turn_began is not None:
+            self.turn_window = (self.turn_began - TURN_PRE_SEC, self.turn_cut_at or now, now, self.turn_cut_at is not None)
+        self.turn_began = None
+
+    def _heard_window(self, now: float) -> tuple[float, float, bool]:
+        """The stretch of the caller's audio a transcript is about, and whether it was the room's part of a turn,
+        cut off when the caller started talking."""
+        if self.turn_began is not None:
+            return self.turn_began - TURN_PRE_SEC, self.turn_cut_at or now, False
+        window, self.turn_window = self.turn_window, None
+        if window is not None and now - window[2] < 3.0:
+            return window[0], window[1], window[3]
+        return now - 8.0, now, False
+
+    def _follow_voice(self, levels: list[float], now: float) -> bool:
+        """Follow the caller's own voice through the current turn; True when it has just started in it."""
+        started = False
+        for level in levels:
+            if self.levels.is_voice(level):
+                self.voice_run += 1
+                if self.voice_run >= 2:  # one loud 20 ms is a click, not a voice
+                    started = started or self.turn_voice_at is None
+                    self.turn_voice_at = now
+            else:
+                self.voice_run = 0
+        return started
+
+    def _watch_turn(self, levels: list[float], now: float) -> Optional[str]:
+        """Follow the caller's voice through the turn the recognizer is hearing, and say when it should finish the
+        turn now: talk or noise in the room keeps it hearing speech after the caller has stopped (under a TV it never
+        ended the turn, so their question was never answered). "before": cut the turn ahead of this audio, where the
+        caller starts after only the room had been heard; "after": they finished a while ago."""
+        if self.turn_began is None:
+            return None
+        started = self._follow_voice(levels, now)
+        if (started and self.speaking and self.s.agent.allow_interruptions and self.barge_in is None
+                and now >= self.greeting_until):
+            self.barge_in = asyncio.create_task(self._barge_in_after(BARGE_IN_SEC))  # the room had opened the turn
+        if self.turn_flushed or not hasattr(self.stt, "flush"):
+            return None
+        if started and now - self.turn_began >= ONSET_FLUSH_SEC:
+            self.turn_flushed, self.turn_cut_at, self.turn_voice_at = True, now, None
+            return "before"
+        if self.turn_voice_at is not None and now - self.turn_voice_at >= END_FLUSH_SEC:
+            self.turn_flushed = True
+            return "after"
+        return None
+
+    async def _finish_turn(self, stt, cut: str) -> None:
+        self.flushes += 1
+        logger.info(f"Call {self.call_id}: the recognizer still hears speech, but " + (
+            "the caller just started after only the room: cutting the room's part off" if cut == "before" else
+            f"the caller stopped {END_FLUSH_SEC:.1f}s ago: finishing their turn now"))
+        await stt.flush()
+
+    def _room_only(self, now: float) -> bool:
+        """The recognizer hears speech, but hardly any of it is the caller's own voice (once their level is known)."""
+        return self.turn_began is not None and self.levels.little_voice(now - BARGE_IN_SEC - TURN_PRE_SEC, now,
+                                                                        BARGE_IN_VOICE_SEC)
+
+    def _voice_gone(self, now: float) -> bool:
+        """The recognizer still hears speech, but the caller's own voice stopped a while ago: the room is talking."""
+        return self.turn_began is not None and self.levels.little_voice(now - VOICE_GONE_SEC, now, 0.1)
+
+    def _stt_lost(self, stt, reason: str) -> None:
+        """Drop this recognizer connection; _listen notices and opens another."""
+        if self.stt is not stt:
+            return
+        self.stt, self.stt_problem = None, reason
+        asyncio.ensure_future(self._close_stt(stt))
+
+    @staticmethod
+    async def _close_stt(stt) -> None:
+        try:
+            await stt.__aexit__(None, None, None)
+        except Exception:
+            pass
+
+    async def _listen(self, language: str) -> None:
+        """Hear the caller for the whole call. A recognizer connection that drops is replaced and the call goes on
+        (a drop used to end the call in silence). Repeated drops, or a speech service that can't be reached, end
+        the call with the caller told why."""
+        drops: list[float] = []
+        while not self.ended.is_set():
+            try:
+                stt = await self.stt_factory(language, self.rate, bool(self.s.agent.understand_code_mixed)).__aenter__()
+            except Exception as e:
+                await self._voice_failed(f"couldn't connect to the speech recognizer ({type(e).__name__}: {e})",
+                                         apologize=True)
+                return
+            self.stt, self.stt_problem = stt, None
+            try:
+                await self._consume_stt(stt)
+                reason = self.stt_problem or "it closed the connection"
+            except Exception as e:
+                reason = f"its connection failed ({type(e).__name__}: {e})"
+            finally:
+                if self.stt is stt:
+                    self.stt = None
+                await self._close_stt(stt)
+            if self.ended.is_set():
+                return
+            self.caller_talking_since = self.turn_began = None  # whatever they were saying went with that connection
+            self._cancel_barge_in()
+            now = time.monotonic()
+            drops = [t for t in drops if now - t < STT_RETRY_WINDOW_SEC] + [now]
+            if len(drops) > STT_RETRIES:
+                await self._voice_failed(f"the speech recognizer kept dropping ({reason})", apologize=True)
+                return
+            logger.warning(f"Call {self.call_id}: the speech recognizer dropped ({reason}); reconnecting")
+            self._log("system", "Speech recognition dropped for a moment and was reconnected")
+            await asyncio.sleep(0.2 * len(drops))
 
     async def _consume_stt(self, stt) -> None:
         async for ev in stt.events():
             if ev.kind in self.stt_events:
                 self.stt_events[ev.kind] += 1
-            if ev.kind == "speech_start":
-                await self.on_speech_start()
-            elif ev.kind == "speech_end":
-                self.caller_talking_since = None
-                self.last_heard = self.speech_ended_at = time.monotonic()
-                self._cancel_barge_in()  # a short sound (a cough, "mm"): the agent carries on
-            elif ev.kind == "transcript":
-                await self.on_caller_text(ev.text, getattr(ev, "language", None), getattr(ev, "probability", None))
-            elif ev.kind == "error":
-                logger.warning(f"STT error: {ev.text}")
+            try:
+                await self._on_stt_event(ev)
+            except Exception:  # a bug handling one sentence mustn't end the call, nor drop a working connection
+                logger.exception(f"Call {self.call_id}: handling what the recognizer sent ({ev.kind}) failed")
             if self.ended.is_set():
                 return
+
+    async def _on_stt_event(self, ev) -> None:
+        if ev.kind == "speech_start":
+            self._turn_started(time.monotonic())
+            await self.on_speech_start()
+        elif ev.kind == "speech_end":
+            self._turn_ended(time.monotonic())
+            self.caller_talking_since = None
+            self.last_heard = self.speech_ended_at = time.monotonic()
+            self._cancel_barge_in()  # a short sound (a cough, "mm"): the agent carries on
+        elif ev.kind == "transcript":
+            since, until, cut = self._heard_window(time.monotonic())
+            if cut or self.levels.background(since, until):
+                self.background_ignored += 1
+                why = ("the room, before the caller started talking" if cut else
+                       f"far quieter than the caller ({self.levels.loud_level(since, until):.0f} dB; their voice "
+                       f"{self.levels.voice:.0f} dB)")
+                logger.info(f"Call {self.call_id}: ignored a sound from around the caller, {why}: {ev.text[:80]!r}")
+                return
+            self.levels.heard_turn(since, until)
+            await self.on_caller_text(ev.text, getattr(ev, "language", None), getattr(ev, "probability", None))
+        elif ev.kind == "error":
+            logger.warning(f"STT error: {ev.text}")
 
     async def _watchdog(self) -> None:
         agent = self.s.agent
@@ -869,7 +1082,10 @@ class CallSession:
         silence = max(3, agent.silence_timeout_sec or 8)
         while not self.ended.is_set():
             await asyncio.sleep(0.5)
-            await self._keep_voices_warm()
+            try:
+                await self._keep_voices_warm()
+            except Exception as e:  # a keep-alive is a nicety; it must never take the call down
+                logger.warning(f"Call {self.call_id}: keeping the voice connection open failed: {e}")
             if self._elapsed() >= limit:
                 if self.reply_task and not self.reply_task.done():
                     self.reply_task.cancel()  # the time-limit notice replaces whatever was being said
@@ -880,7 +1096,8 @@ class CallSession:
             busy = (not self.greeted.is_set() or self.speaking
                     or (self.reply_task is not None and not self.reply_task.done()))
             # Someone talking for a long while (spelling an address, explaining a problem) isn't silence.
-            talking = self.caller_talking_since is not None and time.monotonic() - self.caller_talking_since < 60
+            talking = (self.caller_talking_since is not None and time.monotonic() - self.caller_talking_since < 60
+                       and not self._voice_gone(time.monotonic()))
             if busy or talking:
                 continue
             quiet_for = time.monotonic() - max(self.last_heard, self.speaking_until)
@@ -1030,16 +1247,13 @@ class CallSession:
             self.knowledge_task = asyncio.create_task(llm.call_knowledge(self.s.bot))  # once, for the whole call
         # Following the caller's language: let the recognizer detect it ("unknown") instead of assuming ours.
         listen_in = "unknown" if self.follow_language else self.s.agent.language
-        stt_cm = self.stt_factory(listen_in, self.rate, bool(self.s.agent.understand_code_mixed))
-        stt = None
         try:
-            stt = await stt_cm.__aenter__()
-            essential = [asyncio.create_task(self._pump_audio(stt)), asyncio.create_task(self._consume_stt(stt)),
+            essential = [asyncio.create_task(self._pump_audio()), asyncio.create_task(self._listen(listen_in)),
                          asyncio.create_task(self._watchdog())]
             tasks += essential
             await self._until_ended(essential)
         except Exception as e:
-            logger.error(f"Call {self.call_id} failed: {e}")
+            logger.exception(f"Call {self.call_id} failed: {e}")
             self.failure = str(e)[:300]
             await self.t.event({"type": "error", "code": "engine", "message": "The voice engine had a problem."})
             self.ended.set()
@@ -1048,19 +1262,17 @@ class CallSession:
             for task in tasks + extra:
                 task.cancel()
             await asyncio.gather(*tasks, *extra, return_exceptions=True)
-            if stt is not None:
-                try:
-                    await stt_cm.__aexit__(None, None, None)
-                except Exception:
-                    pass
+            if self.stt is not None:
+                await self._close_stt(self.stt)
+                self.stt = None
             await self._close_voices()
             await self._finish()
         return self.call_id
 
     async def _until_ended(self, essential: list[asyncio.Task]) -> None:
-        """Wait for the call to end. The audio pump, the recognizer and the watchdog run for the whole call;
-        if one stops early (the speech service dropped its connection, say), the call is ended as failed.
-        Otherwise nothing would be left to notice the caller hang up, and the call would never finish."""
+        """Wait for the call to end. The audio pump, the listening and the watchdog run for the whole call (the
+        listening survives recognizer drops by itself). If one still stops early, the call is ended as failed;
+        otherwise nothing would be left to notice the caller hang up, and the call would never finish."""
         ended = asyncio.create_task(self.ended.wait())
         try:
             done, _ = await asyncio.wait([ended, *essential], return_when=asyncio.FIRST_COMPLETED)
@@ -1069,6 +1281,8 @@ class CallSession:
         if not self.ended.is_set():
             stopped = next(t for t in done if t is not ended)
             error = None if stopped.cancelled() else stopped.exception()
+            if error is not None:  # the full error in the server log, to find the cause
+                logger.error(f"Call {self.call_id}: {stopped.get_coro().__name__} failed", exc_info=error)
             await self._voice_failed(f"{stopped.get_coro().__name__} stopped ({error or 'connection closed'})")
 
     async def _leave_voicemail(self) -> Optional[str]:
@@ -1097,7 +1311,8 @@ class CallSession:
         duration = round(exact)
         heard_secs = self.caller_bytes / 2 / self.rate
         logger.info(f"Call {self.call_id} diagnostics: {heard_secs:.1f}s of caller audio, peak level "
-                    f"{self.caller_peak}/32767, recogniser events {self.stt_events}")
+                    f"{self.caller_peak}/32767, recogniser events {self.stt_events}, {self.background_ignored} sounds "
+                    f"from around the caller ignored, {self.flushes} turns finished early")
         outcome, summary, fields = "answered", "", {}
         successful, sentiment = None, None
         if self.s.voicemail:

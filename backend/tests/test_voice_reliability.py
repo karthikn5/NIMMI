@@ -427,3 +427,346 @@ def test_a_sentence_cut_off_before_it_was_heard_isnt_remembered_as_said(run, mak
 
     assert run(scenario) == [{"role": "user", "content": "What are the fees?"},
                              {"role": "assistant", "content": "The fees are one lakh."}]
+
+
+# ─── the call hanging up on its own ───────────────────────────────
+# Live calls hung up mid-conversation, a second after the agent asked something ("Karthik, what's your 10-digit
+# mobile number?"). The models that answer while the main one is rate-limited (gpt-oss) add [END_CALL] to
+# questions, glued on ("என்ன?[END_CALL]"), and the call hung up as soon as the question had been said.
+from voice.pipeline import GOODBYES as _GOODBYES, TROUBLE_REPLIES  # noqa: E402
+from tests.test_voice_quality import DroppedRecognizer, _logged  # noqa: E402
+
+
+def _controls(monkeypatch, raw):
+    """What a call gets when the model writes `raw` (in small pieces, as it streams)."""
+    def model(bot, prompt, history, text):
+        for i in range(0, len(raw), 7):
+            yield raw[i:i + 7]
+    monkeypatch.setattr(llm, "stream_reply", model)
+    agent = llm.VoiceAgent(language="ta-IN", assistant_name="Nimmi", company_name="Kdbot", greeting="")
+
+    async def collect():
+        return [x async for x in llm.reply_sentences(llm.Bot(bot_name="Desk"), agent, [], "என் பேர் Karthik",
+                                                     "outbound", None, knowledge="")]
+    return asyncio.run(collect())
+
+
+def test_a_question_never_hangs_up(monkeypatch):
+    # The first two are what gpt-oss-20b and gpt-oss-120b wrote, replaying a cut call's last turn (Oct 2026).
+    assert _controls(monkeypatch, "கார்த்திக் அவர்களின் email முகவரி என்ன?[END_CALL]") == [
+        ("கார்த்திக் அவர்களின் email முகவரி என்ன?", None)]
+    assert _controls(monkeypatch, "நன்றி Karthik. உங்கள் email address-ஐ சொல்ல முடியுமா?[END_CALL]") == [
+        ("நன்றி Karthik.", None), ("உங்கள் email address-ஐ சொல்ல முடியுமா?", None)]
+    assert _controls(monkeypatch, "[END_CALL] Could you repeat the number slowly?") == [
+        ("Could you repeat the number slowly?", None)]
+    assert _controls(monkeypatch, "Shall I connect you?[TRANSFER]") == [("Shall I connect you?", None)]
+
+
+def test_a_goodbye_still_hangs_up(monkeypatch):
+    for raw in ("Thank you, Karthik. Have a great day![END_CALL]", "Thank you, Karthik. Have a great day! [END_CALL]",
+                "நன்றி, Karthik. நல்ல நாளாக அமையட்டும்.[END_CALL]"):
+        said = _controls(monkeypatch, raw)
+        assert said[-1][1] == llm.END_CALL and all(c is None for _, c in said[:-1]), raw
+        assert all("[" not in s for s, _ in said), raw  # the marker is never spoken
+
+
+def test_the_model_is_told_exactly_when_to_hang_up():
+    agent = llm.VoiceAgent(language="en-IN", assistant_name="Nimmi", company_name="Kdbot", greeting="",
+                           transfer_enabled=True, transfer_number="+919876543210")
+    prompt = llm.system_prompt(agent, llm.Bot(bot_name="Desk"), "", "inbound", None)
+    assert "on its own" not in prompt  # "then write [END_CALL] on its own": read as "after every answer"
+    assert f"Never write {llm.END_CALL} in any other reply, and never after a question" in prompt
+    assert f"Never write {llm.TRANSFER} in any other reply" in prompt
+
+
+async def _whole_call(u, bot, factory, replier, frames=30, tune=None):
+    t = FakeTransport()
+    session = CallSession(await _setup(u.id, bot), t, stt_factory=factory, tts=fake_tts, replier=replier,
+                          summarizer=fake_summary)
+    if tune:
+        tune(session)
+
+    async def feed():
+        for _ in range(frames):
+            await t.inbox.put(b"\x00\x00" * 160)
+            await asyncio.sleep(0.05)
+    feeder = asyncio.create_task(feed())
+    call_id = await asyncio.wait_for(session.run(), timeout=10)
+    feeder.cancel()
+    return t, await _logged(call_id)
+
+
+def test_the_call_stays_up_after_the_agent_asks_for_the_number(run, make_user, monkeypatch):
+    """The whole way, with the model's own words: the question is asked, the line stays open, the caller answers."""
+    u = make_user()
+    bot = u.bot()
+    written = iter(["கார்த்திக் அவர்களின் 10 இலக்க மொபைல் எண் என்ன?[END_CALL]",
+                    "நன்றி, Karthik. நல்ல நாளாக அமையட்டும்.[END_CALL]"])
+
+    def model(bot, prompt, history, text):
+        yield next(written)
+
+    async def no_knowledge(bot):
+        return ""
+    monkeypatch.setattr(llm, "stream_reply", model)
+    monkeypatch.setattr(llm, "call_knowledge", no_knowledge)
+    monkeypatch.setattr(llm, "warm_up", lambda: None)
+    heard = [Ev("transcript", "என் பேர் Karthik")] + [Ev("pause")] * 12 + [Ev("transcript", "98765 43210")]
+    t, log = run(lambda: _whole_call(u, bot, lambda *a: FakeStt(heard), llm.reply_sentences))
+    said = t.said()
+    assert "கார்த்திக் அவர்களின் 10 இலக்க மொபைல் எண் என்ன?" in said
+    assert said[-1] == "நல்ல நாளாக அமையட்டும்." and t.hung_up == "done"  # hung up after the goodbye, not before
+    assert [x["text"] for x in log.transcript if x["speaker"] == "caller"] == ["என் பேர் Karthik", "98765 43210"]
+
+
+# ─── the recognizer's connection dropping ─────────────────────────
+# A dropped recognizer connection used to end the whole call, in silence.
+def _system_lines(log):
+    return [x["text"] for x in log.transcript if x["speaker"] == "system"]
+
+
+class DroppingStt(FakeStt):
+    """Hears its script, then its connection closes (as a speech service's sometimes does)."""
+
+    async def send(self, pcm):
+        if self.script:
+            await self.queue.put(self.script.pop(0))
+            if not self.script:
+                await self.queue.put(None)
+
+
+def test_a_recognizer_that_drops_mid_call_is_reconnected_and_the_call_goes_on(run, make_user):
+    u = make_user()
+    bot = u.bot()
+    asked, made = [], []
+
+    def factory(language, rate, mixed):
+        made.append(DroppingStt([Ev("transcript", "What are the fees?")]) if not made else
+                    FakeStt([Ev("transcript", "And the hostel fees?"), Ev("pause"), Ev("pause"), Ev("transcript", "ok bye")]))
+        return made[-1]
+    t, log = run(lambda: _whole_call(u, bot, factory, _replier(asked, "Sure.")))
+    assert len(made) == 2 and asked == ["What are the fees?", "And the hostel fees?"]
+    assert t.said()[-1] == _GOODBYES["en-IN"] and log.outcome != "failed"  # carried on, and ended normally
+    assert _system_lines(log) == ["Speech recognition dropped for a moment and was reconnected"]
+
+
+def test_an_error_handling_one_sentence_doesnt_end_the_call(run, make_user):
+    u = make_user()
+    bot = u.bot()
+    asked, made = [], []
+
+    def factory(language, rate, mixed):
+        made.append(FakeStt([Ev("transcript", "boom"), Ev("pause"), Ev("transcript", "What are the fees?"),
+                             Ev("pause"), Ev("pause"), Ev("transcript", "ok bye")]))
+        return made[-1]
+
+    def tune(session):
+        original = session.on_caller_text
+
+        async def flaky(text, language=None, probability=None):
+            if text == "boom":
+                raise RuntimeError("a bug while handling it")
+            return await original(text, language, probability)
+        session.on_caller_text = flaky
+
+    t, log = run(lambda: _whole_call(u, bot, factory, _replier(asked, "Sure."), tune=tune))
+    assert len(made) == 1 and asked == ["What are the fees?"]  # the same connection carried on
+    assert t.said()[-1] == _GOODBYES["en-IN"] and log.outcome != "failed"
+
+
+def test_when_the_recognizer_keeps_dropping_the_caller_is_told_before_the_call_ends(run, make_user):
+    u = make_user()
+    bot = u.bot()
+    t, log = run(lambda: _whole_call(u, bot, lambda *a: DroppedRecognizer([]), replier_saying("x"), frames=60))
+    assert TROUBLE_REPLIES["en-IN"] in t.said()  # not silence
+    assert log.outcome == "failed" and log.billed_minutes == 0 and t.hung_up == "done"
+    assert _system_lines(log)[-1].startswith("Call ended early because of a technical problem")
+
+
+def test_a_recognizer_that_cant_be_reached_ends_the_call_at_once(run, make_user):
+    u = make_user()
+    bot = u.bot()
+    tried = []
+
+    class Unreachable(FakeStt):
+        async def __aenter__(self):
+            tried.append(1)
+            raise ConnectionError("couldn't reach it")
+
+    async def scenario():
+        started = time.monotonic()
+        result = await _whole_call(u, bot, lambda *a: Unreachable([]), replier_saying("x"), frames=60)
+        return time.monotonic() - started, result
+    took, (t, log) = run(scenario)
+    assert len(tried) == 1 and took < 2  # no retrying a service that isn't there
+    assert TROUBLE_REPLIES["en-IN"] in t.said() and log.outcome == "failed" and log.billed_minutes == 0
+
+
+# ─── sound around the caller ──────────────────────────────────────
+# The recognizer takes any speech-like sound for speech, however faint. On a real call, sound around the caller
+# (20-35 dB below their voice) came through as "caller" lines ("अच्छा।", "नमस्कार", "this friend.", "ஆ") and the agent
+# answered each one; with a TV on 20 dB below the caller, the recognizer never ended a turn and 4 of 7 questions
+# went unanswered (simulated, Oct 2026).
+import struct  # noqa: E402
+
+from voice import levels as caller_levels  # noqa: E402
+from tests.test_pipeline import RATE  # noqa: E402
+
+
+def _tone(db, sec=0.02):
+    """`sec` of sound at `db` dBFS (a square wave: its RMS is its height)."""
+    height, n = int(32768 * 10 ** (db / 20)), int(RATE * sec)
+    return struct.pack(f"<{n}h", *([height, -height] * (n // 2)))
+
+
+class HearingStt(FakeStt):
+    """Hears speech in whatever sound comes, like the real recognizer: the script is timed in seconds of audio
+    received, and flush() finishes the turn at once (each flush says what that turn was)."""
+
+    def __init__(self, script, flushes=()):
+        super().__init__([])
+        self.timed, self.flushes, self.heard, self.flushed_at = list(script), [list(f) for f in flushes], 0.0, []
+
+    async def send(self, pcm):
+        self.heard += len(pcm) / 2 / RATE
+        while self.timed and self.timed[0][0] <= self.heard + 1e-6:
+            await self.queue.put(self.timed.pop(0)[1])
+
+    async def flush(self):
+        self.flushed_at.append(round(self.heard, 2))
+        for ev in (self.flushes.pop(0) if self.flushes else []):
+            await self.queue.put(ev)
+
+
+async def _room_call(u, bot, stt, timeline, replier, tts=fake_tts, **agent):
+    """A call whose caller side sounds like `timeline`: (seconds, dBFS) pieces, in real time; then they hang up."""
+    t = FakeTransport()
+    session = CallSession(await _setup(u.id, bot, **agent), t, stt_factory=lambda *a: stt, tts=tts, replier=replier,
+                          summarizer=fake_summary)
+
+    async def feed():
+        began, n = time.monotonic(), 0
+        for sec, db in timeline:
+            for _ in range(round(sec / 0.02)):
+                await t.inbox.put(_tone(db))
+                n += 1
+                await asyncio.sleep(max(0.0, began + n * 0.02 - time.monotonic()))
+        await t.inbox.put(None)
+    feeder = asyncio.create_task(feed())
+    call_id = await asyncio.wait_for(session.run(), timeout=30)
+    feeder.cancel()
+    return session, t, await _logged(call_id)
+
+
+def test_the_callers_voice_level_is_learned_from_their_turns():
+    lv = caller_levels.CallerLevels(RATE)
+    assert lv.add(_tone(-20, 0.05), now=10.0) == pytest.approx([-20.0, -20.0], abs=0.1)  # whole 20 ms only
+    assert lv.voice is None and not lv.background(9.0, 11.0)  # nothing to compare with yet
+    assert lv.is_voice(-20) and not lv.is_voice(-30)  # meanwhile: a voice close to the phone
+    lv.turns.extend([-32.0, -14.0, -16.0])  # the first was the room, taken for the caller before their level was known
+    assert lv.voice == -15.0 and lv.is_voice(-29) and not lv.is_voice(-31)
+    for i in range(30):  # the room: mostly quiet, a louder moment now and then
+        lv.add(_tone(-28 if i % 12 == 0 else -45), now=20.0 + i * 0.02)
+    for i in range(30):  # the caller
+        lv.add(_tone(-18 if i % 2 else -40), now=21.0 + i * 0.02)
+    assert lv.background(19.9, 20.7) and not lv.background(20.9, 21.7)
+    assert not lv.background(20.0, 20.1) and not lv.background(30.0, 31.0)  # too little audio to say
+
+
+def test_sounds_from_around_the_caller_arent_answered(run, make_user):
+    u = make_user()
+    bot = u.bot()
+    asked = []
+    stt = HearingStt([(0.5, Ev("speech_start")), (2.1, Ev("speech_end")), (2.15, Ev("transcript", "What are the fees?")),
+                      (2.6, Ev("speech_start")), (3.9, Ev("speech_end")), (3.95, Ev("transcript", "नमस्कार")),
+                      (4.9, Ev("speech_start")), (6.0, Ev("speech_end")), (6.05, Ev("transcript", "And the hostel?"))])
+    timeline = [(0.5, -120), (1.0, -16), (1.0, -120), (0.8, -46), (1.5, -120), (0.6, -16), (1.5, -120)]
+    session, t, log = run(lambda: _room_call(u, bot, stt, timeline, _replier(asked, "Sure.")))
+    assert asked == ["What are the fees?", "And the hostel?"]
+    assert "नमस्कार" not in [x["text"] for x in log.transcript] and session.background_ignored == 1
+
+
+def test_sound_from_around_the_caller_doesnt_stop_the_agent_but_the_caller_does(run, make_user):
+    u = make_user()
+    bot = u.bot()
+    asked = []
+    # The answer (three 2 s sentences) plays from ~1.5 s. The room at 2.2-3.7 s (heard as speech for 1.5 s): it
+    # carries on. The caller talking over it at 5-6.5 s: it stops for them.
+    stt = HearingStt([(0.3, Ev("speech_start")), (1.4, Ev("speech_end")), (1.45, Ev("transcript", "What are the fees?")),
+                      (2.3, Ev("speech_start")), (3.8, Ev("speech_end")), (3.85, Ev("transcript", "the weather tonight")),
+                      (5.1, Ev("speech_start")), (6.9, Ev("speech_end")), (6.95, Ev("transcript", "Wait, and the hostel?"))])
+    timeline = [(0.2, -120), (1.0, -16), (1.0, -120), (1.5, -46), (1.3, -120), (1.5, -16), (2.0, -120)]
+    session, t, log = run(lambda: _room_call(u, bot, stt, timeline, _replier(asked, "One.", "Two.", "Three."), tts=long_tts))
+    assert t.cleared == 1  # once: for the caller
+    assert asked == ["What are the fees?", "Wait, and the hostel?"] and session.background_ignored == 1
+
+
+def test_talk_around_the_caller_cant_keep_their_question_from_being_answered(run, make_user):
+    u = make_user()
+    bot = u.bot()
+    asked = []
+    # A TV from 2 s on, 24 dB below the caller: the recognizer hears speech from then on and never ends the turn
+    # itself. The caller asks over it at 4-5.2 s.
+    stt = HearingStt([(0.3, Ev("speech_start")), (1.4, Ev("speech_end")), (1.45, Ev("transcript", "Hello, who is this?")),
+                      (2.2, Ev("speech_start"))],
+                     flushes=[[Ev("speech_end"), Ev("transcript", "and the weather tonight"), Ev("speech_start")],
+                              [Ev("speech_end"), Ev("transcript", "What are the fees?"), Ev("speech_start")]])
+    timeline = [(0.2, -120), (1.0, -16), (0.8, -120), (2.0, -40), (1.2, -16), (2.5, -40)]
+    session, t, log = run(lambda: _room_call(u, bot, stt, timeline, _replier(asked, "Sure.")))
+    assert asked == ["Hello, who is this?", "What are the fees?"]
+    # Cut where the caller started (so the TV's words stay out of theirs), and finished ~0.9 s after they stopped.
+    assert len(stt.flushed_at) == 2 and 3.9 <= stt.flushed_at[0] <= 4.3 and 5.9 <= stt.flushed_at[1] <= 6.5
+    assert "and the weather tonight" not in [x["text"] for x in log.transcript]
+
+
+def test_a_lone_so_or_uh_isnt_answered(run, make_user):
+    u = make_user()
+    bot = u.bot()
+    asked = []
+
+    async def scenario():
+        session, t = await _call_in_progress(u, bot, _replier(asked, "Sure."), tts=fake_tts)
+        for text in ("So", "Uh", "ஆ", "हम्म", "So what are the fees?"):
+            await session.on_caller_text(text)
+            await asyncio.sleep(0.1)
+        await _hang_up(session)
+    run(scenario)
+    assert asked == ["So what are the fees?"]
+
+
+def test_the_caller_is_reminded_when_only_the_room_is_talking(run, make_user):
+    u = make_user()
+    bot = u.bot()
+    # A TV from 2.5 s on: the recognizer hears speech from then on, but the caller has gone quiet.
+    stt = HearingStt([(0.3, Ev("speech_start")), (1.4, Ev("speech_end")), (1.45, Ev("transcript", "What are the fees?")),
+                      (2.6, Ev("speech_start"))])
+    timeline = [(0.2, -120), (1.0, -16), (1.3, -120), (7.0, -40)]
+    session, t, log = run(lambda: _room_call(u, bot, stt, timeline, replier_saying("They are 5000."), silence_timeout_sec=3))
+    assert pipeline.REMINDERS_BY_LANG["en-IN"][0] in t.said()
+
+
+def test_long_talk_around_the_caller_isnt_taken_for_them(run, make_user):
+    """Seconds of a TV's talk have louder moments now and then: they mustn't add up to the caller's voice."""
+    u = make_user()
+    bot = u.bot()
+    asked = []
+    stt = HearingStt([(0.3, Ev("speech_start")), (1.4, Ev("speech_end")), (1.45, Ev("transcript", "What are the fees?")),
+                      (2.0, Ev("speech_start")), (6.0, Ev("speech_end")), (6.05, Ev("transcript", "in sports the home team won"))])
+    timeline = [(0.2, -120), (1.0, -16), (0.6, -120)] + [(0.24, -45), (0.02, -28)] * 16 + [(1.0, -120)]
+    session, t, log = run(lambda: _room_call(u, bot, stt, timeline, _replier(asked, "Sure.")))
+    assert asked == ["What are the fees?"] and session.background_ignored == 1
+
+
+def test_a_tv_on_before_the_caller_speaks_isnt_answered_but_their_question_is(run, make_user):
+    u = make_user()
+    bot = u.bot()
+    asked = []
+    # The TV is on from the start, 24 dB below the caller: the recognizer hears speech throughout, and nothing tells
+    # the caller's level yet. Their first words come at 3-4.2 s, over it.
+    stt = HearingStt([(0.1, Ev("speech_start"))],
+                     flushes=[[Ev("speech_end"), Ev("transcript", "breaking news this evening"), Ev("speech_start")],
+                              [Ev("speech_end"), Ev("transcript", "What are the fees?"), Ev("speech_start")]])
+    timeline = [(3.0, -40), (1.2, -16), (2.5, -40)]
+    session, t, log = run(lambda: _room_call(u, bot, stt, timeline, _replier(asked, "Sure.")))
+    assert asked == ["What are the fees?"]
+    assert len(stt.flushed_at) == 2 and 2.9 <= stt.flushed_at[0] <= 3.3 and 4.9 <= stt.flushed_at[1] <= 5.5

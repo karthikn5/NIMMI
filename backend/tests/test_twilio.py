@@ -178,3 +178,26 @@ def test_completed_status_after_a_real_conversation_is_ignored(client, make_user
         async with async_session() as db:
             return (await db.execute(select(CallLog).where(CallLog.provider_call_id == "CA-live"))).scalars().all()
     assert [c.outcome for c in run(logs)] == ["in_progress"]  # no extra "no_answer" row
+
+
+def test_call_me_counts_only_the_calls_it_places(client, make_user, monkeypatch):
+    """Five clicks that couldn't place a call (the local server's tunnel was gone) locked "Call me" for 10 minutes,
+    with "Please wait a minute"."""
+    u = make_user()
+    bot = u.bot()
+    for _ in range(6):  # no phone number yet: nothing is placed
+        assert client.post("/api/voice/test-call", json={"bot_id": bot, "phone": "98765 43210"}, headers=u.h()).status_code == 400
+
+    async def fake_place(to, frm, job_id, **_):
+        return "CA-test"
+
+    async def no_webhook(e164):
+        return None
+    monkeypatch.setattr(voice_router, "prepare_opening", lambda *a, **k: None)
+    monkeypatch.setattr(twilio, "place_call", fake_place)
+    monkeypatch.setattr(twilio, "point_number_here", no_webhook)
+    _active_twilio_number(client, u, bot)
+    for _ in range(5):
+        assert client.post("/api/voice/test-call", json={"bot_id": bot, "phone": "98765 43210"}, headers=u.h()).status_code == 200
+    r = client.post("/api/voice/test-call", json={"bot_id": bot, "phone": "98765 43210"}, headers=u.h())
+    assert r.status_code == 429 and r.json()["detail"] == "Too many attempts. Please try again in 10 minutes."

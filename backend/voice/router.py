@@ -680,7 +680,7 @@ class TestCallRequest(BaseModel):
 async def test_call(req: TestCallRequest, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
     """Ring your own phone from one of your numbers and talk to the assistant (uses minutes)."""
     await plans.require(db, ctx.owner_id, "voice")
-    rate_limit(f"testcall:{ctx.owner_id}", 5, 600)
+    rate_limit(f"testcall-try:{ctx.owner_id}", 20, 600)
     bot = await get_owned_bot(req.bot_id, ctx, db)
     e164 = to_e164(req.phone)
     if not e164:
@@ -703,6 +703,9 @@ async def test_call(req: TestCallRequest, ctx: AuthContext = Depends(require_man
     if not await _publicly_reachable():
         raise HTTPException(status_code=503, detail="The phone company can't reach this server right now, so the call would "
                                                     "drop as soon as you answer. Check PUBLIC_BACKEND_URL (or restart the tunnel) and try again.")
+    # Only calls actually placed count here: one that couldn't be (no tunnel, no number) mustn't lock you out
+    # while you fix it.
+    rate_limit(f"testcall:{ctx.owner_id}", 5, 600)
     # Make the opening while the phone rings, so the assistant speaks the moment it's answered.
     agent, _ = await _agent_for(bot, ctx.owner_id, db)
     prepare_opening(agent, {}, bool((await _compliance(ctx.owner_id, db)).record_calls))

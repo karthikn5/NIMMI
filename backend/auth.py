@@ -7,6 +7,7 @@ they are acting in (their own, or one they were invited to as a team member).
 """
 import hashlib
 import logging
+import math
 import os
 import time
 from collections import defaultdict, deque
@@ -201,7 +202,9 @@ def rate_limit(key: str, limit: int, window_sec: int) -> None:
     while q and now - q[0] > window_sec:
         q.popleft()
     if len(q) >= limit:
-        raise HTTPException(status_code=429, detail="Too many attempts. Please wait a minute and try again.")
+        minutes = math.ceil((window_sec - (now - q[0])) / 60)  # until the oldest attempt no longer counts
+        raise HTTPException(status_code=429, detail="Too many attempts. Please try again in "
+                                                    + ("a minute." if minutes <= 1 else f"{minutes} minutes."))
     q.append(now)
 
 

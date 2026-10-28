@@ -93,8 +93,8 @@ export default function AgentSettingsPage() {
                             <div className="mt-3.5 flex items-start gap-2.5 p-3 rounded-md bg-stone-50 border border-line text-xs text-stone-600 leading-relaxed">
                                 <span className="h-2 w-2 rounded-full bg-emerald-500 mt-1 shrink-0" aria-hidden />
                                 <div>
-                                    <strong className="text-stone-800 font-semibold">Human-like Spoken Register Active:</strong>
-                                    {" "}Speaks in natural colloquial vernacular ({LANGUAGES.find((l) => l.code === draft.language)?.label || draft.language}) with realistic human listening cues (&quot;ஹ்ம்ம்...&quot;, &quot;சரிங்க...&quot;, &quot;ஆமா...&quot;, &quot;Hmm...&quot;, &quot;Ah...&quot;) and natural conversational breathing pauses.
+                                    <strong className="text-stone-800 font-semibold">Natural spoken style:</strong>
+                                    {" "}Speaks everyday {LANGUAGES.find((l) => l.code === draft.language)?.label || draft.language} the way people talk on the phone, in short sentences, without filler sounds like &quot;hmm&quot; or &quot;ah&quot;.
                                 </div>
                             </div>
                         </SettingRow>

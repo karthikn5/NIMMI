@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Bot, Send, X } from "lucide-react";
+import { Bot, Send, User, X } from "lucide-react";
 import { isLight } from "@/lib/color";
 import { assetUrl, type Visual } from "./design";
 
@@ -227,20 +227,25 @@ function ChatWindow({ visual: v, botName, callbacks }: { visual: Visual; botName
                          className="w-10 h-10 rounded-full border-2 border-white/50 object-cover shrink-0 bg-white" />
                     <div className="flex flex-col min-w-0 flex-1">
                         <span className="font-bold text-sm tracking-tight truncate">{name}</span>
-                        <span className="text-[11px] opacity-75 font-medium truncate">{mode === "human" ? "Chatting with our team" : (v.subtitle || "Usually replies instantly")}</span>
+                        <span className="text-[11px] opacity-75 font-medium truncate">
+                            {mode === "human" && <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 mr-1.5 align-middle" aria-hidden />}
+                            {mode === "human" ? "Chatting with our team" : (v.subtitle || "Usually replies instantly")}
+                        </span>
                     </div>
+                    {v.show_human_toggle && (
+                        <div role="radiogroup" aria-label="Chat with" className="flex items-center p-0.5 rounded-full border border-current/30 bg-current/10 shrink-0">
+                            {(["ai", "human"] as const).map((m) => (
+                                <button key={m} type="button" role="radio" aria-checked={mode === m} onClick={() => setMode(m)}
+                                        title={m === "ai" ? "Chat with the assistant" : "Talk to a person"}
+                                        className={`inline-flex items-center gap-1 h-[22px] px-2 rounded-full text-[11px] font-semibold transition-colors ${mode === m ? "bg-white text-gray-900 shadow-sm" : "opacity-80 hover:opacity-100"}`}>
+                                    {m === "ai" ? <Bot size={12} /> : <User size={12} />}
+                                    <span className="hidden min-[360px]:inline">{m === "ai" ? "AI" : "Person"}</span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
                     <span className="p-2 -mr-1 opacity-70 shrink-0"><X size={18} /></span>
                 </div>
-                {v.show_human_toggle && (
-                    <div role="radiogroup" aria-label="Chat with" className="grid grid-cols-2 bg-black/20 p-0.5 rounded-full border border-white/10">
-                        {(["ai", "human"] as const).map((m) => (
-                            <button key={m} type="button" role="radio" aria-checked={mode === m} onClick={() => setMode(m)}
-                                    className={`py-1 rounded-full text-[11px] font-semibold transition-colors ${mode === m ? "bg-white text-black" : "opacity-75 hover:opacity-100"}`}>
-                                {m === "ai" ? "Assistant" : "Talk to a person"}
-                            </button>
-                        ))}
-                    </div>
-                )}
             </header>
 
             <main className="flex-1 overflow-hidden p-5 space-y-3 relative z-10">

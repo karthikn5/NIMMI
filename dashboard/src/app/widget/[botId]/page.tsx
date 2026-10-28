@@ -64,6 +64,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     const [botConfig, setBotConfig] = useState<any>(null);
     const [pending, setPending] = useState<Pending | null>(null);
     const [flowDone, setFlowDone] = useState(false); // no flow, or it has finished: free chat
+    const [askedOwnQuestion, setAskedOwnQuestion] = useState(false); // typed to the assistant, not an answer to the flow
     const [callback, setCallback] = useState<{ open: boolean; phone: string; consent: boolean; state: "idle" | "sending" | "done" | "error"; error: string }>(
         { open: false, phone: "", consent: false, state: "idle", error: "" });
     const socketRef = useRef<Socket | null>(null);
@@ -135,7 +136,11 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     const handleModeToggle = (newMode: "ai" | "human") => {
         if (newMode === mode) return;
         if (newMode === "human") goHuman();
-        else setMode("ai");
+        else {
+            setMode("ai");
+            // Back with the assistant by choice: next time the chat opens here too.
+            try { localStorage.removeItem(`nimmi_chat_history_${botId}`); } catch { /* storage unavailable */ }
+        }
     };
 
     // ── Flow runner ────────────────────────────────────────────────
@@ -159,12 +164,12 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
         if (!node || !flow) {
             // The flow ran out of steps without an End block: close it politely and hand over to the assistant.
             setPending(null);
-            setFlowDone(true);
             if (flow) {
                 await sleep(400);
                 const first = String(varsRef.current.name || "").trim().split(" ")[0];
                 say(`Thanks${first ? `, ${first}` : ""}! How can I help you today?`);
             }
+            setFlowDone(true); // after the closing line, so suggested questions come below it
             return;
         }
         const d = node.data || {};
@@ -349,8 +354,11 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
             const saved = localStorage.getItem(storageKey);
             if (saved) {
                 const { messages: savedMessages, timestamp, mode: savedMode, seen } = JSON.parse(saved);
-                if (Date.now() - timestamp < 24 * 60 * 60 * 1000 && savedMode === "human") {
-                    const unique = (savedMessages || []).filter((m: any, i: number, all: any[]) => i === all.findIndex((x: any) => x.id === m.id));
+                const unique = (savedMessages || []).filter((m: any, i: number, all: any[]) => i === all.findIndex((x: any) => x.id === m.id));
+                // The chat opens with the assistant. It reopens with the team only to carry on a real conversation
+                // (the visitor wrote, or the team replied), not because "Person" was once clicked.
+                const talking = unique.some((m: any) => m.sender === "user") || unique.length > 1;
+                if (Date.now() - timestamp < 24 * 60 * 60 * 1000 && savedMode === "human" && talking) {
                     setHumanMessages(unique.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) })));
                     if (Array.isArray(seen)) {
                         seen.forEach((id: string) => seenReplies.current.add(id));
@@ -412,10 +420,13 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     };
 
     // ── Free chat ──────────────────────────────────────────────────
-    const handleSend = async (preset?: string) => {
+    /** `suggested`: a suggested question was clicked. It goes to the assistant even while the flow waits for an
+     *  answer, and the flow then asks its question again. */
+    const handleSend = async (preset?: string, suggested = false) => {
         const text = (preset ?? input).trim();
         if (!text || loading) return;
         setInput("");
+        const flowWaiting = suggested && pending?.kind === "input" ? pending : null;
 
         if (mode === "human") {
             setHumanMessages((prev) => [...prev, { id: uid(), text, sender: "user", timestamp: new Date() }]);
@@ -426,14 +437,15 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
         }
 
         // Typing answers the flow's question; a typed option counts as choosing it.
-        if (pending?.kind === "input") return answer(text);
-        if (pending?.kind === "choices" || pending?.kind === "callback") {
+        if (pending?.kind === "input" && !flowWaiting) return answer(text);
+        if (!suggested && (pending?.kind === "choices" || pending?.kind === "callback")) {
             const options = pending.kind === "choices" ? pending.options : [CALL_YES, CALL_NO];
             const match = options.find((o) => o.toLowerCase() === text.toLowerCase());
             if (match) return answer(match);
         }
 
         const userMsg: Message = { id: uid(), text, sender: "user", timestamp: new Date() };
+        setAskedOwnQuestion(true);
         const history = [...aiMessages, userMsg].filter((m) => m.text).map((m) => ({ role: m.sender === "user" ? "user" : "assistant", content: m.text }));
         const botMsgId = uid();
         setAiMessages((prev) => [...prev, userMsg, { id: botMsgId, text: "", sender: "bot", timestamp: new Date(), question: text }]);
@@ -474,6 +486,10 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
         } finally {
             setLoading(false);
         }
+        if (flowWaiting) {
+            await sleep(400);
+            say(questionFor(flowWaiting.node)); // back to the flow's question, which is still waiting for its answer
+        }
     };
 
     // Mic: speak instead of typing. Words appear as they're heard and are sent when the visitor stops.
@@ -504,10 +520,12 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     const placeholder = mode === "ai" && pending?.kind === "input"
         ? (pending.node.data?.placeholder || "Type your answer…")
         : (visual.input_placeholder || "Type a message...");
-    // Suggested questions, shown until the visitor sends their first message.
+    // Suggested questions: from the first message until the visitor asks their own question (answers to the flow's
+    // questions don't count). Shown while the flow waits for a typed answer or is done; not beside the flow's own buttons.
     const starters: string[] = (Array.isArray(visual.starters) ? visual.starters : [])
         .map((q: unknown) => String(q).trim()).filter(Boolean).slice(0, 4);
-    const showStarters = mode === "ai" && flowDone && !pending && starters.length > 0 && !aiMessages.some((m) => m.sender === "user");
+    const showStarters = mode === "ai" && starters.length > 0 && !askedOwnQuestion && aiMessages.length > 0
+        && ((flowDone && !pending) || pending?.kind === "input");
     // Footer: dark glass by default; a chosen colour gets text that reads on it.
     const footerBg: string = visual.footer_bg_color || "";
     const footerLight = !!footerBg && isLight(footerBg);
@@ -544,8 +562,23 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                     />
                     <div className="flex flex-col min-w-0 flex-1">
                         <span className="font-bold text-sm tracking-tight truncate">{botConfig?.bot_name || "Assistant"}</span>
-                        <span className="text-[11px] opacity-75 font-medium truncate">{mode === "human" ? "Chatting with our team" : (visual.subtitle || "Usually replies instantly")}</span>
+                        <span className="text-[11px] opacity-75 font-medium truncate">
+                            {mode === "human" && <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 mr-1.5 align-middle" aria-hidden />}
+                            {mode === "human" ? "Chatting with our team" : (visual.subtitle || "Usually replies instantly")}
+                        </span>
                     </div>
+                    {visual.show_human_toggle !== false && (
+                        <div role="radiogroup" aria-label="Chat with" className="flex items-center p-0.5 rounded-full border border-current/30 bg-current/10 shrink-0">
+                            {(["ai", "human"] as const).map((m) => (
+                                <button key={m} type="button" role="radio" aria-checked={mode === m} onClick={() => handleModeToggle(m)}
+                                        title={m === "ai" ? "Chat with the assistant" : "Talk to a person"}
+                                        className={`inline-flex items-center gap-1 h-[22px] px-2 rounded-full text-[11px] font-semibold transition-colors ${mode === m ? "bg-white text-gray-900 shadow-sm" : "opacity-80 hover:opacity-100"}`}>
+                                    {m === "ai" ? <Bot size={12} /> : <User size={12} />}
+                                    <span className="hidden min-[360px]:inline">{m === "ai" ? "AI" : "Person"}</span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
                     {!inApp && (
                         <button onClick={() => window.parent.postMessage("close-nimmi-widget", "*")} aria-label="Close chat"
                                 className="p-2 -mr-1 hover:bg-white/10 rounded-full opacity-70 hover:opacity-100 transition-opacity shrink-0">
@@ -553,21 +586,6 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                         </button>
                     )}
                 </div>
-                {visual.show_human_toggle !== false && (
-                    <div role="radiogroup" aria-label="Chat with" className="grid grid-cols-2 bg-black/20 p-0.5 rounded-full border border-white/10">
-                        {(["ai", "human"] as const).map((m) => (
-                            <button
-                                key={m}
-                                role="radio"
-                                aria-checked={mode === m}
-                                onClick={() => handleModeToggle(m)}
-                                className={`py-1 rounded-full text-[11px] font-semibold transition-colors ${mode === m ? "bg-white text-black" : "opacity-75 hover:opacity-100"}`}
-                            >
-                                {m === "ai" ? "Assistant" : "Talk to a person"}
-                            </button>
-                        ))}
-                    </div>
-                )}
             </header>
 
             <main className="flex-1 overflow-y-auto p-5 space-y-3 custom-scrollbar relative z-10">
@@ -625,7 +643,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                 {showStarters && (
                     <div className="flex flex-wrap gap-2 pl-9">
                         {starters.map((q) => (
-                            <button key={q} onClick={() => handleSend(q)} className={chip} style={{ borderColor: primaryColor, color: primaryColor }}>{q}</button>
+                            <button key={q} onClick={() => handleSend(q, true)} className={chip} style={{ borderColor: primaryColor, color: primaryColor }}>{q}</button>
                         ))}
                     </div>
                 )}

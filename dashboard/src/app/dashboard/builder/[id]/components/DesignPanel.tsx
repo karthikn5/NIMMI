@@ -94,7 +94,7 @@ export default function DesignPanel({ botId, visual: v, set, botName, setBotName
                 <Field label="Status line" htmlFor="subtitle" hint="Under the name. Leave empty for “Usually replies instantly”.">
                     <Input id="subtitle" value={v.subtitle} maxLength={60} onChange={(e) => set({ subtitle: e.target.value })} placeholder="Usually replies instantly" />
                 </Field>
-                <ToggleRow label="Let visitors switch to a person" hint="Shows an Assistant / Talk to a person switch under the header. Your team replies from Live chat."
+                <ToggleRow label="Let visitors switch to a person" hint="Shows a small AI / Person switch at the top right of the chat. Your team replies from Live chat."
                            checked={v.show_human_toggle} onChange={(c) => set({ show_human_toggle: c })} />
                 <RangeField label="Header height" value={v.header_height} min={56} max={120} onChange={(n) => set({ header_height: n })} />
             </Section>
@@ -104,7 +104,7 @@ export default function DesignPanel({ botId, visual: v, set, botName, setBotName
                     <Textarea id="welcome" rows={2} maxLength={300} value={v.welcome_message} onChange={(e) => set({ welcome_message: e.target.value })}
                               placeholder={`Hi! I'm ${botName || "your assistant"}. How can I help you today?`} />
                 </Field>
-                <Field label="Suggested questions" hint="Up to 4 buttons, shown until the visitor sends a message (after your flow, if you have one). Press Enter after each.">
+                <Field label="Suggested questions" hint="Up to 4 buttons, shown from the start until the visitor asks their own question. If your flow is waiting for an answer, the assistant answers the button first and the flow then asks again. Press Enter after each.">
                     <PhraseInput label="Suggested questions" keepCase value={v.starters} placeholder="e.g. What are your prices?"
                                  onChange={(q) => set({ starters: q.map((s) => s.slice(0, 60)).slice(0, 4) })} />
                 </Field>

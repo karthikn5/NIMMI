@@ -49,7 +49,10 @@
     const pageRule = visual.page_rule || 'all';
     const listed = (Array.isArray(visual.page_paths) ? visual.page_paths : []).some(onPath);
     if ((pageRule === 'only' && !listed) || (pageRule === 'except' && listed)) return;
-    if (visual.hide_on_mobile === true && window.innerWidth <= 480) return;
+    // A phone. On a page without a mobile viewport tag the browser lays it out ~980px wide, so innerWidth alone
+    // says "computer"; the screen width doesn't.
+    const isPhone = Math.min(window.innerWidth, (window.screen && window.screen.width) || window.innerWidth) <= 480;
+    if (visual.hide_on_mobile === true && isPhone) return;
 
     // Process visual config
     const color = visual.color || '#9d55ac';
@@ -344,7 +347,7 @@
         }, greetingDelay * 1000);
     }
     // Opening by itself takes over a phone screen, so only on larger screens, once per visit.
-    if (autoOpenDelay && window.innerWidth > 480 && !remembered('nimmi_auto_opened')) {
+    if (autoOpenDelay && !isPhone && !remembered('nimmi_auto_opened')) {
         setTimeout(() => {
             if (isOpen) return;
             remember('nimmi_auto_opened');

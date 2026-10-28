@@ -6,7 +6,10 @@ import os
 import re
 import threading
 import time
+import unicodedata
 from typing import AsyncIterator, Iterator, Optional
+
+import httpx
 
 import ai
 import knowledge_sources
@@ -73,8 +76,9 @@ FALLBACK_ERRORS = {
 }
 
 # A sentence ends at . ! ? or । followed by a space, or at ! ? । followed straight by a letter (models
-# writing Tamil or Hindi sometimes leave out the space: "என்ன?ஹ்ம்ம்"). "1.5" and "nimmiai.in" don't split.
-_SENTENCE_END = re.compile(r"(?<=[.!?।])\s+|(?<=[!?।])(?=[^\W\d_])")
+# writing Tamil or Hindi sometimes leave out the space: "என்ன?ஹ்ம்ம்"). "1.5" and "nimmiai.in" don't split, nor
+# does an ellipsis ("Hmm... let me check" is one sentence, not a filler spoken on its own).
+_SENTENCE_END = re.compile(r"(?<=[.!?।])(?<!\.\.)\s+|(?<=[!?।])(?=[^\W\d_])")
 
 # Measured (Oct 2026): Groq answers in 0.1-0.5 s; Gemini Flash-Lite over REST in ~1.8 s; the old
 # google-generativeai SDK took ~30 s, so it isn't used. Each Groq model has its own per-minute
@@ -88,6 +92,18 @@ VOICE_GROQ_MODELS = list(dict.fromkeys([VOICE_GROQ_MODEL] + [m.strip() for m in 
 # the models' token allowance and answers fast. Bigger knowledge uses the "Business summary".
 KB_INLINE_LIMIT = int(os.getenv("VOICE_KNOWLEDGE_CHARS", "7000"))
 _rate_limited: dict[str, float] = {}  # Groq model -> when it can be used again
+# A Groq model's first words come in well under a second. One that hasn't started after this long is overloaded:
+# the next model answers instead (the SDK's own limit, 15 s, left callers in silence), and it rests a while.
+GROQ_FIRST_WORDS_SEC = float(os.getenv("VOICE_GROQ_FIRST_WORDS_SEC", "3"))
+SLOW_MODEL_REST_SEC = 15.0
+# Gemini is the last resort on a call: a few seconds at most, not the website chat's 30 s.
+VOICE_GEMINI_TIMEOUT = httpx.Timeout(float(os.getenv("VOICE_GEMINI_TIMEOUT_SEC", "8")), connect=3.0)
+# How much of the conversation each reply sees: enough to remember a name or number given minutes ago.
+HISTORY_MESSAGES = int(os.getenv("VOICE_HISTORY_MESSAGES", "16"))
+
+
+class SlowModel(TimeoutError):
+    """The model accepted the request but hasn't started answering in time."""
 
 
 _PLACEHOLDER = re.compile(r"\{\{\s*([\w .-]+?)\s*\}\}")
@@ -144,6 +160,17 @@ def _collect_lines(agent: VoiceAgent) -> str:
             " before you wrap up, make sure you have the required ones):\n" + "\n".join(lines))
 
 
+# How each language should sound. Never examples of fillers ("Hmm...", "ஓ, அப்படியா!"): models copy examples
+# into nearly every reply, and the voice reads them as odd noises.
+SPEAKING_STYLE = {
+    "en-IN": "Use warm, simple, everyday Indian English.",
+    "ta-IN": "Use everyday spoken Tamil (பேச்சுத் தமிழ்) with polite -ங்க endings, the way a friendly executive in"
+             " Tamil Nadu talks, not formal written Tamil. Keep the English words callers use (fees, course,"
+             " appointment, address) in English.",
+    "hi-IN": "Use everyday spoken Hindi, polite with आप and जी; Hinglish is fine. Avoid formal, bookish Hindi.",
+}
+
+
 def system_prompt(agent: VoiceAgent, bot: Bot, knowledge: str, direction: str, consent_source: Optional[str],
                   variables: Optional[dict] = None, purpose: Optional[str] = None, after_hours: Optional[str] = None,
                   reply_language: Optional[str] = None) -> str:
@@ -170,44 +197,27 @@ def system_prompt(agent: VoiceAgent, bot: Bot, knowledge: str, direction: str, c
     known = [f"{k}: {v}" for k, v in (variables or {}).items() if v not in (None, "")]
     about = ("\n\nWhat you already know about this person (use it, don't ask for it again):\n" + "\n".join(known)) if known else ""
 
-    if lang_code == "ta-IN":
-        style_instruction = """- **TAMIL CONVERSATIONAL EXPRESSION (பேச்சுத் தமிழ் & Tanglish)**:
-  * CRITICAL: Speak strictly in natural, warm, everyday SPOKEN TAMIL (பேச்சுத் தமிழ் / Tanglish), like a warm and friendly human executive in Tamil Nadu.
-  * NEVER use formal literary textbook Tamil (எழுத்துத் தமிழ், e.g. "நான் தங்களுக்கு எவ்வாறு உதவ முடியும்" sounds robotic).
-  * Always use natural human phrasing: "சொல்லுங்க, நான் உங்களுக்கு எப்படி உதவலாம்?", "கண்டிப்பாங்க!", "சரிங்க, நான் பாக்குறேன்.", "ஹ்ம்ம், புரியுதுங்க..."
-  * Use natural human spoken listening fillers & interjections at the beginning of replies:
-    "ஹ்ம்ம்..." (Hmm...), "சரிங்க..." (Saringa...), "கண்டிப்பாங்க!" (Kandippaanga!), "ஆஹா...", "ஓ, அப்படியா!", "ஆமாங்க..."
-  * If the caller mixes English words (Tanglish, e.g. 'timing', 'fees', 'appointment', 'address'), fluently match their Tanglish style.
-  * Use natural pauses with commas and ellipsis (...) so your speech breathes and intonates naturally like a real human."""
-    elif lang_code == "hi-IN":
-        style_instruction = """- **HINDI CONVERSATIONAL EXPRESSION (बोलचाल की हिंदी & Hinglish)**:
-  * Speak in polite, warm, conversational Hindi/Hinglish (बोलचाल की हिंदी), like a helpful customer representative.
-  * Use natural human interjections & backchannels: "हम्म, बिल्कुल...", "हाँ जी...", "अच्छा, समझ गया...", "अरे वाह!", "जी ज़रूर..."
-  * Use natural pauses with commas and ellipsis (...) so your voice sounds dynamic, expressive, and human."""
-    elif lang_code == "en-IN":
-        style_instruction = """- **ENGLISH CONVERSATIONAL EXPRESSION**:
-  * Speak in a warm, friendly, dynamic conversational Indian English tone.
-  * Use natural spoken listening fillers & acknowledgments:
-    "Hmm, let me check that...", "Ah, got it!", "Oh, absolutely!", "Mhm, sure thing!", "Right, I understand..."
-  * Use natural pauses with commas and ellipsis (...) so your voice sounds lively and expressive rather than robotic."""
-    else:
-        style_instruction = f"""- **CONVERSATIONAL EXPRESSION**:
-  * Speak in warm, natural everyday conversational {lang}, NOT stiff textbook language.
-  * Use natural human spoken acknowledgments ("Hmm...", "Ah...", "Yes, absolutely") and pauses with commas so you sound dynamic and alive."""
+    style = SPEAKING_STYLE.get(lang_code, f"Use everyday spoken {lang}, the way people talk on the phone, not formal written {lang}.")
 
     return f"""You are {agent.assistant_name or 'the assistant'}, the phone assistant for {agent.company_name or bot.bot_name}.
 You are on a live phone call.{reason}{goal}{about}
 
 How to speak:
 - Reply in {lang}.{switched} If the caller code-mixes with English, match them naturally.{script}
-{style_instruction}
-- Keep each reply to one to two short, natural spoken sentences. This is speech, not text.
-- You already greeted the caller and said your name when the call started. Never introduce yourself or give a formal greeting again (no hello, namaste, or vanakkam). If the caller only says hello, acknowledge with a warm "Hmm, yes, how can I help?" or natural equivalent.
+- {style} Sound like a friendly, professional person on the phone.
+- Start with the answer itself. Never use filler sounds or empty reactions such as hmm, mm, uh, ah, oh, wow,
+  "Oh, is that so", ஹ்ம்ம், ஓ, அப்படியா, हम्म, अरे: a voice reads them as odd noises. Never write an ellipsis;
+  use a comma or a full stop.
+- Keep each reply to one or two short sentences. This is speech, not text.
+- You introduced yourself when the call started. Don't greet or introduce yourself again, even after changing
+  language. If the caller only says hello, ask how you can help.
+- Answer what the caller just said, using the whole conversation so far. If it doesn't quite make sense, the line
+  may have garbled it: ask a short question to check instead of guessing.
+- Ask one question at a time, then stop and wait for the answer. Never answer your own question or write the caller's words.
 - No lists, markdown, emojis, URLs, brackets or symbols. Say numbers the way people say them aloud.
-- Ask one question at a time, then stop and let them answer. Confirm names and numbers by repeating them back.
+- Confirm names and numbers by repeating them back.
 - Phone numbers: read them back in small groups of digits. An Indian mobile number has 10 digits (12 with 91 in front);
   if you heard a different count, say so and ask them to repeat it slowly.
-- If what you heard doesn't quite make sense, the line may have garbled it: ask a short clarifying question instead of guessing.
 
 {_collect_lines(agent)}
 
@@ -292,7 +302,8 @@ def _groq_models() -> list[str]:
 
 
 def _note_limit(model: str, error: Exception) -> None:
-    """A model out of its per-minute allowance is skipped until it refills (Groq says when)."""
+    """A model out of its per-minute allowance is skipped until it refills (Groq says when); one too slow to
+    start answering rests for a while."""
     if getattr(error, "status_code", None) in (413, 429) or "rate_limit" in str(error):
         wait = 20.0
         try:
@@ -300,28 +311,37 @@ def _note_limit(model: str, error: Exception) -> None:
         except (AttributeError, TypeError, ValueError):
             pass
         _rate_limited[model] = time.monotonic() + min(max(wait, 5.0), 60.0)
+    elif isinstance(error, TimeoutError) or type(error).__name__ == "APITimeoutError":
+        _rate_limited[model] = time.monotonic() + SLOW_MODEL_REST_SEC
 
 
 def _stream_groq(model: str, prompt: str, history: list[dict], user_text: str) -> Iterator[str]:
+    started = time.monotonic()
     stream = _groq().chat.completions.create(
         model=model, stream=True, temperature=0.4, max_tokens=300,
-        messages=[{"role": "system", "content": prompt}, *history[-10:], {"role": "user", "content": user_text}],
-        **_reasoning_params(model),
+        messages=[{"role": "system", "content": prompt}, *history[-HISTORY_MESSAGES:], {"role": "user", "content": user_text}],
+        timeout=httpx.Timeout(GROQ_FIRST_WORDS_SEC, connect=2.0), **_reasoning_params(model),
     )
     try:
+        answering = False
         for chunk in stream:
             delta = chunk.choices[0].delta.content if chunk.choices else None
             if delta:
+                answering = True
                 yield delta
+            elif not answering and time.monotonic() - started > GROQ_FIRST_WORDS_SEC:
+                raise SlowModel(f"no words after {GROQ_FIRST_WORDS_SEC:.0f}s")  # still thinking (hidden reasoning)
     finally:
         stream.close()  # stopped early (the answer was cut short): don't keep reading the rest
 
 
 def _stream_gemini(prompt: str, history: list[dict], user_text: str, api_key: Optional[str]) -> Iterator[str]:
     """Gemini over REST (ai.py), the fast model first."""
-    messages = [{"role": "user" if h["role"] == "user" else "assistant", "content": h["content"]} for h in history[-10:]]
+    messages = [{"role": "user" if h["role"] == "user" else "assistant", "content": h["content"]}
+                for h in history[-HISTORY_MESSAGES:]]
     messages.append({"role": "user", "content": user_text})
-    yield from ai.chat_stream(prompt, messages, model=VOICE_GEMINI_MODEL, api_key=api_key, temperature=0.4, max_tokens=220)
+    yield from ai.chat_stream(prompt, messages, model=VOICE_GEMINI_MODEL, api_key=api_key, temperature=0.4, max_tokens=220,
+                              timeout=VOICE_GEMINI_TIMEOUT)
 
 
 def stream_reply(bot: Bot, prompt: str, history: list[dict], user_text: str) -> Iterator[str]:
@@ -348,9 +368,33 @@ def stream_reply(bot: Bot, prompt: str, history: list[dict], user_text: str) -> 
     yield from _stream_gemini(prompt, history, user_text, own_key)
 
 
+# An ellipsis ("சரிங்க... fees") is spoken as a comma's short pause.
+_ELLIPSIS = re.compile(r"\s*(?:\.{2,}|…)\s*")
+# Filler sounds and empty reactions at the start of a sentence ("Hmm,", "Oh,", "ஹ்ம்ம்,", "ஓ,", "हम्म,"). The voice
+# reads them as odd noises, so they're dropped even when the model writes them anyway.
+_FILLERS = (r"h+m+|m+h*m+|u+h+|u+m+|e+r+m*|a+h+|o+h+|ஹ்ம்(?:ம்)*|ம்(?:ம்)+|ஓ+|ஆ+|ஆஹா|ஓஹோ|"
+            r"हम्म्|हम्म*|उम्म*|अं|ओह|अरे")
+_LEADING_FILLERS = re.compile(rf"^(?:(?:{_FILLERS})(?:[\s,.!?;:-]+|$))+", re.IGNORECASE)
+# Sentences that are only a reaction ("ஓ, அப்படியா!" = "Oh, is that so!") say nothing to the caller.
+_EMPTY_REACTIONS = {"அப்படியா", "அப்படிங்களா", "ஆஹா", "ஓஹோ", "वाह", "अरे वाह", "wow", "i see", "oh i see"}
+
+
+def plain_words(text: str) -> list[str]:
+    """Lowercase words without punctuation, keeping Indian scripts whole: Python's \\w leaves out their vowel
+    signs, which splits "அப்படியா" or "नमस्ते" into pieces that match nothing."""
+    text = (text or "").lower().replace("’", "'")
+    return "".join(c if c.isalnum() or c == "'" or unicodedata.category(c).startswith("M") else " " for c in text).split()
+
+
 def _clean_for_speech(text: str) -> str:
     text = re.sub(r"[*_#`>\[\]()]", "", text.replace(TRANSFER, "").replace(END_CALL, ""))
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", _ELLIPSIS.sub(", ", text)).strip()
+    text = _LEADING_FILLERS.sub("", text).strip(" ,;:-")
+    if " ".join(plain_words(text)) in _EMPTY_REACTIONS:
+        return ""
+    if text[:1].isascii() and text[:1].islower():
+        text = text[0].upper() + text[1:]  # "Hmm, let me check" -> "Let me check"
+    return text
 
 
 async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user_text: str,
@@ -378,8 +422,8 @@ async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user
                 loop.call_soon_threadsafe(queue.put_nowait, chunk)
         except Exception as e:
             logger.error(f"Voice LLM error: {e}")
-            fallback_text = FALLBACK_ERRORS.get(agent.language or "en-IN", FALLBACK_ERRORS["en-IN"])
-            loop.call_soon_threadsafe(queue.put_nowait, fallback_text)
+            language = reply_language or agent.language or "en-IN"  # the caller's language once they switched
+            loop.call_soon_threadsafe(queue.put_nowait, FALLBACK_ERRORS.get(language, FALLBACK_ERRORS["en-IN"]))
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, None)
 

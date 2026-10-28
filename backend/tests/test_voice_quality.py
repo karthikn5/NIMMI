@@ -326,7 +326,7 @@ def test_an_opening_cut_short_is_not_kept(run, make_user, monkeypatch):
         async def close(self):
             pass
 
-        async def speak(self, text):
+        async def speak(self, text, **_):
             yield b"\x01\x00" * 80
             yield b"\x01\x00" * 80
             raise ConnectionError("connection dropped")
@@ -425,7 +425,7 @@ def _fake_streams(gap):
                 self.connected = False
                 log.append(("close", self.language))
 
-        async def speak(self, text):
+        async def speak(self, text, **_):
             if not self.connected:
                 self.connected = True
                 log.append(("open", self.language))

@@ -171,18 +171,26 @@ def test_transfer_on_a_browser_test_call_explains_instead(run, make_user):
     assert log.channel == "browser"
 
 
-def test_barge_in_clears_queued_audio(run, make_user):
+async def long_tts(text, language, speaker, pace, rate):
+    return b"\x01\x00" * rate * 2  # two seconds per sentence: still playing when the caller cuts in
+
+
+def test_barge_in_clears_queued_audio(run, make_user, monkeypatch):
+    """The caller keeps talking over the agent: it stops and listens."""
+    from voice import pipeline
+    monkeypatch.setattr(pipeline, "BARGE_IN_SEC", 0.05)
     u = make_user()
     bot = u.bot()
 
     async def scenario():
         t = FakeTransport()
         setup = await _setup(u.id, bot)
-        session = CallSession(setup, t, stt_factory=lambda *a: FakeStt([]), tts=fake_tts,
+        session = CallSession(setup, t, stt_factory=lambda *a: FakeStt([]), tts=long_tts,
                               replier=replier_saying("x"), summarizer=fake_summary)
         await session._open_log()
         await session.speak("A long answer that the caller interrupts.")
         await session.on_speech_start()
+        await asyncio.sleep(0.15)  # and they're still talking
         cleared = t.cleared
         session.ended.set()
         await session._finish()

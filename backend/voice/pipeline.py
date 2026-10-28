@@ -14,7 +14,7 @@ import re
 import tempfile
 import time
 from array import array
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -124,6 +124,46 @@ TIMEOUT_REPLIES = {
     "en-IN": "We've reached the time limit for this call. Thanks for calling, goodbye.",
 }
 
+# Said once when an answer is slow to come (a busy AI service), so the caller doesn't think the line went dead.
+HOLD_PHRASES = {
+    "en-IN": "One moment, please.",
+    "ta-IN": "ஒரு நிமிஷம்ங்க.",
+    "hi-IN": "जी, एक मिनट।",
+    "te-IN": "ఒక్క నిమిషం అండి.",
+    "kn-IN": "ಒಂದು ನಿಮಿಷ.",
+    "ml-IN": "ഒരു നിമിഷം.",
+    "mr-IN": "एक मिनिट.",
+    "bn-IN": "এক মিনিট।",
+    "gu-IN": "એક મિનિટ.",
+    "pa-IN": "ਇੱਕ ਮਿੰਟ ਜੀ।",
+    "od-IN": "ଗୋଟିଏ ମିନିଟ୍।",
+}
+HOLD_AFTER_SEC = float(os.getenv("VOICE_HOLD_AFTER_SEC", "3"))
+# An answer that hasn't started by now isn't coming (every AI service failed or stalled): the caller is asked to
+# say it again, rather than left in silence.
+REPLY_GIVE_UP_SEC = float(os.getenv("VOICE_REPLY_GIVE_UP_SEC", "15"))
+# The recognizer signals speech after a few hundredths of a second of sound, so stopping on that signal let a
+# cough, a click on the line or a quick "mm" cut the agent off mid-sentence, often with nothing to answer after.
+# The agent stops for the caller once they've kept talking this long (a short sound ends sooner), or as soon as
+# words that need an answer come through.
+BARGE_IN_SEC = float(os.getenv("VOICE_BARGE_IN_SEC", "1.0"))
+# What people say while listening ("mm", "okay", "சரி", "हाँ जी"): no reason to stop the agent mid-answer.
+BACKCHANNEL_WORDS = {
+    "ok", "okay", "k", "hmm", "hm", "mm", "mmm", "mhm", "uh", "huh", "yes", "yeah", "yep", "ya", "right", "fine",
+    "sure", "alright", "haan", "han", "ha", "ji", "achha", "acha", "accha", "theek", "thik", "hai", "sari", "seri",
+    "saringa", "seringa", "aama", "aamam", "ama",
+    "சரி", "சரிங்க", "ம்", "ம்ம்", "ம்ம்ம்", "ஆமா", "ஆமாம்", "ஆமாங்க", "ஓகே", "ஹ்ம்", "ஹ்ம்ம்",
+    "हाँ", "हां", "जी", "अच्छा", "ठीक", "है", "ओके", "हम्म",
+    "సరే", "అవును", "ಸರಿ", "ಹೌದು", "ശരി", "ഉം", "അതെ", "হ্যাঁ", "আচ্ছা", "હા", "ਹਾਂ", "ହଁ",
+}
+# Following the caller's language. One clear sentence switches at once; a short or uncertain one waits for a
+# second in the same language, so one misheard line (Tamil speech written as "I think Katha calls") can't flip
+# the call into another language.
+SWITCH_WORDS = 3          # words in another Indian language
+SWITCH_WORDS_ENGLISH = 5  # English needs more: garbled Indian-language speech often comes out as English words
+LANGUAGE_SURE = 0.85      # the recognizer's own certainty that lets two words switch
+LANGUAGE_UNSURE = 0.6     # below it, one English sentence doesn't switch
+
 FRAME_SEC = 0.1   # with background sound, audio goes out in real-time frames
 LEAD_SEC = 0.25   # how far ahead of real time we keep the line fed
 STT_BATCH_SEC = 0.1  # phone audio arrives in 20 ms frames; the recognizer ends turns ~0.3 s sooner fed 100 ms at a time
@@ -170,6 +210,28 @@ def spoken_language(text: str, reported: Optional[str]) -> Optional[str]:
         latin = sum(c.isascii() for c in letters) / len(letters)
         return "en-IN" if latin >= 0.9 and words >= 3 else None
     return None
+
+
+def switch_now(text: str, language: str, probability: Optional[float]) -> bool:
+    """Whether one sentence in `language` is clear enough to change the call's language on its own.
+    `probability` is the recognizer's certainty of that language, when it said."""
+    words = len((text or "").split())
+    if language == "en-IN":
+        return words >= SWITCH_WORDS_ENGLISH and (probability is None or probability >= LANGUAGE_UNSURE)
+    # Indian-language letters are strong evidence by themselves; the recognizer's certainty isn't (it said 0.58 for
+    # a clear Tanglish sentence: the English words in it count against Tamil). It only lets two words switch.
+    return words >= SWITCH_WORDS or (words >= 2 and probability is not None and probability >= LANGUAGE_SURE)
+
+
+def _backchannel(text: str) -> bool:
+    words = llm.plain_words(text)
+    return 0 < len(words) <= 3 and all(w in BACKCHANNEL_WORDS for w in words)
+
+
+def _echoes(text: str, said: str) -> bool:
+    """The caller's line carried the agent's own voice back (a speakerphone): the "caller" said what the agent is saying."""
+    heard, ours = llm.plain_words(text), set(llm.plain_words(said))
+    return len(heard) >= 3 and sum(w in ours for w in heard) >= 0.7 * len(heard)
 
 # What people say when they pick up (or over the greeting); not a question for the assistant.
 HELLO_WORDS = {
@@ -271,9 +333,9 @@ def _just_hello(text: str) -> bool:
 
 
 def _normalize(text: str) -> str:
-    """Lowercase, straight apostrophes, punctuation to spaces: "Okay, thank you. Bye." -> " okay thank you bye "."""
-    text = re.sub(r"[^\w\s']", " ", text.lower().replace("’", "'"))
-    return " " + " ".join(text.split()) + " "
+    """Lowercase, straight apostrophes, punctuation to spaces: "Okay, thank you. Bye." -> " okay thank you bye ".
+    Tamil and Hindi words stay whole ("வணக்கம்" used to come out in pieces, so it never counted as a hello)."""
+    return " " + " ".join(llm.plain_words(text)) + " "
 
 
 def _matches(text: str, phrases: list) -> bool:
@@ -336,6 +398,10 @@ class CallSession:
         # The language the agent speaks: the agent's own, or the caller's once they clearly speak another.
         self.lang = setup.agent.language or "en-IN"
         self.follow_language = setup.agent.follow_caller_language is not False
+        self.lang_pending: Optional[str] = None  # heard once, not clearly enough to switch yet
+        self.barge_in: Optional[asyncio.Task] = None  # the caller started talking over the agent: stop if they go on
+        self.recent_speech: deque = deque(maxlen=3)  # the agent's latest sentences (to recognize its own echo)
+        self.asking = False  # the sentence being spoken is a question (a "yes" over it is the answer)
         self.knowledge_task: Optional[asyncio.Task] = None
         self.stt_batch = int(self.rate * STT_BATCH_SEC) * 2 if self.rate == 8000 else 0  # phone lines only
         # One sentence at a time is turned into speech: they share one connection, and an interrupted
@@ -364,6 +430,8 @@ class CallSession:
             yield await self.tts(*args)
             return
         yielded = False
+        # Connecting and the first audio, all told: past this, REST takes over rather than the caller waiting on.
+        budget_end = time.monotonic() + sarvam.TTS_FIRST_AUDIO_SEC
         try:
             if self.tts_stream is not None and self.tts_stream.language != lang:
                 await self.tts_stream.close()  # the caller switched language
@@ -372,13 +440,14 @@ class CallSession:
                 self.tts_stream, self.next_stream = self.next_stream, None
                 ready, self.next_stream_ready = self.next_stream_ready, None
                 try:
-                    if ready is not None:
-                        await ready  # usually connected already, while the answer was written
+                    if ready is not None:  # usually connected already, while the answer was written
+                        await asyncio.wait_for(ready, max(0.1, budget_end - time.monotonic()))
                 except Exception:
-                    pass  # speak() connects it
+                    pass  # speak() connects it, in what's left of the time
             if self.tts_stream is None:
                 self.tts_stream = sarvam.TtsStream(lang, args[2], args[3], self.rate)
-            async with aclosing(self.tts_stream.speak(text)) as chunks:  # closed at once if cut short
+            first_audio_sec = max(0.5, budget_end - time.monotonic())
+            async with aclosing(self.tts_stream.speak(text, first_audio_sec=first_audio_sec)) as chunks:  # closed at once if cut short
                 async for chunk in chunks:
                     yielded = True
                     yield chunk
@@ -395,7 +464,9 @@ class CallSession:
     def _for_speech(self, text: str) -> str:
         return spoken(self.s.agent, text)
 
-    async def speak(self, text: str) -> None:
+    async def speak(self, text: str, heard: Optional[list] = None) -> None:
+        """Say `text`. `heard` collects it once its audio starts reaching the caller (an answer that's cut off
+        before then wasn't heard, and isn't remembered as said)."""
         if not text or self.ended.is_set():
             return
         failed: Optional[Exception] = None
@@ -412,6 +483,9 @@ class CallSession:
                             return
                         if first:
                             self.speech_began_at, first = time.monotonic(), False
+                            self.recent_speech.append(text)
+                            if heard is not None:
+                                heard.append(text)
                         await self._emit(pcm)
             except Exception as e:  # streaming and REST speech both failed
                 failed = e
@@ -446,6 +520,15 @@ class CallSession:
             agent = self.s.agent
             self.next_stream = sarvam.TtsStream(language, agent.voice_id or "priya", agent.speaking_rate or 1.0, self.rate)
             self.next_stream_ready = asyncio.create_task(self.next_stream.open())
+
+    async def _keep_voices_warm(self) -> None:
+        """Sarvam closes a speech connection after a minute without traffic; the next sentence then waited for a
+        new one (or, when the close went unnoticed, for audio that never came). Ping them while the caller talks."""
+        if self.tts is not None or self.voice.locked():
+            return  # injected speech (tests), or a sentence is being spoken now, which is traffic
+        for stream in (self.tts_stream, self.next_stream):
+            if stream is not None and stream.connected and stream.idle_for() >= sarvam.TTS_KEEPALIVE_SEC:
+                await stream.ping()
 
     async def _close_voices(self) -> None:
         voices = [*self.spare_voices, (self.next_stream, self.next_stream_ready), (self.tts_stream, None)]
@@ -537,12 +620,40 @@ class CallSession:
         self.caller_talking_since = self.last_heard
         if time.monotonic() < self.greeting_until:
             return  # the opening (who we are, recorded line) always plays in full; it's a few seconds
-        if self.speaking and self.s.agent.allow_interruptions:
-            if self.reply_task and not self.reply_task.done():
-                self.reply_task.cancel()
-            await self._hush()
+        if self.speaking and self.s.agent.allow_interruptions and self.barge_in is None:
+            self.barge_in = asyncio.create_task(self._barge_in_after(BARGE_IN_SEC))
 
-    async def on_caller_text(self, text: str, language: Optional[str] = None) -> None:
+    async def _barge_in_after(self, delay: float) -> None:
+        """Stop talking if the caller is still talking `delay` from now. A cough, a click on the line or a quick
+        "mm" ends sooner (speech_end cancels this), and the agent carries on with its sentence."""
+        try:
+            await asyncio.sleep(delay)
+            if self.barge_in is asyncio.current_task():
+                self.barge_in = None  # decided: a speech_end arriving now mustn't stop it half done
+            if self.caller_talking_since is not None and self.speaking:
+                logger.info(f"Call {self.call_id}: the caller kept talking over the agent; stopping to listen")
+                if self.reply_task and not self.reply_task.done():
+                    self.reply_task.cancel()
+                await self._hush()
+        finally:
+            if self.barge_in is asyncio.current_task():
+                self.barge_in = None
+
+    def _cancel_barge_in(self) -> None:
+        if self.barge_in is not None:
+            self.barge_in.cancel()
+            self.barge_in = None
+
+    def _mid_answer(self) -> bool:
+        """The agent is talking, or between the sentences of an answer it's giving."""
+        return self.speaking or (self.reply_task is not None and not self.reply_task.done() and self.turn_spoken)
+
+    async def on_caller_text(self, text: str, language: Optional[str] = None, probability: Optional[float] = None) -> None:
+        mid_answer = self._mid_answer()
+        # Not while it asks something: a caller repeating the number it's reading back is answering.
+        if mid_answer and not self.asking and _echoes(text, " ".join(self.recent_speech)):
+            logger.info(f"Call {self.call_id}: ignored the agent's own voice coming back on the line: {text[:80]!r}")
+            return
         self.caller_spoke = True
         self.last_heard = time.monotonic()
         self.silence_prompts = 0
@@ -550,17 +661,19 @@ class CallSession:
         await self.t.event({"type": "caller", "text": text})
         opening = not self.greeted.is_set() or time.monotonic() < self.greeting_until + 0.5
         if self.follow_language:
-            switched = spoken_language(text, language)
-            if switched:
-                self._switch_language(switched)
+            self._follow(text, language, probability)
         if opening and _just_hello(text):
             return  # "Hello?" as they pick up, or over the greeting: the greeting is the answer
+        # Stopping mid-answer for the caller never cuts into the opening.
+        may_stop = mid_answer and self.s.agent.allow_interruptions and time.monotonic() >= self.greeting_until
 
         opt_out = _matches(text, self.s.opt_out_phrases)
         if opt_out or _matches(text, self.s.agent.end_call_phrases or []):
             # A pending answer to their last sentence must not play after the goodbye, nor the goodbye over the opening.
             if self.reply_task and not self.reply_task.done():
                 self.reply_task.cancel()
+            if may_stop:
+                await self._hush()
             await self.greeted.wait()
             if opt_out:
                 self.opted_out = True
@@ -568,6 +681,12 @@ class CallSession:
             await self.speak(self._opt_out_reply() if opt_out else self._goodbye())
             await self.end()
             return
+
+        if mid_answer and not self.asking and _backchannel(text):
+            return  # "mm", "okay" while the agent talks: they're listening, not asking for anything
+        if may_stop:
+            self._cancel_barge_in()
+            await self._hush()  # words that need an answer: stop talking and answer them
 
         if self.reply_task and not self.reply_task.done():
             self.reply_task.cancel()
@@ -577,11 +696,32 @@ class CallSession:
                 text = f"{self.history.pop()['content']} {text}"
         self.reply_task = asyncio.create_task(self._reply(text))
 
+    def _follow(self, text: str, reported: Optional[str], probability: Optional[float]) -> None:
+        """Change to the caller's language once it's clear they speak it (switch_now), or once a second sentence
+        in it confirms a first one that wasn't clear enough on its own."""
+        heard = spoken_language(text, reported)
+        if heard is None:
+            return  # too short or unclear to say either way
+        if heard == self.lang:
+            self.lang_pending = None
+            return
+        sure = probability if reported == heard else None  # the recognizer's certainty is about what it reported
+        if switch_now(text, heard, sure) or self.lang_pending == heard:
+            self.lang_pending = None
+            self._switch_language(heard)
+        else:
+            self.lang_pending = heard
+            logger.info(f"Call {self.call_id}: that sounded like {heard} ({probability}); switching if the next sentence is too")
+
     async def _reply(self, text: str) -> None:
         self.history.append({"role": "user", "content": text})
         self.turn_spoken = False
-        said: list[str] = []
+        self.asking = False
+        said: list[str] = []   # what the model wrote
+        heard: list[str] = []  # what reached the caller: the conversation remembers this
         began, written = time.monotonic(), None
+        holding: dict = {}
+        hold = asyncio.create_task(self._hold_on(holding)) if HOLD_AFTER_SEC > 0 else None
         try:
             knowledge = None
             if self.knowledge_task is not None:
@@ -590,37 +730,57 @@ class CallSession:
                 except Exception:
                     knowledge = None
             extra = {"knowledge": knowledge} if knowledge is not None else {}
-            # aclosing: an interrupted answer stops the model at once (it would otherwise keep writing,
-            # and using up the per-minute allowance, until it finished).
-            async with aclosing(self.replier(self.s.bot, self.s.agent, self.history[:-1], text + number_check(text),
-                                             self.s.direction, self.s.consent_source,
-                                             variables=self.s.variables, purpose=self.s.purpose,
-                                             after_hours=self.s.after_hours, reply_language=self.lang, **extra)) as replies:
-                async for sentence, control in replies:
-                    if sentence:
-                        said.append(sentence)
-                        self.turn_spoken = True
-                        written = written or time.monotonic()
-                        await self.greeted.wait()  # never over the opening (the answer itself is already being written)
-                        await self.speak(sentence)
-                        if len(said) == 1:
-                            self._log_timing(began, written)
-                    if control == llm.TRANSFER:
-                        await self._transfer()
-                        return
-                    if control == llm.END_CALL:
-                        await self.end()
-                        return
+            async with asyncio.timeout(REPLY_GIVE_UP_SEC) as limit:
+                # aclosing: an interrupted answer stops the model at once (it would otherwise keep writing,
+                # and using up the per-minute allowance, until it finished).
+                async with aclosing(self.replier(self.s.bot, self.s.agent, self.history[:-1], text + number_check(text),
+                                                 self.s.direction, self.s.consent_source,
+                                                 variables=self.s.variables, purpose=self.s.purpose,
+                                                 after_hours=self.s.after_hours, reply_language=self.lang, **extra)) as replies:
+                    async for sentence, control in replies:
+                        if sentence:
+                            if not said:
+                                limit.reschedule(None)  # it's answering: the rest takes as long as it takes
+                                if hold is not None and not holding:
+                                    hold.cancel()  # not needed after all
+                            said.append(sentence)
+                            self.turn_spoken = True
+                            written = written or time.monotonic()
+                            await self.greeted.wait()  # never over the opening (the answer itself is already being written)
+                            self.asking = sentence.endswith("?")
+                            await self.speak(sentence, heard=heard)
+                            if len(said) == 1:
+                                self._log_timing(began, written)
+                        if control == llm.TRANSFER:
+                            await self._transfer()
+                            return
+                        if control == llm.END_CALL:
+                            await self.end()
+                            return
         except asyncio.CancelledError:
             raise
+        except TimeoutError:
+            logger.error(f"Call {self.call_id}: no answer {REPLY_GIVE_UP_SEC:.0f}s after the caller spoke; asking them to repeat")
+            await self.speak(self._fallback_reply())
         except Exception as e:
             logger.error(f"Reply failed: {e}")
             await self.speak(self._fallback_reply())
         finally:
-            if said:
-                self.history.append({"role": "assistant", "content": " ".join(said)})
-                if self.s.channel == "phone" and assist.is_unanswered(" ".join(said)):
-                    fire_and_forget(assist.record_gap(self.s.bot.bot_id, text, "voice", None))
+            if hold is not None:
+                hold.cancel()
+            if heard:
+                self.history.append({"role": "assistant", "content": " ".join(heard)})
+            if said and self.s.channel == "phone" and assist.is_unanswered(" ".join(said)):
+                fire_and_forget(assist.record_gap(self.s.bot.bot_id, text, "voice", None))
+
+    async def _hold_on(self, holding: dict) -> None:
+        """The answer is slow (a busy AI service): say "one moment" once, instead of leaving the caller wondering
+        whether the line went dead. Not part of the conversation the model sees."""
+        await asyncio.sleep(HOLD_AFTER_SEC)
+        await self.greeted.wait()
+        holding["started"] = True
+        logger.info(f"Call {self.call_id}: the answer is slow; saying one moment")
+        await self.speak(HOLD_PHRASES.get(self._lang(), HOLD_PHRASES["en-IN"]))
 
     def _log_timing(self, began: float, written: float) -> None:
         """One line per answer: where the time between the caller stopping and the reply went."""
@@ -695,8 +855,9 @@ class CallSession:
             elif ev.kind == "speech_end":
                 self.caller_talking_since = None
                 self.last_heard = self.speech_ended_at = time.monotonic()
+                self._cancel_barge_in()  # a short sound (a cough, "mm"): the agent carries on
             elif ev.kind == "transcript":
-                await self.on_caller_text(ev.text, getattr(ev, "language", None))
+                await self.on_caller_text(ev.text, getattr(ev, "language", None), getattr(ev, "probability", None))
             elif ev.kind == "error":
                 logger.warning(f"STT error: {ev.text}")
             if self.ended.is_set():
@@ -708,6 +869,7 @@ class CallSession:
         silence = max(3, agent.silence_timeout_sec or 8)
         while not self.ended.is_set():
             await asyncio.sleep(0.5)
+            await self._keep_voices_warm()
             if self._elapsed() >= limit:
                 if self.reply_task and not self.reply_task.done():
                     self.reply_task.cancel()  # the time-limit notice replaces whatever was being said
@@ -774,6 +936,7 @@ class CallSession:
             if self.opening is None:
                 self._prepare_opening()
             self._log("agent", self.opening_text)
+            self.recent_speech.append(self.opening_text)
             await self.t.event({"type": "agent", "text": self.opening_text})
             while (pcm := await asyncio.wait_for(self.opening.get(), OPENING_STALL_SEC)) is not None:
                 if self.ended.is_set():
@@ -881,7 +1044,7 @@ class CallSession:
             await self.t.event({"type": "error", "code": "engine", "message": "The voice engine had a problem."})
             self.ended.set()
         finally:
-            extra = [t for t in (greeting, self.reply_task, self.knowledge_task, self.opening_task) if t]
+            extra = [t for t in (greeting, self.reply_task, self.knowledge_task, self.opening_task, self.barge_in) if t]
             for task in tasks + extra:
                 task.cancel()
             await asyncio.gather(*tasks, *extra, return_exceptions=True)

@@ -10,6 +10,7 @@ import io
 import json
 import logging
 import os
+import time
 import wave
 from dataclasses import dataclass
 from typing import AsyncIterator, Optional
@@ -17,6 +18,7 @@ from urllib.parse import urlencode
 
 import httpx
 import websockets
+from websockets.exceptions import ConnectionClosed
 from websockets.protocol import State
 
 from voice.catalog import STT_MODEL, TTS_MODEL
@@ -26,18 +28,26 @@ logger = logging.getLogger(__name__)
 STT_WS_URL = "wss://api.sarvam.ai/speech-to-text/ws"
 TTS_URL = "https://api.sarvam.ai/text-to-speech"
 
+# A sentence's audio normally starts well within a second. Nothing for this long (connecting included), or a
+# gap this long mid-sentence, means the connection is stuck: the sentence is given up on (REST takes over)
+# instead of leaving the caller in silence with every later sentence queued behind it.
+TTS_FIRST_AUDIO_SEC = float(os.getenv("VOICE_TTS_FIRST_AUDIO_SEC", "4"))
+TTS_CHUNK_GAP_SEC = float(os.getenv("VOICE_TTS_CHUNK_GAP_SEC", "3"))
+# Sarvam closes a speech connection after a minute without traffic; a ping well before that keeps it open.
+TTS_KEEPALIVE_SEC = 25.0
+
 
 class SarvamError(Exception):
     pass
 
 
-async def _connect_ws(url: str, attempts: int = 3):
+async def _connect_ws(url: str, attempts: int = 3, open_timeout: float = 8):
     """Open a Sarvam WebSocket, retrying a slow or failed handshake (seen occasionally in testing)."""
     last: Exception | None = None
     for attempt in range(attempts):
         try:
             return await websockets.connect(url, additional_headers={"Api-Subscription-Key": api_key()},
-                                            max_size=2**22, open_timeout=8, close_timeout=2)
+                                            max_size=2**22, open_timeout=open_timeout, close_timeout=2)
         except (asyncio.TimeoutError, OSError, websockets.exceptions.InvalidHandshake) as e:
             last = e
             logger.warning(f"Sarvam connect attempt {attempt + 1} failed: {e}")
@@ -61,6 +71,7 @@ class SttEvent:
     kind: str  # "speech_start", "speech_end", "transcript", "error"
     text: str = ""
     language: Optional[str] = None
+    probability: Optional[float] = None  # how sure the recognizer is of `language` (only when detecting it)
 
 
 class SttStream:
@@ -117,7 +128,9 @@ class SttStream:
             elif kind == "data":
                 text = (data.get("transcript") or "").strip()
                 if text:
-                    yield SttEvent("transcript", text, data.get("language_code"))
+                    probability = data.get("language_probability")
+                    yield SttEvent("transcript", text, data.get("language_code"),
+                                   float(probability) if isinstance(probability, (int, float)) else None)
             elif kind == "error":
                 yield SttEvent("error", str(data.get("error") or data))
 
@@ -141,20 +154,46 @@ class TtsStream:
             "enable_preprocessing": True,
         }
         self._ws = None
+        self.used_at = time.monotonic()  # last traffic on the connection (for the keep-alive)
 
     async def _connect(self):
-        ws = await _connect_ws(f"{TTS_WS_URL}?model={TTS_MODEL}&send_completion_event=true")
+        # Two quick tries: a sentence is usually waiting (TTS_FIRST_AUDIO_SEC bounds the whole wait anyway).
+        ws = await _connect_ws(f"{TTS_WS_URL}?model={TTS_MODEL}&send_completion_event=true", attempts=2, open_timeout=4)
         try:
             await ws.send(json.dumps({"type": "config", "data": self.config}))
         except BaseException:
             await _close_quietly(ws)
             raise
         self._ws = ws
+        self.used_at = time.monotonic()
 
     async def open(self) -> None:
         """Connect ahead of the first sentence (otherwise the first sentence connects)."""
         if self._ws is None:
             await self._connect()
+
+    @property
+    def connected(self) -> bool:
+        return self._ws is not None
+
+    def idle_for(self) -> float:
+        return time.monotonic() - self.used_at
+
+    async def ping(self) -> None:
+        """Keep an idle connection open. One found closed is dropped, and the next sentence opens a new one."""
+        ws = self._ws
+        if ws is None:
+            return
+        try:
+            if ws.state is not State.OPEN:
+                raise ConnectionError("closed by Sarvam")
+            await ws.send(json.dumps({"type": "ping"}))
+            self.used_at = time.monotonic()
+        except Exception as e:
+            logger.info(f"Sarvam speech connection lost while idle ({e}); the next sentence reconnects")
+            if self._ws is ws:
+                self._ws = None
+            await _close_quietly(ws)
 
     async def close(self):
         ws, self._ws = self._ws, None  # detached first: a sentence started meanwhile opens a fresh connection
@@ -168,31 +207,55 @@ class TtsStream:
     async def __aexit__(self, *exc):
         await self.close()
 
-    async def speak(self, text: str) -> AsyncIterator[bytes]:
-        if self._ws is not None and self._ws.state is not State.OPEN:
-            self._ws = None  # Sarvam closed it while the caller talked: reconnect (~0.4 s), not REST (~2 s)
-        if self._ws is None:
-            await self._connect()
-        ws, finished = self._ws, False
-        try:
-            await ws.send(json.dumps({"type": "text", "data": {"text": text[:2500]}}))
-            await ws.send(json.dumps({"type": "flush"}))
-            async for raw in ws:
-                msg = json.loads(raw)
-                kind = msg.get("type")
-                if kind == "audio":
-                    chunk = base64.b64decode(msg["data"]["audio"])
-                    yield _wav_to_pcm(chunk) if chunk[:4] == b"RIFF" else chunk
-                elif kind == "event" and (msg.get("data") or {}).get("event_type") == "final":
-                    finished = True
-                    return
-                elif kind == "error":
-                    raise SarvamError(str((msg.get("data") or {}).get("message")))
-        finally:
-            if not finished:  # interrupted or failed: start clean next time
-                if self._ws is ws:
-                    self._ws = None
-                await _close_quietly(ws)
+    async def speak(self, text: str, first_audio_sec: float = TTS_FIRST_AUDIO_SEC) -> AsyncIterator[bytes]:
+        """Audio for `text`, in pieces as Sarvam makes it. Raises SarvamError when it hasn't started
+        `first_audio_sec` after the call (connecting included) or stops for TTS_CHUNK_GAP_SEC part way: a stuck
+        connection must not hold up the call. A connection kept from earlier that turns out to be closed
+        (Sarvam closes idle ones) gets one fresh try within the same time, rather than going to REST (~2 s)."""
+        deadline = time.monotonic() + first_audio_sec
+        for attempt in (1, 2):
+            if self._ws is not None and self._ws.state is not State.OPEN:
+                self._ws = None  # Sarvam closed it while the caller talked: reconnect (~0.4 s)
+            reused = self._ws is not None
+            if self._ws is None:
+                try:
+                    await asyncio.wait_for(self._connect(), max(0.1, deadline - time.monotonic()))
+                except asyncio.TimeoutError:
+                    raise SarvamError(f"no speech connection within {first_audio_sec:.1f}s") from None
+            ws, finished, started = self._ws, False, False
+            try:
+                try:
+                    await ws.send(json.dumps({"type": "text", "data": {"text": text[:2500]}}))
+                    await ws.send(json.dumps({"type": "flush"}))
+                    self.used_at = time.monotonic()
+                    while True:
+                        wait = max(0.1, TTS_CHUNK_GAP_SEC if started else deadline - time.monotonic())
+                        try:
+                            raw = await asyncio.wait_for(ws.recv(), wait)
+                        except asyncio.TimeoutError:
+                            raise SarvamError(f"no audio for {wait:.1f}s {'mid-sentence' if started else 'after asking'}") from None
+                        msg = json.loads(raw)
+                        kind = msg.get("type")
+                        if kind == "audio":
+                            started = True
+                            self.used_at = time.monotonic()
+                            chunk = base64.b64decode(msg["data"]["audio"])
+                            yield _wav_to_pcm(chunk) if chunk[:4] == b"RIFF" else chunk
+                        elif kind == "event" and (msg.get("data") or {}).get("event_type") == "final":
+                            finished = True
+                            return
+                        elif kind == "error":
+                            raise SarvamError(str((msg.get("data") or {}).get("message")))
+                except ConnectionClosed:
+                    if started or not reused or attempt == 2:
+                        raise
+                    logger.info("Sarvam speech connection had closed while idle; trying a fresh one")
+                    continue
+            finally:
+                if not finished:  # interrupted or failed: start clean next time
+                    if self._ws is ws:
+                        self._ws = None
+                    await _close_quietly(ws)
 
 
 async def _close_quietly(ws) -> None:
@@ -219,7 +282,8 @@ async def synthesize(text: str, language: str, speaker: str, pace: float, sample
         "speech_sample_rate": sample_rate,
         "enable_preprocessing": True,
     }
-    async with httpx.AsyncClient(timeout=20) as client:
+    # The fallback for a sentence on a live call: a few seconds normally; never long enough to leave a caller waiting.
+    async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=4.0)) as client:
         resp = await client.post(TTS_URL, headers={"api-subscription-key": api_key()}, json=payload)
     if resp.status_code >= 300:
         raise SarvamError(f"TTS {resp.status_code}: {resp.text[:300]}")

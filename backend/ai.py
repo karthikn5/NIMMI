@@ -100,9 +100,9 @@ def _gemini(system: str, messages: list[dict], *, api_key: Optional[str], models
 
 
 def _gemini_stream(system: str, messages: list[dict], *, api_key: Optional[str], models: list[str],
-                   temperature: float, max_tokens: int) -> Iterator[str]:
+                   temperature: float, max_tokens: int, timeout: Optional[httpx.Timeout] = None) -> Iterator[str]:
     last = "no Gemini key configured"
-    with httpx.Client(timeout=TIMEOUT) as client:
+    with httpx.Client(timeout=timeout or TIMEOUT) as client:
         for key in _keys(api_key):
             for model in models:
                 sent = False
@@ -171,8 +171,10 @@ def chat(system: str, messages: list[dict], *, provider: str = "google", model: 
 
 
 def chat_stream(system: str, messages: list[dict], *, provider: str = "google", model: Optional[str] = None,
-                api_key: Optional[str] = None, temperature: float = 0.3, max_tokens: int = 1024) -> Iterator[str]:
-    """The answer in pieces as it's written. Raises AIError before the first piece if no model could answer."""
+                api_key: Optional[str] = None, temperature: float = 0.3, max_tokens: int = 1024,
+                timeout: Optional[httpx.Timeout] = None) -> Iterator[str]:
+    """The answer in pieces as it's written. Raises AIError before the first piece if no model could answer.
+    `timeout` (Gemini) replaces the default limits, e.g. tighter ones for a live phone call."""
     if provider == "openai":
         import openai
         try:
@@ -186,7 +188,8 @@ def chat_stream(system: str, messages: list[dict], *, provider: str = "google", 
             return
         except Exception as e:
             raise AIError(f"openai: {e}") from e
-    yield from _gemini_stream(system, messages, api_key=api_key, models=_order(model), temperature=temperature, max_tokens=max_tokens)
+    yield from _gemini_stream(system, messages, api_key=api_key, models=_order(model), temperature=temperature,
+                              max_tokens=max_tokens, timeout=timeout)
 
 
 def extract_json(system: str, text: str, max_tokens: int = 400) -> dict:

@@ -87,6 +87,11 @@ def test_one_sentence_switches_language_only_when_its_clear():
     assert not switch_now("I think Katha calls", "en-IN", None)  # Tamil speech garbled into English (a real call)
     assert switch_now("I want to know about the fees", "en-IN", None)
     assert not switch_now("I want to know about the fees", "en-IN", 0.3)  # the recognizer itself isn't sure
+    # A language not heard yet on the call needs a longer sentence (or a second one): short unclear first words came
+    # out as Punjabi and Malayalam on real calls, and the agent switched to them.
+    assert not switch_now("ਉਹ ਵੀ ਮੈਨੂੰ", "pa-IN", 0.95, first_time=True)
+    assert not switch_now("ஆ தமிழ் தெரியுமா உங்களுக்கு", "ta-IN", 0.9, first_time=True)
+    assert switch_now("எனக்கு வந்து machine ஒன்னு internship பண்ணலாமா", "ta-IN", None, first_time=True)
 
 
 def test_one_garbled_line_doesnt_flip_the_call_into_another_language(run, make_user):
@@ -96,7 +101,7 @@ def test_one_garbled_line_doesnt_flip_the_call_into_another_language(run, make_u
     async def scenario():
         session, _ = await _call_in_progress(u, bot, replier_saying("x"), tts=fake_tts)
         seen = []
-        for text, reported in (("ஆ தமிழ் தெரியுமா உங்களுக்கு", "ta-IN"),  # a clear Tamil sentence: Tamil at once
+        for text, reported in (("ஆ தமிழ் தெரியுமா உங்களுக்கு, தமிழ்ல பேசலாமா", "ta-IN"),  # a clear Tamil sentence: Tamil at once
                                ("I think Katha calls", "en-IN"),  # Tamil speech that came out as English words
                                ("எனக்கு fees எவ்வளவு சொல்லுங்க", "ta-IN"),
                                ("Sorry, can we talk", "en-IN"),  # they really do change to English...
@@ -109,6 +114,51 @@ def test_one_garbled_line_doesnt_flip_the_call_into_another_language(run, make_u
         return seen
 
     assert run(scenario) == ["ta-IN", "ta-IN", "ta-IN", "ta-IN", "en-IN"]
+
+
+def test_unclear_first_words_dont_switch_the_call_into_a_random_language(run, make_user):
+    """A real call's first words came out as Punjabi, another call's as Malayalam: both switched the agent."""
+    u = make_user()
+    bot = u.bot()
+
+    async def scenario(lines):
+        session, _ = await _call_in_progress(u, bot, replier_saying("x"), tts=fake_tts)
+        seen = []
+        for text, reported in lines:
+            await session.on_caller_text(text, reported)
+            seen.append(session.lang)
+        if session.reply_task:
+            await asyncio.gather(session.reply_task, return_exceptions=True)
+        await _hang_up(session)
+        return seen
+
+    assert run(scenario, [("ਉਹ ਵੀ ਮੈਨੂੰ", "pa-IN"), ("I'm going to nominate", "en-IN")]) == ["en-IN", "en-IN"]
+    assert run(scenario, [("Okay ഉടൻ തന്നെ", "ml-IN"), ("Do you know me?", "en-IN")]) == ["en-IN", "en-IN"]
+    # A real Tamil caller who starts short: Tamil from their second sentence.
+    assert run(scenario, [("தமிழ்ல பேசலாமா", "ta-IN"), ("எனக்கு fees தெரியணும்", "ta-IN")]) == ["en-IN", "ta-IN"]
+
+
+def test_the_agent_only_switches_to_the_languages_the_business_picked(run, make_user):
+    u = make_user()
+    bot = u.bot()
+
+    async def scenario():
+        setup = await _setup(u.id, bot, switch_languages=["ta-IN"])
+        session = CallSession(setup, FakeTransport(), stt_factory=lambda *a: FakeStt([]), tts=fake_tts,
+                              replier=replier_saying("x"), summarizer=fake_summary)
+        await session._open_log()
+        session.greeted.set()
+        seen = []
+        for text, reported in (("നിങ്ങൾക്ക് മലയാളം അറിയാമോ എനിക്ക് ഫീസ് അറിയണം", "ml-IN"),  # long and clear, but not picked
+                               ("எனக்கு இந்த internship பத்தி கொஞ்சம் சொல்லுங்க", "ta-IN")):
+            await session.on_caller_text(text, reported)
+            seen.append(session.lang)
+        if session.reply_task:
+            await asyncio.gather(session.reply_task, return_exceptions=True)
+        await _hang_up(session)
+        return seen
+
+    assert run(scenario) == ["en-IN", "ta-IN"]
 
 
 # ─── interruptions ────────────────────────────────────────────────

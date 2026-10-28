@@ -20,12 +20,13 @@ from auth import (AuthContext, client_ip, decode_scoped_token, get_ctx, get_owne
                   rate_limit, require_manager, require_owner)
 from security import is_production, local_dev
 from database import async_session, get_db
-from backend.models import (Bot, CallbackJob, CallbackSettings, CallLog, Campaign, ComplianceSettings, Conversation, DncEntry,
-                            PhoneNumber, VoiceAgent)
+from backend.models import (Bot, CallbackJob, CallbackSettings, CallLog, Campaign, ComplianceSettings, Contact, Conversation,
+                            DncEntry, PhoneNumber, VoiceAgent, VoiceScript)
 from notify.email import send_email
+from notify.events import fire_and_forget
 from phone import callable_destination, display, extract_contact, mask, to_e164
 import assist
-from voice import accounts, ambience, catalog, exotel, llm, metering, recording, sarvam, scheduler, twilio
+from voice import accounts, ambience, catalog, exotel, llm, memory, metering, recording, sarvam, scheduler, scripts, twilio
 from voice.pipeline import CallSession, CallSetup, prepare_opening
 from voice.transports import BrowserTransport, ExotelTransport, TwilioTransport
 import plans
@@ -49,11 +50,24 @@ async def _agent_for(bot: Bot, owner_id: str, db: AsyncSession) -> tuple[VoiceAg
     return (agent, True) if agent else (_agent_defaults(bot, owner_id), False)
 
 
-def _agent_json(agent: VoiceAgent, bot: Bot) -> dict:
+def _direction(value: Optional[str]) -> str:
+    """Which agent a request is about. None (the dashboard before incoming and outgoing agents) means outgoing: those
+    were the only settings, and the incoming agent follows them until it's edited."""
+    if value in (None, ""):
+        return "outbound"
+    if value not in scripts.DIRECTIONS:
+        raise HTTPException(status_code=400, detail="Unknown kind of calls")
+    return value
+
+
+def _agent_json(agent: VoiceAgent, bot: Bot, direction: str = "outbound") -> dict:
     return {
-        "bot_id": bot.bot_id, "bot_name": bot.bot_name, "enabled": bool(agent.enabled), "language": agent.language,
+        "bot_id": bot.bot_id, "bot_name": bot.bot_name, "direction": direction,
+        "enabled": bool(agent.enabled), "language": agent.language,
         "understand_code_mixed": bool(agent.understand_code_mixed), "voice_id": agent.voice_id,
         "follow_caller_language": agent.follow_caller_language is not False,
+        "switch_languages": agent.switch_languages or [],
+        "remember_callers": agent.remember_callers is not False,
         "speaking_rate": agent.speaking_rate or 1.0, "assistant_name": agent.assistant_name or "",
         "company_name": agent.company_name or "", "greeting": agent.greeting or "",
         "allow_interruptions": bool(agent.allow_interruptions), "silence_timeout_sec": agent.silence_timeout_sec or 8,
@@ -188,7 +202,7 @@ async def overview(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depen
 
 # ─── agents & voices ──────────────────────────────────────────────
 @router.get("/agents")
-async def list_agents(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depends(get_db)):
+async def list_agents(direction: Optional[str] = None, ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depends(get_db)):
     is_local = local_dev()
     if is_local:
         bots = (await db.execute(select(Bot).order_by(Bot.created_at.desc()))).scalars().all()
@@ -202,14 +216,16 @@ async def list_agents(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = De
         )).scalars().all()
 
     since = datetime.utcnow() - timedelta(days=30)
-    counts = dict((await db.execute(
-        select(CallLog.bot_id, func.count()).where(CallLog.channel == "phone", CallLog.started_at >= since).group_by(CallLog.bot_id)
-        if is_local else
-        select(CallLog.bot_id, func.count()).where(CallLog.user_id == ctx.owner_id, CallLog.channel == "phone", CallLog.started_at >= since).group_by(CallLog.bot_id)
-    )).all())
+    counting = select(CallLog.bot_id, func.count()).where(CallLog.channel == "phone", CallLog.started_at >= since)
+    if not is_local:
+        counting = counting.where(CallLog.user_id == ctx.owner_id)
+    if direction:
+        counting = counting.where(CallLog.direction == _direction(direction))
+    counts = dict((await db.execute(counting.group_by(CallLog.bot_id))).all())
     out = []
     for bot in bots:
         agent = agents.get(bot.bot_id) or _agent_defaults(bot, bot.user_id or ctx.owner_id)
+        agent = scripts.for_direction(agent, _direction(direction))
         number = next((n.number for n in numbers if n.bot_id == bot.bot_id), None)
         out.append({"bot_id": bot.bot_id, "bot_name": bot.bot_name, "enabled": bool(agent.enabled), "language": agent.language,
                     "voice_id": agent.voice_id, "phone_number": number, "calls_30d": counts.get(bot.bot_id, 0)})
@@ -217,10 +233,12 @@ async def list_agents(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = De
 
 
 @router.get("/agents/{bot_id}")
-async def get_agent(bot_id: str, ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depends(get_db)):
+async def get_agent(bot_id: str, direction: Optional[str] = None, ctx: AuthContext = Depends(get_ctx),
+                    db: AsyncSession = Depends(get_db)):
     bot = await get_owned_bot(bot_id, ctx, db)
     agent, _ = await _agent_for(bot, ctx.owner_id, db)
-    return _agent_json(agent, bot)
+    direction = _direction(direction)
+    return _agent_json(scripts.for_direction(agent, direction), bot, direction)
 
 
 class AgentUpdate(BaseModel):
@@ -228,11 +246,14 @@ class AgentUpdate(BaseModel):
     language: str
     understand_code_mixed: bool
     follow_caller_language: bool = True
+    switch_languages: list[str] = Field(default_factory=list, max_length=12)
+    remember_callers: bool = True
     voice_id: Optional[str] = None
     speaking_rate: float = Field(1.0, ge=0.7, le=1.3)
     assistant_name: str = Field("", max_length=40)
     company_name: str = Field("", max_length=120)
-    greeting: str = Field("", max_length=300)
+    # What it says: on the Knowledge page now (voice_scripts). Sent only by the dashboard from before that page.
+    greeting: Optional[str] = Field(None, max_length=300)
     allow_interruptions: bool = True
     silence_timeout_sec: int = Field(8, ge=3, le=60)
     max_call_minutes: int = Field(10, ge=1, le=60)
@@ -240,8 +261,8 @@ class AgentUpdate(BaseModel):
     transfer_number: str = ""
     transfer_when: str = Field("", max_length=500)
     end_call_phrases: list[str] = []
-    call_goal: str = Field("", max_length=500)
-    collect_fields: list[CollectField] = []
+    call_goal: Optional[str] = Field(None, max_length=500)
+    collect_fields: Optional[list[CollectField]] = None
     ambience: str = "none"
     ambience_volume: str = "medium"
     silence_reminders: int = Field(1, ge=0, le=3)
@@ -252,11 +273,13 @@ class AgentUpdate(BaseModel):
 
 
 @router.put("/agents/{bot_id}")
-async def update_agent(bot_id: str, data: AgentUpdate, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+async def update_agent(bot_id: str, data: AgentUpdate, direction: Optional[str] = None,
+                       ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    direction = _direction(direction)
     if data.enabled:
         await plans.require(db, ctx.owner_id, "voice")
     bot = await get_owned_bot(bot_id, ctx, db)
-    if data.language not in catalog.LANGUAGES:
+    if data.language not in catalog.LANGUAGES or any(code not in catalog.LANGUAGES for code in data.switch_languages):
         raise HTTPException(status_code=400, detail="Unsupported language")
     if data.voice_id and data.voice_id not in catalog.VOICE_IDS:
         raise HTTPException(status_code=400, detail="Unknown voice")
@@ -268,22 +291,198 @@ async def update_agent(bot_id: str, data: AgentUpdate, ctx: AuthContext = Depend
         raise HTTPException(status_code=400, detail="Unknown background sound")
     if data.voicemail_action not in ("off", "hangup", "leave_message") or data.transfer_mode not in ("cold", "warm"):
         raise HTTPException(status_code=400, detail="Unknown option")
-    collect_fields = _clean_fields(data.collect_fields)
     agent, exists = await _agent_for(bot, ctx.owner_id, db)
+    inbound = dict(agent.inbound or {})
     for field, value in data.model_dump().items():
+        if value is None:
+            continue  # what it says: not sent (it's on the Knowledge page)
         if field == "end_call_phrases":
             value = [p.strip().lower()[:60] for p in value if p.strip()][:20]
+        elif field == "switch_languages":
+            value = list(dict.fromkeys(value))
         elif field == "collect_fields":
-            value = collect_fields
+            value = _clean_fields(data.collect_fields)
         elif field == "pronunciations":
             value = [{"word": p["word"].strip(), "say": p["say"].strip()} for p in value][:40]
-        setattr(agent, field, value)
+        if direction == "inbound" and field in scripts.PER_DIRECTION:
+            inbound[field] = value
+        elif direction == "inbound" and field in ("greeting", "call_goal", "collect_fields", "voicemail_action",
+                                                  "voicemail_message"):
+            continue  # the outgoing agent's
+        else:
+            setattr(agent, field, value)
+    if direction == "inbound":
+        # All of them, so later changes to the outgoing agent don't change this one.
+        agent.inbound = {f: inbound.get(f, getattr(agent, f)) for f in scripts.PER_DIRECTION}
     if not exists:
         db.add(agent)
     await db.commit()
-    if agent.enabled and agent.voice_id:  # its opening, ready for the next call coming in
-        prepare_opening(agent, {}, bool((await _compliance(ctx.owner_id, db)).record_calls))
-    return _agent_json(agent, bot)
+    await _prepare_openings(bot, agent, ctx.owner_id, db, direction)
+    return _agent_json(scripts.for_direction(agent, direction), bot, direction)
+
+
+async def _prepare_openings(bot: Bot, agent: VoiceAgent, owner_id: str, db: AsyncSession, *directions: str) -> None:
+    """The opening for the next call coming in or going out, made now so it plays at once (best effort)."""
+    recorded = bool((await _compliance(owner_id, db)).record_calls)
+    for direction in directions:
+        call_agent = scripts.for_direction(agent, direction)
+        if call_agent.enabled and call_agent.voice_id:
+            script, _ = await scripts.script_for(db, agent, direction)
+            scripts.apply(call_agent, script, None)
+            prepare_opening(call_agent, {}, recorded)
+
+
+# ─── scripts: what the agents say (Knowledge) ──────────────────────
+class ScriptAnswer(BaseModel):
+    question: str = Field(..., max_length=200)
+    answer: str = Field("", max_length=1000)
+
+
+class ScriptUpdate(BaseModel):
+    greeting: str = Field("", max_length=scripts.GREETING_CHARS)
+    greeting_known: str = Field("", max_length=scripts.GREETING_CHARS)
+    personality: str = Field("", max_length=scripts.PERSONALITY_CHARS)
+    instructions: str = Field("", max_length=scripts.INSTRUCTIONS_CHARS)
+    call_goal: str = Field("", max_length=scripts.GOAL_CHARS)
+    collect_fields: list[CollectField] = []
+    answers: list[ScriptAnswer] = Field(default_factory=list, max_length=15)
+
+
+class DraftRequest(BaseModel):
+    answers: list[ScriptAnswer] = Field(default_factory=list, max_length=15)
+
+
+async def _script_reply(db: AsyncSession, bot: Bot, agent: VoiceAgent, direction: str) -> dict:
+    script, saved = await scripts.script_for(db, agent, direction)
+    return {**scripts.script_json(script, saved), "bot_id": bot.bot_id, "bot_name": bot.bot_name,
+            "language": scripts.for_direction(agent, direction).language, "assistant_name": agent.assistant_name or "",
+            "company_name": agent.company_name or bot.bot_name or ""}
+
+
+@router.get("/scripts/{bot_id}/{direction}")
+async def get_script(bot_id: str, direction: str, ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depends(get_db)):
+    bot = await get_owned_bot(bot_id, ctx, db)
+    agent, _ = await _agent_for(bot, ctx.owner_id, db)
+    return await _script_reply(db, bot, agent, _direction(direction))
+
+
+@router.put("/scripts/{bot_id}/{direction}")
+async def update_script(bot_id: str, direction: str, data: ScriptUpdate, ctx: AuthContext = Depends(require_manager),
+                        db: AsyncSession = Depends(get_db)):
+    bot = await get_owned_bot(bot_id, ctx, db)
+    direction = _direction(direction)
+    agent, _ = await _agent_for(bot, ctx.owner_id, db)
+    row = (await db.execute(select(VoiceScript).where(
+        VoiceScript.bot_id == bot.bot_id, VoiceScript.direction == direction))).scalars().first()
+    if row is None:
+        row = VoiceScript(bot_id=bot.bot_id, direction=direction, user_id=ctx.owner_id)
+        db.add(row)
+    row.greeting = data.greeting.strip()
+    row.greeting_known = data.greeting_known.strip()
+    row.personality = data.personality.strip()
+    row.instructions = data.instructions.strip()
+    row.call_goal = data.call_goal.strip()
+    row.collect_fields = _clean_fields(data.collect_fields)
+    row.answers = [a.model_dump() for a in data.answers if a.answer.strip()]
+    await db.commit()
+    await _prepare_openings(bot, agent, ctx.owner_id, db, direction)
+    return await _script_reply(db, bot, agent, direction)
+
+
+@router.post("/scripts/{bot_id}/{direction}/draft")
+async def draft_script(bot_id: str, direction: str, data: DraftRequest, ctx: AuthContext = Depends(require_manager),
+                       db: AsyncSession = Depends(get_db)):
+    """Write with AI: a script from the owner's answers and the assistant's knowledge. Not saved: they review it."""
+    bot = await get_owned_bot(bot_id, ctx, db)
+    direction = _direction(direction)
+    rate_limit(f"script-draft:{ctx.owner_id}", 20, 3600)
+    agent, _ = await _agent_for(bot, ctx.owner_id, db)
+    try:
+        knowledge = await llm.call_knowledge(bot)
+        return await scripts.draft(bot, scripts.for_direction(agent, direction), direction,
+                                   [a.model_dump() for a in data.answers], knowledge)
+    except Exception as e:
+        logger.warning(f"Writing a {direction} script for {bot.bot_id} failed: {e}")
+        raise HTTPException(status_code=502, detail="Couldn't write the script just now. Please try again in a minute.")
+
+
+# ─── contacts: who each assistant remembers ──────────────────────────
+class ContactUpdate(BaseModel):
+    name: str = Field("", max_length=80)
+    email: str = Field("", max_length=120)
+    notes: str = Field("", max_length=1000)
+
+
+def _contact_json(c: Contact, bot_names: dict, full: bool = False) -> dict:
+    data = {
+        "id": c.id, "bot_id": c.bot_id, "bot_name": bot_names.get(c.bot_id, "Deleted assistant"),
+        "number": display(c.e164) if full else mask(c.e164), "name": c.name or "", "calls": c.calls or 0,
+        "last_call_at": c.last_call_at.isoformat() if c.last_call_at else None, "notes": c.notes or "",
+    }
+    if full:
+        data.update({"email": c.email or "", "details": c.details or {},
+                     "first_call_at": c.first_call_at.isoformat() if c.first_call_at else None,
+                     "remember_from": c.remember_from.isoformat() if c.remember_from else None})
+    return data
+
+
+async def _owned_contact(contact_id: str, ctx: AuthContext, db: AsyncSession) -> Contact:
+    contact = (await db.execute(select(Contact).where(Contact.id == contact_id, Contact.user_id == ctx.owner_id))).scalars().first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    return contact
+
+
+@router.get("/contacts")
+async def list_contacts(bot_id: Optional[str] = None, q: str = "", ctx: AuthContext = Depends(get_ctx),
+                        db: AsyncSession = Depends(get_db)):
+    query = select(Contact).where(Contact.user_id == ctx.owner_id, or_(Contact.calls > 0, Contact.notes.is_not(None)))
+    if bot_id:
+        query = query.where(Contact.bot_id == bot_id)
+    rows = (await db.execute(query.order_by(Contact.last_call_at.desc()).limit(500))).scalars().all()
+    words = q.strip().lower()
+    digits = re.sub(r"\D", "", words)
+    if words:
+        rows = [c for c in rows if words in (c.name or "").lower() or (digits and digits in (c.e164 or ""))]
+    names = await _bot_names(ctx.owner_id, db)
+    return [_contact_json(c, names) for c in rows]
+
+
+@router.get("/contacts/{contact_id}")
+async def get_contact(contact_id: str, ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depends(get_db)):
+    contact = await _owned_contact(contact_id, ctx, db)
+    calls = (await db.execute(select(CallLog).where(
+        CallLog.user_id == ctx.owner_id, CallLog.bot_id == contact.bot_id, CallLog.caller_e164 == contact.e164,
+    ).order_by(CallLog.started_at.desc()).limit(20))).scalars().all()
+    names = await _bot_names(ctx.owner_id, db)
+    return {**_contact_json(contact, names, full=True), "history": [
+        {"id": c.id, "started_at": c.started_at.isoformat() if c.started_at else None, "direction": c.direction,
+         "outcome": c.outcome, "summary": c.summary or "",
+         "remembered": not (contact.remember_from and c.started_at and c.started_at < contact.remember_from)}
+        for c in calls]}
+
+
+@router.patch("/contacts/{contact_id}")
+async def update_contact(contact_id: str, data: ContactUpdate, ctx: AuthContext = Depends(require_manager),
+                         db: AsyncSession = Depends(get_db)):
+    contact = await _owned_contact(contact_id, ctx, db)
+    contact.name = data.name.strip() or None
+    contact.email = data.email.strip() or None
+    contact.notes = data.notes.strip() or None
+    await db.commit()
+    return _contact_json(contact, await _bot_names(ctx.owner_id, db), full=True)
+
+
+@router.post("/contacts/{contact_id}/forget")
+async def forget_contact(contact_id: str, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    """The assistant forgets them: name, details, notes and earlier calls are no longer used (the calls stay in Calls;
+    Compliance > Erase removes those too)."""
+    contact = await _owned_contact(contact_id, ctx, db)
+    contact.name = contact.email = contact.notes = None
+    contact.details, contact.calls = {}, 0
+    contact.remember_from = datetime.utcnow()
+    await db.commit()
+    return {"status": "forgotten"}
 
 
 @router.get("/ambience")
@@ -321,6 +520,7 @@ async def voice_sample(voice_id: str, request: Request, language: str = "en-IN")
 # ─── browser test calls ───────────────────────────────────────────
 class SessionRequest(BaseModel):
     bot_id: str
+    direction: str = "inbound"  # which agent to talk to: incoming or outgoing
 
 
 @router.post("/session")
@@ -329,7 +529,7 @@ async def create_session(req: SessionRequest, ctx: AuthContext = Depends(get_ctx
     bot = await get_owned_bot(req.bot_id, ctx, db)
     if not sarvam.configured():
         raise HTTPException(status_code=503, detail="The voice engine needs SARVAM_API_KEY on the server")
-    token = issue_scoped_token(f"{ctx.owner_id}:{bot.bot_id}", "voice_test", 120)
+    token = issue_scoped_token(f"{ctx.owner_id}:{bot.bot_id}:{_direction(req.direction)}", "voice_test", 120)
     return {"ws_path": "/api/voice/ws/browser", "token": token}
 
 
@@ -339,7 +539,8 @@ async def browser_call(ws: WebSocket, token: str = ""):
     if not subject:
         await ws.close(code=4401)
         return
-    _, bot_id = subject.split(":", 1)
+    _, bot_id, *rest = subject.split(":")
+    direction = rest[0] if rest and rest[0] in scripts.DIRECTIONS else "inbound"
     async with async_session() as db:
         # The signed token is only issued after /session checked access to this bot, so trust it,
         # and run the call in the bot's own workspace (its minutes, compliance and logs).
@@ -349,11 +550,14 @@ async def browser_call(ws: WebSocket, token: str = ""):
             return
         owner_id = bot.user_id
         agent, _ = await _agent_for(bot, owner_id, db)
+        script_row = (await db.execute(select(VoiceScript).where(
+            VoiceScript.bot_id == bot.bot_id, VoiceScript.direction == direction))).scalars().first()
         compliance = await _compliance(owner_id, db)
     await ws.accept()
-    # Test calls may use draft settings sent by the panel before saving.
-    setup = CallSetup(owner_id=owner_id, bot=bot, agent=agent, direction="inbound", channel="browser",
-                      record=bool(compliance.record_calls), opt_out_phrases=compliance.opt_out_phrases or [])
+    agent, script = _for_call(agent, script_row, None, direction, {})
+    setup = CallSetup(owner_id=owner_id, bot=bot, agent=agent, direction=direction, channel="browser",
+                      record=bool(compliance.record_calls), opt_out_phrases=compliance.opt_out_phrases or [],
+                      script=scripts.style(script))
     await CallSession(setup, BrowserTransport(ws)).run()
     try:
         await ws.close()
@@ -393,6 +597,36 @@ async def _nothing():
     return None
 
 
+def _for_call(agent: VoiceAgent, script_row: Optional[VoiceScript], caller: Optional[dict], direction: str,
+              variables: dict) -> tuple[VoiceAgent, VoiceScript]:
+    """The agent as it is for one call: its direction's settings and script. Someone it knows is greeted by name."""
+    call_agent = scripts.for_direction(agent, direction)
+    script = script_row or scripts.default_script(call_agent, direction)
+    known = (caller or {}).get("first_name")
+    if known:
+        variables.setdefault("name", known)
+    scripts.apply(call_agent, script, known)
+    return call_agent, script
+
+
+async def _prepare_known_opening(bot_id: str, caller: Optional[str]) -> None:
+    """Someone the assistant knows is calling in. Their opening ("Hello Karthik, ...") can't be made ahead like the
+    usual one, so it's made while the phone rings, before the call connects."""
+    try:
+        caller_memory = await memory.context_for(bot_id, caller)
+        if not (caller_memory and caller_memory.get("first_name")):
+            return  # the usual opening, made when the agent was saved
+        agent, script_row = await asyncio.gather(
+            _first(select(VoiceAgent).where(VoiceAgent.bot_id == bot_id)),
+            _first(select(VoiceScript).where(VoiceScript.bot_id == bot_id, VoiceScript.direction == "inbound")))
+        if agent and agent.remember_callers is not False:
+            variables: dict = {}
+            call_agent, _ = _for_call(agent, script_row, caller_memory, "inbound", variables)
+            prepare_opening(call_agent, variables, bool((await _compliance_for(agent.user_id)).record_calls))
+    except Exception as e:
+        logger.warning(f"Preparing a known caller's opening failed (the call will make it): {e}")
+
+
 async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[str], to_raw: Optional[str],
                          job_id: Optional[str] = None, voicemail: bool = False, scope=accounts.NIMMI) -> None:
     """
@@ -429,17 +663,24 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
     # Everything else the call needs, fetched side by side on separate connections: the caller is
     # waiting in silence, and each lookup is a round trip to the database.
     campaign_id = job.campaign_id if job else None
-    bot, agent, campaign, compliance, settings = await asyncio.gather(
+    bot, agent, campaign, compliance, settings, script_row, caller_memory = await asyncio.gather(
         _first(select(Bot).where(Bot.bot_id == bot_id)),
         _first(select(VoiceAgent).where(VoiceAgent.bot_id == bot_id)),
         _first(select(Campaign).where(Campaign.id == campaign_id)) if campaign_id else _nothing(),
         _compliance_for(owner_id),
         assist.workspace(owner_id),
+        _first(select(VoiceScript).where(VoiceScript.bot_id == bot_id, VoiceScript.direction == direction)),
+        memory.context_for(bot_id, caller),
     )
     purpose = campaign.purpose if campaign else None
     if bot and not agent and job and (job.consent_source or "").startswith(TEST_CALL):
         agent = _agent_defaults(bot, owner_id)  # test calls work before voice is switched on
     is_test = bool(job and (job.consent_source or "").startswith(TEST_CALL))
+    script = None
+    if agent:
+        if agent.remember_callers is False:
+            caller_memory = None  # switched off: every call starts fresh
+        agent, script = _for_call(agent, script_row, caller_memory, direction, variables)
     if not bot or not agent or not (agent.enabled or is_test):
         await transport.hangup("done")
         return
@@ -449,7 +690,8 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
                       consent_source=consent, provider_call_id=call_sid, callback_job_id=job.id if job else None,
                       record=bool(compliance.record_calls), opt_out_phrases=compliance.opt_out_phrases or [],
                       variables=variables, purpose=purpose, campaign_id=job.campaign_id if job else None,
-                      voicemail=voicemail, after_hours=None if assist.is_open(hours) else assist.next_open(hours))
+                      voicemail=voicemail, after_hours=None if assist.is_open(hours) else assist.next_open(hours),
+                      script=scripts.style(script), caller=caller_memory)
     await CallSession(setup, transport).run()
 
 
@@ -577,6 +819,7 @@ async def twilio_incoming(secret: str, request: Request, db: AsyncSession = Depe
     ))).scalars().first() if called else None
     if not number or not number.bot_id:
         return _xml(twilio.say_and_hangup("Sorry, this number isn't set up yet. Goodbye."))
+    fire_and_forget(_prepare_known_opening(number.bot_id, to_e164(str(form.get("From") or ""))))
     return _xml(twilio.connect_twiml({"from": str(form.get("From") or ""), "to": str(form.get("To") or ""),
                                       "direction": "inbound"}, hook=secret))
 
@@ -708,7 +951,12 @@ async def test_call(req: TestCallRequest, ctx: AuthContext = Depends(require_man
     rate_limit(f"testcall:{ctx.owner_id}", 5, 600)
     # Make the opening while the phone rings, so the assistant speaks the moment it's answered.
     agent, _ = await _agent_for(bot, ctx.owner_id, db)
-    prepare_opening(agent, {}, bool((await _compliance(ctx.owner_id, db)).record_calls))
+    script_row = (await db.execute(select(VoiceScript).where(
+        VoiceScript.bot_id == bot.bot_id, VoiceScript.direction == "outbound"))).scalars().first()
+    variables: dict = {}
+    known = await memory.context_for(bot.bot_id, e164) if agent.remember_callers is not False else None
+    call_agent, _ = _for_call(agent, script_row, known, "outbound", variables)
+    prepare_opening(call_agent, variables, bool((await _compliance(ctx.owner_id, db)).record_calls))
     job = CallbackJob(user_id=ctx.owner_id, bot_id=bot.bot_id, e164=e164, consent_source=f"{TEST_CALL} for {display(e164)}",
                       status="calling", attempts=1)
     db.add(job)
@@ -1118,6 +1366,7 @@ async def erase_caller(data: EraseRequest, ctx: AuthContext = Depends(require_ow
             logger.warning(f"Erase: recording delete failed for {call.id}: {e}")
         await db.delete(call)
     await db.execute(sa_delete(CallbackJob).where(CallbackJob.user_id == ctx.owner_id, CallbackJob.e164 == e164))
+    await db.execute(sa_delete(Contact).where(Contact.user_id == ctx.owner_id, Contact.e164 == e164))
 
     # Chat leads that captured the same number.
     bot_ids = list((await _bot_names(ctx.owner_id, db)).keys())

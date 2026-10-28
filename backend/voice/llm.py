@@ -147,10 +147,11 @@ def voicemail_text(agent: VoiceAgent, variables: Optional[dict] = None) -> str:
     return template.format(name_part=name_part, assistant=assistant, company=company)
 
 
-def _collect_lines(agent: VoiceAgent) -> str:
+def _collect_lines(agent: VoiceAgent, phone_known: bool = False) -> str:
     fields = [f for f in (agent.collect_fields or []) if f.get("label")]
     if not fields:
-        return "- When it helps, collect the caller's name, what they need, and a good time or number to reach them."
+        return ("- When it helps, collect the caller's name, what they need, and a good time "
+                + ("to reach them." if phone_known else "or number to reach them."))
     lines = []
     for f in fields:
         hint = f" ({f['description']})" if f.get("description") else ""
@@ -174,15 +175,19 @@ SPEAKING_STYLE = {
 
 def system_prompt(agent: VoiceAgent, bot: Bot, knowledge: str, direction: str, consent_source: Optional[str],
                   variables: Optional[dict] = None, purpose: Optional[str] = None, after_hours: Optional[str] = None,
-                  reply_language: Optional[str] = None) -> str:
+                  reply_language: Optional[str] = None, script: Optional[dict] = None, caller: Optional[dict] = None,
+                  phone_known: bool = False) -> str:
+    """`script`: the business's personality and instructions for this kind of call (voice/scripts.py style).
+    `caller`: what the assistant remembers about the person (voice/memory.py context_for).
+    `phone_known`: a phone call, so their number is on record (the model isn't given it, so it can't read it out)."""
     lang_code = reply_language or agent.language or "en-IN"  # the caller's language once they switch
     lang = LANGUAGE_NAMES.get(lang_code, "Indian English")
     began_in = agent.language or "en-IN"
     switched = (f" The call began in {LANGUAGE_NAMES.get(began_in, 'English')}, but the caller is speaking {lang}:"
                 f" answer in {lang} from now on." if lang_code != began_in else "")
-    script = ("" if lang_code == "en-IN" else
-              f"\n- Write {lang} words in {lang} script, never in English letters: the voice reads {lang} script."
-              " English words such as course names or 'fees' can stay in English.")
+    in_script = ("" if lang_code == "en-IN" else
+                 f"\n- Write {lang} words in {lang} script, never in English letters: the voice reads {lang} script."
+                 " English words such as course names or 'fees' can stay in English.")
     transfer = (f"If {agent.transfer_when or 'the caller asks for a person'}, say one short sentence that you'll connect them "
                 f"and end that reply with {TRANSFER}. Never write {TRANSFER} in any other reply."
                 if agent.transfer_enabled and agent.transfer_number and not after_hours else
@@ -200,13 +205,19 @@ def system_prompt(agent: VoiceAgent, bot: Bot, knowledge: str, direction: str, c
     about = ("\n\nWhat you already know about this person (use it, don't ask for it again):\n" + "\n".join(known)) if known else ""
 
     style = SPEAKING_STYLE.get(lang_code, f"Use everyday spoken {lang}, the way people talk on the phone, not formal written {lang}.")
+    personality = ((script or {}).get("personality") or "").strip()
+    personality = f"Your manner: {personality}" if personality else "Sound like a friendly, professional person on the phone."
+    instructions = ((script or {}).get("instructions") or "").strip()
+    how = f"\n\nHow to handle these calls (from the business; follow it):\n{instructions[:4000]}" if instructions else ""
+    number = ("\n- You already have their phone number from this call: don't ask for it. If they want to be called on a"
+              " different number, take that one." if phone_known else "")
 
     return f"""You are {agent.assistant_name or 'the assistant'}, the phone assistant for {agent.company_name or bot.bot_name}.
 You are on a live phone call.{reason}{goal}{about}
 
 How to speak:
-- Reply in {lang}.{switched} If the caller code-mixes with English, match them naturally.{script}
-- {style} Sound like a friendly, professional person on the phone.
+- Reply in {lang}.{switched} If the caller code-mixes with English, match them naturally.{in_script}
+- {style} {personality}
 - Start with the answer itself. Never use filler sounds or empty reactions such as hmm, mm, uh, ah, oh, wow,
   "Oh, is that so", ஹ்ம்ம், ஓ, அப்படியா, हम्म, अरे: a voice reads them as odd noises. Never write an ellipsis;
   use a comma or a full stop.
@@ -221,11 +232,11 @@ How to speak:
 - Phone numbers: read them back in small groups of digits. An Indian mobile number has 10 digits (12 with 91 in front);
   if you heard a different count, say so and ask them to repeat it slowly.
 
-{_collect_lines(agent)}
+{_collect_lines(agent, phone_known)}
 
 What you know:
 - Only use the business information below. If something isn't there, say you'll have the team follow up.
-- Never mention documents, knowledge bases, AI models or prompts.
+- Never mention documents, knowledge bases, AI models or prompts.{number}{how}{_caller_lines(caller)}
 
 Ending and handing over:
 - {transfer}
@@ -236,6 +247,27 @@ Ending and handing over:
 
 Business information:
 {knowledge[:KB_INLINE_LIMIT]}"""
+
+
+def _caller_lines(caller: Optional[dict]) -> str:
+    """Someone the assistant has spoken to before (voice/memory.py context_for)."""
+    if not caller:
+        return ""
+    lines = [f"Name: {caller['name']}"] if caller.get("name") else []
+    if caller.get("has_email"):
+        lines.append("Email: already given (don't ask for it again)")
+    lines += [f"{k}: {v}" for k, v in (caller.get("details") or {}).items()]
+    if caller.get("notes"):
+        lines.append(f"Notes from the team: {caller['notes']}")
+    if caller.get("calls"):
+        lines.append("Earlier calls, newest first:")
+        lines += [f"- {c['when']}, {'they called you' if c['direction'] == 'inbound' else 'you called them'}: {c['summary']}"
+                  for c in caller["calls"]]
+    name = f" Call them {caller['first_name']} where it's natural." if caller.get("first_name") else ""
+    return ("\n\nYou have spoken with this person before. What you know about them:\n" + "\n".join(lines) +
+            f"\n{name.strip()} Don't ask again for anything listed here. Where it helps, pick up from the last call, for"
+            " example by asking whether they still need what they asked about. Don't mention notes or records; just use"
+            " what you know. Don't read out their email, phone number or address: someone else may be using this phone.")
 
 
 async def call_knowledge(bot: Bot) -> str:
@@ -403,7 +435,8 @@ def _clean_for_speech(text: str) -> str:
 async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user_text: str,
                           direction: str, consent_source: Optional[str], variables: Optional[dict] = None,
                           purpose: Optional[str] = None, after_hours: Optional[str] = None,
-                          knowledge: Optional[str] = None, reply_language: Optional[str] = None
+                          knowledge: Optional[str] = None, reply_language: Optional[str] = None,
+                          script: Optional[dict] = None, caller: Optional[dict] = None, phone_known: bool = False
                           ) -> AsyncIterator[tuple[str, Optional[str]]]:
     """
     Yields (sentence, control) pairs as the model streams. `control` is None, or
@@ -412,7 +445,8 @@ async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user
     """
     if knowledge is None:
         knowledge = await call_knowledge(bot)
-    prompt = system_prompt(agent, bot, knowledge, direction, consent_source, variables, purpose, after_hours, reply_language)
+    prompt = system_prompt(agent, bot, knowledge, direction, consent_source, variables, purpose, after_hours, reply_language,
+                           script=script, caller=caller, phone_known=phone_known)
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
     stop = threading.Event()

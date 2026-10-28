@@ -116,6 +116,8 @@ class VoiceAgent(Base):
     language = Column(String, default="en-IN")
     understand_code_mixed = Column(Boolean, default=True)
     follow_caller_language = Column(Boolean, default=True, nullable=True)  # reply in the language the caller speaks
+    switch_languages = Column(JSON, nullable=True)  # the languages it may change to when following them; empty = any
+    remember_callers = Column(Boolean, nullable=True)  # caller memory (voice/memory.py) for both agents; None = on
     voice_id = Column(String, nullable=True)
     speaking_rate = Column(Float, default=1.0)
     assistant_name = Column(String, default="Nimmi")
@@ -141,6 +143,46 @@ class VoiceAgent(Base):
     voicemail_action = Column(String, nullable=True)    # off, hangup, leave_message (Twilio only)
     voicemail_message = Column(Text, nullable=True)
     transfer_mode = Column(String, nullable=True)       # cold, warm (warm: staff hear a summary first)
+    # The columns above are the outgoing agent's. The incoming agent's own phone settings, once someone edits them
+    # (voice/scripts.py PER_DIRECTION); until then it's the same as the outgoing one.
+    inbound = Column(JSON, nullable=True)
+
+
+class VoiceScript(Base):
+    """What an assistant says on its incoming or outgoing calls (Voice > Knowledge). One per assistant and direction;
+    until it's saved, the agent's own opening line, goal and fields are used."""
+    __tablename__ = "voice_scripts"
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), primary_key=True)
+    direction = Column(String(10), primary_key=True)        # inbound, outbound
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    greeting = Column(String, nullable=True)                 # after the required "automated, may be recorded" line
+    greeting_known = Column(String, nullable=True)           # for someone it knows: "Hello {{name}}, ..."
+    personality = Column(String, nullable=True)              # a preset (voice/scripts.py PERSONALITIES) or the owner's words
+    instructions = Column(Text, nullable=True)               # how to handle these calls
+    call_goal = Column(Text, nullable=True)
+    collect_fields = Column(JSON, nullable=True)
+    answers = Column(JSON, nullable=True)                    # what "Write with AI" was told
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Contact(Base):
+    """Someone an assistant has spoken to on the phone, by number: what it remembers about them on the next call.
+    Each assistant keeps its own (one account can run assistants for different businesses)."""
+    __tablename__ = "contacts"
+    __table_args__ = (UniqueConstraint("bot_id", "e164", name="uq_contact_bot_number"),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
+    e164 = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    details = Column(JSON, default=lambda: {})   # everything else they told the assistant (collected fields)
+    notes = Column(Text, nullable=True)          # the team's notes; the assistant reads them too
+    calls = Column(Integer, default=0)
+    first_call_at = Column(DateTime(timezone=True), nullable=True)
+    last_call_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    remember_from = Column(DateTime(timezone=True), nullable=True)  # "forget" sets it: earlier calls aren't recalled
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class PhoneNumber(Base):

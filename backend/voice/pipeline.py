@@ -28,7 +28,7 @@ from backend.models import Bot, CallbackJob, CallLog, DncEntry, VoiceAgent
 import assist
 from notify.events import call_completed, fire_and_forget
 from phone import extract_contact
-from voice import ambience, llm, metering, recording, sarvam, scheduler
+from voice import ambience, llm, memory, metering, recording, sarvam, scheduler
 from voice.levels import CallerLevels
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,8 @@ class CallSetup:
     campaign_id: Optional[str] = None
     voicemail: bool = False                        # reached an answering machine: leave the message and go
     after_hours: Optional[str] = None              # team offline: "tomorrow at 9:00 AM" (no transfers)
+    script: Optional[dict] = None                  # personality and instructions for this kind of call (Knowledge)
+    caller: Optional[dict] = None                  # what the assistant remembers about them (voice/memory.py)
 
 
 SttFactory = Callable[[str, int, bool], object]
@@ -179,6 +181,9 @@ BACKCHANNEL_WORDS = {
 # second in the same language, so one misheard line (Tamil speech written as "I think Katha calls") can't flip
 # the call into another language.
 SWITCH_WORDS = 3          # words in another Indian language
+# A language not heard yet on the call needs more: a caller's first few words, unclear on the line, came out in
+# Punjabi and Malayalam script on real calls (Oct 2026) and the agent switched to them.
+FIRST_SWITCH_WORDS = 5
 SWITCH_WORDS_ENGLISH = 5  # English needs more: garbled Indian-language speech often comes out as English words
 LANGUAGE_SURE = 0.85      # the recognizer's own certainty that lets two words switch
 LANGUAGE_UNSURE = 0.6     # below it, one English sentence doesn't switch
@@ -231,12 +236,15 @@ def spoken_language(text: str, reported: Optional[str]) -> Optional[str]:
     return None
 
 
-def switch_now(text: str, language: str, probability: Optional[float]) -> bool:
+def switch_now(text: str, language: str, probability: Optional[float], first_time: bool = False) -> bool:
     """Whether one sentence in `language` is clear enough to change the call's language on its own.
-    `probability` is the recognizer's certainty of that language, when it said."""
+    `probability` is the recognizer's certainty of that language, when it said. `first_time`: the language hasn't
+    been spoken on this call yet, so a short sentence (maybe garbled noise) isn't enough."""
     words = len((text or "").split())
     if language == "en-IN":
         return words >= SWITCH_WORDS_ENGLISH and (probability is None or probability >= LANGUAGE_UNSURE)
+    if first_time:
+        return words >= FIRST_SWITCH_WORDS
     # Indian-language letters are strong evidence by themselves; the recognizer's certainty isn't (it said 0.58 for
     # a clear Tanglish sentence: the English words in it count against Tamil). It only lets two words switch.
     return words >= SWITCH_WORDS or (words >= 2 and probability is not None and probability >= LANGUAGE_SURE)
@@ -431,6 +439,9 @@ class CallSession:
         self.lang = setup.agent.language or "en-IN"
         self.follow_language = setup.agent.follow_caller_language is not False
         self.lang_pending: Optional[str] = None  # heard once, not clearly enough to switch yet
+        self.spoken_languages = {self.lang}      # languages used on this call so far
+        allowed = set(setup.agent.switch_languages or [])
+        self.allowed_languages = (allowed | {self.lang}) if allowed else None  # the agent's choice; None = any
         self.stt = None                            # the recognizer connection in use; None while reconnecting
         self.stt_problem: Optional[str] = None     # why the current one is being replaced
         self.levels = CallerLevels(self.rate)
@@ -555,6 +566,7 @@ class CallSession:
             return
         logger.info(f"Call {self.call_id}: caller switched to {language}")
         self.lang = language
+        self.spoken_languages.add(language)
         self._log("system", f"Switched to {llm.LANGUAGE_NAMES[language]}")
         if self.tts is None:  # connect the voice for it now, while the answer is being written (~0.6 s saved)
             if self.next_stream is not None:  # switched again before that voice was used
@@ -763,8 +775,12 @@ class CallSession:
         if heard == self.lang:
             self.lang_pending = None
             return
+        if self.allowed_languages is not None and heard not in self.allowed_languages:
+            self.lang_pending = None
+            logger.info(f"Call {self.call_id}: that sounded like {heard}, which this agent doesn't switch to")
+            return
         sure = probability if reported == heard else None  # the recognizer's certainty is about what it reported
-        if switch_now(text, heard, sure) or self.lang_pending == heard:
+        if switch_now(text, heard, sure, heard not in self.spoken_languages) or self.lang_pending == heard:
             self.lang_pending = None
             self._switch_language(heard)
         else:
@@ -794,7 +810,9 @@ class CallSession:
                 async with aclosing(self.replier(self.s.bot, self.s.agent, self.history[:-1], text + number_check(text),
                                                  self.s.direction, self.s.consent_source,
                                                  variables=self.s.variables, purpose=self.s.purpose,
-                                                 after_hours=self.s.after_hours, reply_language=self.lang, **extra)) as replies:
+                                                 after_hours=self.s.after_hours, reply_language=self.lang,
+                                                 script=self.s.script, caller=self.s.caller,
+                                                 phone_known=bool(self.s.caller_e164), **extra)) as replies:
                     async for sentence, control in replies:
                         if sentence:
                             if not said:
@@ -1371,3 +1389,5 @@ class CallSession:
 
         await self.t.event({"type": "ended", "call_id": self.call_id, "outcome": outcome, "summary": summary})
         fire_and_forget(call_completed(self.call_id))
+        if self.s.channel == "phone" and self.s.agent.remember_callers is not False:
+            fire_and_forget(memory.remember_call(self.call_id))  # who they are, for their next call

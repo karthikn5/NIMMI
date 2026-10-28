@@ -1,4 +1,4 @@
-import type { CallOutcome, LanguageCode, Sentiment } from "./types";
+import type { AgentDirection, CallOutcome, LanguageCode, Sentiment } from "./types";
 
 export const LANGUAGES: { code: LanguageCode; label: string }[] = [
     { code: "en-IN", label: "English (India)" },
@@ -99,3 +99,17 @@ export function formatWhen(iso: string) {
 export function formatDate(iso: string) {
     return parseUtc(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
+
+/** The two agents every assistant has (Voice > Agents). */
+export const DIRECTIONS: Record<AgentDirection, { label: string; short: string; on: string; about: string }> = {
+    inbound: {
+        label: "Incoming calls", short: "Incoming", on: "Answering calls",
+        about: "Answers people who call your number, from the assistant's knowledge and its incoming script.",
+    },
+    outbound: {
+        label: "Outgoing calls", short: "Outgoing", on: "Making calls",
+        about: "Calls people back when they ask for it in chat, and runs your campaigns, with its outgoing script.",
+    },
+};
+
+export const directionOf = (value: string | null | undefined): AgentDirection => (value === "outbound" ? "outbound" : "inbound");

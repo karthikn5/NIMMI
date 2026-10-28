@@ -1,26 +1,42 @@
 "use client";
 
+import { Suspense } from "react";
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
-import { Button, Card, EmptyState, Skeleton, Status } from "@/components/ui";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronRight, PhoneIncoming, PhoneOutgoing } from "lucide-react";
+import { Button, Card, EmptyState, Segmented, Skeleton, Status } from "@/components/ui";
 import { useApi } from "@/lib/useApi";
-import { formatNumber, languageLabel } from "@/lib/voice/api";
-import type { Voice, VoiceAgentSummary } from "@/lib/voice/types";
+import { DIRECTIONS, directionOf, formatNumber, languageLabel } from "@/lib/voice/api";
+import type { AgentDirection, Voice, VoiceAgentSummary } from "@/lib/voice/types";
 
 export default function AgentsPage() {
-    const agents = useApi<VoiceAgentSummary[]>("/api/voice/agents");
+    return <Suspense><Agents /></Suspense>;
+}
+
+function Agents() {
+    const router = useRouter();
+    const direction = directionOf(useSearchParams().get("direction"));
+    const agents = useApi<VoiceAgentSummary[]>(`/api/voice/agents?direction=${direction}`);
     const voices = useApi<Voice[]>("/api/voice/voices");
     const voiceName = (id: string | null) => voices.data?.find((v) => v.id === id)?.name ?? null;
+    const about = DIRECTIONS[direction];
 
     return (
         <>
             <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 mb-4">
                 <div>
-                    <h2 className="text-[15px] font-semibold">Voice agents</h2>
-                    <p className="text-[13px] text-stone-500 mt-0.5 max-w-xl">
-                        Each chat assistant can also take calls. It answers from the same knowledge base and follows the same flow.
-                    </p>
+                    <h2 className="text-[15px] font-semibold">{about.label}</h2>
+                    <p className="text-[13px] text-stone-500 mt-0.5 max-w-xl">{about.about}</p>
                 </div>
+                <Segmented<AgentDirection>
+                    label="Which agents"
+                    value={direction}
+                    onChange={(d) => router.replace(`/dashboard/voice/agents?direction=${d}`)}
+                    options={[
+                        { value: "inbound", label: "Incoming", icon: <PhoneIncoming size={13} /> },
+                        { value: "outbound", label: "Outgoing", icon: <PhoneOutgoing size={13} /> },
+                    ]}
+                />
             </div>
 
             <Card>
@@ -50,11 +66,11 @@ export default function AgentsPage() {
                             {agents.data.map((a) => (
                                 <tr key={a.bot_id} className="group border-t border-line first:border-t-0 md:first:border-t hover:bg-stone-50 transition-colors relative">
                                     <td className="px-5 py-3.5">
-                                        <Link href={`/dashboard/voice/agents/${a.bot_id}`} className="font-medium after:absolute after:inset-0 focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-plum focus-visible:after:-outline-offset-2">
+                                        <Link href={`/dashboard/voice/agents/${a.bot_id}?direction=${direction}`} className="font-medium after:absolute after:inset-0 focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-plum focus-visible:after:-outline-offset-2">
                                             {a.bot_name}
                                         </Link>
                                         <div className="mt-1">
-                                            {a.enabled ? <Status tone="good">Taking calls</Status> : <Status tone="neutral">Voice off</Status>}
+                                            {a.enabled ? <Status tone="good">{about.on}</Status> : <Status tone="neutral">Off</Status>}
                                         </div>
                                         {/* Compact details for small screens */}
                                         <p className="md:hidden text-[13px] text-stone-500 mt-1.5">

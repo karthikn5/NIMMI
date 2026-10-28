@@ -122,7 +122,10 @@ only on the owner's machines): @.claude/private-notes.md
   over its speech are ignored; follows the caller's language (script detection `spoken_language`, per-agent
   `follow_caller_language`): one clear sentence (`switch_now`: 3+ words in an Indian script; English 5+ and
   Sarvam's `language_probability` not below 0.6) or two in a row switch, pre-connecting the new language's voice
-  (Sarvam gave clear Tanglish only 0.58, so the probability never blocks Indian-script sentences);
+  (Sarvam gave clear Tanglish only 0.58, so the probability never blocks Indian-script sentences). A language not
+  heard yet on the call needs 5+ words (`FIRST_SWITCH_WORDS`) or two in a row: unclear first words came out as
+  Punjabi and Malayalam on live calls. Each agent can limit the languages it may switch to (`switch_languages`;
+  empty = any);
   number check for 10-digit Indian numbers; end phrases and opt-out (DNC); silence reminders; "one moment" once
   if an answer takes 3 s, the fallback apology at 15 s; one sentence at a time on the voice connection
   (`self.voice` lock, `aclosing`); every speech step has a time limit (`TTS_FIRST_AUDIO_SEC`, gaps
@@ -139,6 +142,20 @@ only on the owner's machines): @.claude/private-notes.md
   room (that part is ignored). Before their level is known, a voice is >= -24 dBFS. A lone filler ("so", "uh", "ஆ")
   isn't answered. Sarvam's VAD frame is 64 ms at 8 kHz; it ends a short sound ~0.6 s after it stops.
 - Python's `\w` doesn't match Indic vowel signs: split words with `llm.plain_words`, not `[^\w]` regexes.
+- Incoming and outgoing agents (`voice/scripts.py`): the `voice_agents` columns are the outgoing agent; `inbound` (JSON)
+  holds the incoming agent's own phone settings (`PER_DIRECTION`) once it's edited, and until then it mirrors the
+  outgoing one. Name, business name and pronunciations are shared. The agents API takes `?direction=`; none means
+  outgoing (the old behaviour). What each says is a `VoiceScript` per assistant and direction (Voice > Knowledge):
+  opening, opening for known callers (`{{name}}` = first name), personality preset, instructions, goal, fields.
+  Unsaved, it falls back to the agent's old greeting, goal and fields. "Write with AI" is
+  `POST /api/voice/scripts/{bot}/{direction}/draft` (questions are in the dashboard's `WriteWithAI.tsx`).
+- Caller memory (`voice/memory.py`): a `Contact` per assistant and number (never shared between assistants, as
+  one account can run several businesses). It's updated after every phone call (`remember_call`, fired from
+  `_finish`); a shorter name never replaces a fuller one. At call start `context_for` gives the name, details,
+  team notes and the last 5 call summaries, including calls from before contacts existed. A known caller gets the
+  known-caller opening; on Twilio it's made while the phone rings (`_prepare_known_opening`). Email and number are
+  never put in the prompt. "Forget" sets `remember_from`; Compliance > Erase deletes the contact. The assistant's
+  "Remember callers" switch (`remember_callers`, None = on) stops both reading and saving; contacts already saved stay.
 - Minutes: `voice_wallets` (plan minutes + top-up minutes, `metering.py`); every connected call bills at least a minute.
 - Outbound: `scheduler.py` dials call-backs and campaigns; answering-machine detection only when the agent's
   voicemail action isn't "off" (it adds 2-4 s before the call connects).
@@ -146,10 +163,10 @@ only on the owner's machines): @.claude/private-notes.md
   "the caller kept talking over the agent", "that sounded like <lang>", "the answer is slow; saying one moment",
   "Streaming TTS failed (...); using REST", "ignored a sound from around the caller", "finishing their turn now",
   "sound over the agent, far quieter than the caller's voice"; the call's "diagnostics" line counts both.
-- Tests for these real-call problems: `tests/test_voice_reliability.py`.
+- Tests for these real-call problems: `tests/test_voice_reliability.py`; agents, scripts and memory: `tests/test_voice_inbound.py`.
 - Simulated calls without a phone: `dev-scripts/voice/lang_call.py`, `noisy_call.py` (a TV in the caller's room);
-  `replay_caller.py` replays a real recording's caller side through Sarvam (git-ignored local harnesses; see
-  `dev-scripts/README.md`).
+  `replay_caller.py` replays a real recording's caller side through Sarvam; `memory_calls.py`: one number calls twice
+  (the second call is greeted by name). Git-ignored local harnesses; see `dev-scripts/README.md`.
 
 ## Testing conventions
 

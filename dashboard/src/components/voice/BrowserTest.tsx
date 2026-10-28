@@ -6,7 +6,7 @@ import { Mic, MicOff, PhoneOff } from "lucide-react";
 import { Button, Card, cn } from "@/components/ui";
 import { apiJson, wsUrl } from "@/lib/api";
 import { OUTCOMES } from "@/lib/voice/api";
-import type { CallOutcome, VoiceAgentConfig } from "@/lib/voice/types";
+import type { AgentDirection, CallOutcome, VoiceAgentConfig } from "@/lib/voice/types";
 
 type Phase = "idle" | "connecting" | "live" | "ended" | "error";
 type Line = { speaker: "agent" | "caller"; text: string };
@@ -41,7 +41,7 @@ function downsample(input: Float32Array, fromRate: number): Int16Array {
     return out;
 }
 
-export default function BrowserTest({ config, dirty }: { config: VoiceAgentConfig; dirty?: boolean }) {
+export default function BrowserTest({ config, dirty, direction = "inbound" }: { config: VoiceAgentConfig; dirty?: boolean; direction?: AgentDirection }) {
     const [phase, setPhase] = useState<Phase>("idle");
     const [muted, setMuted] = useState(false);
     const [speaking, setSpeaking] = useState(false);
@@ -145,7 +145,7 @@ export default function BrowserTest({ config, dirty }: { config: VoiceAgentConfi
 
         let session: { ws_path: string; token: string };
         try {
-            session = await apiJson("/api/voice/session", { method: "POST", json: { bot_id: config.bot_id } });
+            session = await apiJson("/api/voice/session", { method: "POST", json: { bot_id: config.bot_id, direction } });
         } catch (e) {
             setMessage((e as Error).message);
             setPhase("error");

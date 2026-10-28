@@ -22,13 +22,19 @@ export interface VoiceAgentSummary {
     calls_30d: number;
 }
 
+/** Each assistant has two voice agents: one answers calls, one makes them. */
+export type AgentDirection = "inbound" | "outbound";
+
 export interface VoiceAgentConfig {
     bot_id: string;
     bot_name: string;
+    direction: AgentDirection;
     enabled: boolean;
     language: LanguageCode;
     understand_code_mixed: boolean;
     follow_caller_language: boolean;   // answer in the caller's language when they speak another one
+    switch_languages: LanguageCode[];  // the only languages it may change to; empty = any
+    remember_callers: boolean;         // caller memory, for both agents of the assistant
     voice_id: string | null;
     speaking_rate: number; // 0.8 – 1.2
     assistant_name: string; // how the agent introduces itself
@@ -278,4 +284,49 @@ export interface VoiceOverview {
     };
     engine_ready: boolean;
     phone_ready: boolean;
+}
+
+/** What an agent says on one kind of call (Voice > Knowledge). */
+export interface VoiceScript {
+    bot_id: string;
+    bot_name: string;
+    direction: AgentDirection;
+    saved: boolean;                    // false: still the agent's own opening, goal and fields
+    language: LanguageCode;
+    assistant_name: string;
+    company_name: string;
+    greeting: string;                  // after the required "automated, may be recorded" line
+    greeting_known: string;            // for someone it has spoken to before; {{name}} is their first name
+    personality: string;               // a preset key, or the owner's own words
+    instructions: string;
+    call_goal: string;
+    collect_fields: CollectField[];
+    answers: ScriptAnswer[];           // what "Write with AI" was told
+}
+
+export interface ScriptAnswer {
+    question: string;
+    answer: string;
+}
+
+export type ScriptDraft = Pick<VoiceScript, "greeting" | "greeting_known" | "personality" | "instructions" | "call_goal" | "collect_fields">;
+
+/** Someone an assistant has spoken to on the phone, by number (Voice > Contacts). */
+export interface ContactSummary {
+    id: string;
+    bot_id: string;
+    bot_name: string;
+    number: string;                    // masked in lists, full in detail
+    name: string;
+    calls: number;
+    last_call_at: string | null;
+    notes: string;
+}
+
+export interface ContactDetail extends ContactSummary {
+    email: string;
+    details: Record<string, string>;
+    first_call_at: string | null;
+    remember_from: string | null;
+    history: { id: string; started_at: string | null; direction: CallDirection; outcome: CallOutcome; summary: string; remembered: boolean }[];
 }

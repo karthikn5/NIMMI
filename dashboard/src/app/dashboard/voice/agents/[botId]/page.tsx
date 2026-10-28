@@ -1,28 +1,39 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { ArrowLeft, Lock, Play } from "lucide-react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { ArrowLeft, ArrowRight, Lock, PhoneIncoming, PhoneOutgoing, Play } from "lucide-react";
 import BrowserTest from "@/components/voice/BrowserTest";
-import { AmbiencePicker, FieldsEditor, PronunciationEditor } from "@/components/voice/AgentEditors";
+import { AmbiencePicker, PronunciationEditor } from "@/components/voice/AgentEditors";
 import { WithPlaceholders } from "@/components/voice/CampaignBits";
 import PhoneTest from "@/components/voice/PhoneTest";
 import {
-    Card, Input, PhraseInput, SaveBar, Segmented, Select, SettingRow, Skeleton, Switch, Textarea, cn, useToast,
+    Button, Card, Input, PhraseInput, SaveBar, Segmented, Select, SettingRow, Skeleton, Switch, Textarea, cn, useToast,
 } from "@/components/ui";
-import { useRef } from "react";
+import { Suspense, useRef } from "react";
 import { apiUrl } from "@/lib/api";
 import { useApi, useDraft } from "@/lib/useApi";
-import { DEFAULT_GREETINGS, LANGUAGES, getDisclosureText } from "@/lib/voice/api";
-import type { Voice, VoiceAgentConfig } from "@/lib/voice/types";
+import { DIRECTIONS, LANGUAGES, directionOf, getDisclosureText } from "@/lib/voice/api";
+import type { AgentDirection, Voice, VoiceAgentConfig, VoiceAgentSummary, VoiceScript } from "@/lib/voice/types";
 
 export default function AgentSettingsPage() {
+    return <Suspense><AgentSettings /></Suspense>;
+}
+
+function AgentSettings() {
     const { botId } = useParams<{ botId: string }>();
+    const router = useRouter();
+    const direction = directionOf(useSearchParams().get("direction"));
+    const about = DIRECTIONS[direction];
     const toast = useToast();
-    const config = useApi<VoiceAgentConfig>(`/api/voice/agents/${botId}`);
+    const config = useApi<VoiceAgentConfig>(`/api/voice/agents/${botId}?direction=${direction}`);
+    const script = useApi<VoiceScript>(`/api/voice/scripts/${botId}/${direction}`);
+    const listed = useApi<VoiceAgentSummary[]>(direction === "inbound" ? "/api/voice/agents?direction=inbound" : null);
     const voices = useApi<Voice[]>("/api/voice/voices");
-    const { draft, setDraft, dirty, saving, save, discard } = useDraft(config, `/api/voice/agents/${botId}`);
+    const { draft, setDraft, dirty, saving, save, discard } = useDraft(config, `/api/voice/agents/${botId}?direction=${direction}`);
     const player = useRef<HTMLAudioElement | null>(null);
+    const number = listed.data?.find((a) => a.bot_id === botId)?.phone_number ?? null;
+    const knowledgeLink = `/dashboard/voice/knowledge/${botId}?section=${direction}`;
 
     if (config.loading || !draft) {
         return config.error
@@ -31,16 +42,9 @@ export default function AgentSettingsPage() {
     }
 
     const set = <K extends keyof VoiceAgentConfig>(key: K, value: VoiceAgentConfig[K]) => setDraft({ ...draft, [key]: value });
-
-    const handleLanguageChange = (newLang: VoiceAgentConfig["language"]) => {
-        const currentGreeting = (draft.greeting || "").trim().toLowerCase();
-        const isDefaultGreeting =
-            !currentGreeting ||
-            currentGreeting.includes("how can i help you") ||
-            Object.values(DEFAULT_GREETINGS).some((g) => g.trim().toLowerCase() === currentGreeting);
-
-        const newGreeting = isDefaultGreeting ? (DEFAULT_GREETINGS[newLang] || draft.greeting) : draft.greeting;
-        setDraft({ ...draft, language: newLang, greeting: newGreeting });
+    const switchTo = (other: AgentDirection) => {
+        if (dirty && !window.confirm("Leave without saving your changes?")) return;
+        router.replace(`/dashboard/voice/agents/${botId}?direction=${other}`);
     };
 
     const playSample = (v: Voice) => {
@@ -53,15 +57,27 @@ export default function AgentSettingsPage() {
 
     return (
         <>
-            <Link href="/dashboard/voice/agents" className="inline-flex items-center gap-1.5 text-[13px] text-stone-500 hover:text-ink">
-                <ArrowLeft size={14} /> Agents
+            <Link href={`/dashboard/voice/agents?direction=${direction}`} className="inline-flex items-center gap-1.5 text-[13px] text-stone-500 hover:text-ink">
+                <ArrowLeft size={14} /> {about.label}
             </Link>
 
             <div className="flex flex-wrap items-center justify-between gap-4 mt-3 mb-6">
-                <h2 className="text-xl font-semibold tracking-tight">{draft.bot_name}</h2>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <h2 className="text-xl font-semibold tracking-tight">{draft.bot_name}</h2>
+                    <Segmented<AgentDirection>
+                        label="Which agent"
+                        value={direction}
+                        onChange={switchTo}
+                        options={[
+                            { value: "inbound", label: "Incoming calls", icon: <PhoneIncoming size={13} /> },
+                            { value: "outbound", label: "Outgoing calls", icon: <PhoneOutgoing size={13} /> },
+                        ]}
+                    />
+                </div>
                 <label className="flex items-center gap-3 text-sm">
-                    <span className="text-stone-600">{draft.enabled ? "Taking calls" : "Voice off"}</span>
-                    <Switch checked={draft.enabled} onChange={(v) => set("enabled", v)} label="Take calls with this assistant" />
+                    <span className="text-stone-600">{draft.enabled ? about.on : "Off"}</span>
+                    <Switch checked={draft.enabled} onChange={(v) => set("enabled", v)}
+                            label={direction === "inbound" ? "Answer incoming calls" : "Make outgoing calls"} />
                 </label>
             </div>
 
@@ -75,7 +91,7 @@ export default function AgentSettingsPage() {
                                 ? "Calls start in this language. The assistant switches when a caller speaks another one."
                                 : "The assistant speaks and listens in this language."}
                         >
-                            <Select id="language" value={draft.language} onChange={(e) => handleLanguageChange(e.target.value as VoiceAgentConfig["language"])}>
+                            <Select id="language" value={draft.language} onChange={(e) => set("language", e.target.value as VoiceAgentConfig["language"])}>
                                 {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
                             </Select>
                             <label className="flex items-start gap-3 mt-4">
@@ -90,6 +106,37 @@ export default function AgentSettingsPage() {
                                     Reply in the caller&apos;s language when they speak another one, like Tamil or Hindi
                                 </span>
                             </label>
+                            {draft.follow_caller_language && (
+                                <div className="mt-3 pl-12">
+                                    <span className="block text-[13px] text-stone-600">Languages it can switch to</span>
+                                    <div role="group" aria-label="Languages it can switch to" className="flex flex-wrap gap-1.5 mt-2">
+                                        {LANGUAGES.filter((l) => l.code !== draft.language).map((l) => {
+                                            const on = draft.switch_languages.includes(l.code);
+                                            return (
+                                                <button
+                                                    key={l.code}
+                                                    type="button"
+                                                    aria-pressed={on}
+                                                    onClick={() => set("switch_languages", on
+                                                        ? draft.switch_languages.filter((c) => c !== l.code)
+                                                        : [...draft.switch_languages, l.code])}
+                                                    className={cn(
+                                                        "h-7 px-2.5 rounded-full border text-[13px] transition-colors focus-visible:outline-2 focus-visible:outline-plum",
+                                                        on ? "border-plum bg-plum-tint text-plum" : "border-line text-stone-600 hover:border-line-strong",
+                                                    )}
+                                                >
+                                                    {l.label}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                    <p className="text-xs text-stone-500 mt-1.5">
+                                        {draft.switch_languages.length
+                                            ? "It only changes to these. Words that sound like any other language never change the call's language."
+                                            : "None picked: it can change to any of them. Pick the languages your callers speak, so a few unclear words never switch it to another one."}
+                                    </p>
+                                </div>
+                            )}
                             <div className="mt-3.5 flex items-start gap-2.5 p-3 rounded-md bg-stone-50 border border-line text-xs text-stone-600 leading-relaxed">
                                 <span className="h-2 w-2 rounded-full bg-emerald-500 mt-1 shrink-0" aria-hidden />
                                 <div>
@@ -147,8 +194,8 @@ export default function AgentSettingsPage() {
 
                     <Card className="px-5 py-1">
                         <SettingRow
-                            label="Opening line"
-                            hint="Every call starts by saying it's automated and may be recorded. That part can't be removed."
+                            label="Introduces itself as"
+                            hint="Every call starts by saying it's automated and may be recorded. That part can't be removed. The same for incoming and outgoing calls."
                         >
                             <div className="grid sm:grid-cols-2 gap-3">
                                 <div>
@@ -160,38 +207,37 @@ export default function AgentSettingsPage() {
                                     <Input id="company" className="mt-1" value={draft.company_name} onChange={(e) => set("company_name", e.target.value)} />
                                 </div>
                             </div>
-                            <label htmlFor="greeting" className="block text-[13px] text-stone-600 mt-3">Then it says</label>
-                            <Input id="greeting" className="mt-1" value={draft.greeting} onChange={(e) => set("greeting", e.target.value)} />
-                            <p className="text-xs text-stone-500 mt-1.5">
-                                On outbound calls you can use details from your list, like <code className="text-[11px] bg-stone-100 rounded px-1">{"{{name}}"}</code>.
-                            </p>
 
                             <figure className="mt-4 rounded-md bg-stone-50 border border-line px-4 py-3">
-                                <figcaption className="text-xs text-stone-500 mb-1.5 flex items-center justify-between">
-                                    <span>Callers hear in {LANGUAGES.find((l) => l.code === draft.language)?.label || draft.language}</span>
-                                    <span className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-full font-medium">Natural Spoken Register</span>
+                                <figcaption className="text-xs text-stone-500 mb-1.5">
+                                    Callers hear in {LANGUAGES.find((l) => l.code === draft.language)?.label || draft.language}
                                 </figcaption>
                                 <blockquote className="text-sm leading-relaxed">
                                     <span className="text-stone-500">
                                         <Lock size={11} className="inline -mt-0.5 mr-1" aria-label="Required" />
                                         {getDisclosureText(draft.language, draft.assistant_name, draft.company_name)}
                                     </span>{" "}
-                                    <span className="text-ink font-medium"><WithPlaceholders text={draft.greeting} /></span>
+                                    <span className="text-ink font-medium"><WithPlaceholders text={script.data?.greeting ?? ""} /></span>
                                 </blockquote>
                             </figure>
                         </SettingRow>
-                    </Card>
-
-                    <Card className="px-5 py-1">
-                        <SettingRow label="Goal of the call" htmlFor="call_goal"
-                                    hint="After every call, the assistant judges whether this happened. You'll see it as Successful in Calls and Collected data.">
-                            <Textarea id="call_goal" rows={2} value={draft.call_goal} maxLength={500}
-                                      placeholder="e.g. The caller books a site visit, or agrees to a call from our sales team"
-                                      onChange={(e) => set("call_goal", e.target.value)} />
+                        <SettingRow label="What it says" hint="Its opening line, personality, how it handles these calls, its goal and the details it asks for.">
+                            <p className="text-[13px] text-stone-600 leading-relaxed">
+                                These are on the Knowledge page, next to what the assistant knows, so everything it says is in one place.
+                            </p>
+                            <Link href={knowledgeLink} className="inline-block mt-3">
+                                <Button size="sm">Edit the {about.short.toLowerCase()} script <ArrowRight size={13} className="inline ml-1" aria-hidden /></Button>
+                            </Link>
                         </SettingRow>
-                        <SettingRow label="Information to collect"
-                                    hint="The assistant asks for these naturally during the call. After the call they're saved as columns in Collected data, and sent to your webhook.">
-                            <FieldsEditor value={draft.collect_fields} onChange={(v) => set("collect_fields", v)} />
+                        <SettingRow label="Remember callers"
+                                    hint="The same for incoming and outgoing calls. When off, every call starts fresh and nothing new is saved; people already saved stay in Contacts.">
+                            <label className="flex items-start gap-3">
+                                <Switch checked={draft.remember_callers} onChange={(v) => set("remember_callers", v)} label="Remember callers" />
+                                <span className="text-[13px] text-stone-600 leading-snug">
+                                    Greet people it has spoken to before by name, and remember what earlier calls were about.{" "}
+                                    <Link href="/dashboard/voice/contacts" className="text-plum hover:underline">Contacts</Link>
+                                </span>
+                            </label>
                         </SettingRow>
                     </Card>
 
@@ -202,7 +248,7 @@ export default function AgentSettingsPage() {
                                             onKind={(v) => set("ambience", v)} onVolume={(v) => set("ambience_volume", v)} />
                         </SettingRow>
                         <SettingRow label="Pronunciation"
-                                    hint="Words the voice gets wrong, like brand names or local places. Only the spoken audio changes; transcripts keep your spelling.">
+                                    hint="Words the voice gets wrong, like brand names or local places. Only the spoken audio changes; transcripts keep your spelling. The same for incoming and outgoing calls.">
                             <PronunciationEditor value={draft.pronunciations} onChange={(v) => set("pronunciations", v)} />
                         </SettingRow>
                     </Card>
@@ -261,7 +307,7 @@ export default function AgentSettingsPage() {
                         </SettingRow>
                     </Card>
 
-                    <Card className="px-5 py-1">
+                    {direction === "outbound" && <Card className="px-5 py-1">
                         <SettingRow label="If voicemail answers" hint="For call-backs and campaigns. The assistant listens for an answering machine before it speaks. Works on Twilio numbers.">
                             <Segmented label="If voicemail answers" value={draft.voicemail_action} onChange={(v) => set("voicemail_action", v)}
                                        options={[{ value: "off", label: "Don't check" }, { value: "hangup", label: "Hang up, try later" }, { value: "leave_message", label: "Leave a message" }]} />
@@ -278,12 +324,28 @@ export default function AgentSettingsPage() {
                                 <p className="text-xs text-stone-500 mt-2">Checking adds a few seconds before the assistant speaks, while it listens for a greeting or beep.</p>
                             )}
                         </SettingRow>
-                    </Card>
+                    </Card>}
                 </div>
 
                 <div className="lg:sticky lg:top-6">
-                    <BrowserTest config={draft} dirty={dirty} />
-                    <PhoneTest botId={draft.bot_id} botName={draft.bot_name} />
+                    <BrowserTest config={draft} dirty={dirty} direction={direction} />
+                    {direction === "outbound" ? (
+                        <PhoneTest botId={draft.bot_id} botName={draft.bot_name} />
+                    ) : (
+                        <Card className="p-5 mt-4">
+                            <h3 className="text-[15px] font-semibold">Test on a real phone</h3>
+                            {number ? (
+                                <p className="text-[13px] text-stone-600 mt-1.5 leading-relaxed">
+                                    Call <span className="font-medium text-ink tabular-nums">{number}</span> from your phone. Calls from a number it has
+                                    spoken to before are greeted by name.
+                                </p>
+                            ) : (
+                                <p className="text-[13px] text-stone-600 mt-1.5 leading-relaxed">
+                                    Give this assistant a phone number to answer calls on. <Link href="/dashboard/voice/numbers" className="text-plum hover:underline">Numbers</Link>
+                                </p>
+                            )}
+                        </Card>
+                    )}
                 </div>
             </div>
 

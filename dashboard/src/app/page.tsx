@@ -1,13 +1,11 @@
 import type { Metadata } from "next";
-import { Inter, Inter_Tight } from "next/font/google";
+import { preload } from "react-dom";
 import Capabilities from "@/components/site/Capabilities";
 import RevealOnScroll from "@/components/site/RevealOnScroll";
 import SiteNav from "@/components/site/SiteNav";
 import { Channels, Hero, Insights, Outbound, Team, Tour, Voice } from "@/components/site/ProductSections";
 import { FAQ, FAQS, FinalCTA, HowItWorks, Industries, Integrations, Pricing, SiteFooter } from "@/components/site/MoreSections";
-
-const inter = Inter({ subsets: ["latin"], variable: "--font-site", display: "swap" });
-const interTight = Inter_Tight({ subsets: ["latin"], variable: "--font-display", weight: ["400", "500", "600"], display: "swap" });
+import "./site-fonts.css";
 
 const TITLE = "Nimmi AI | AI assistant for website chat, WhatsApp and phone calls";
 const DESCRIPTION = "An AI assistant trained on your business. It answers customers on your website, WhatsApp and phone in 11 Indian languages, captures leads, books appointments and hands over to your team. Free to build and test.";
@@ -54,8 +52,10 @@ const faqLd = {
 };
 
 export default function Home() {
+  preload("/fonts/inter-v20-latin.woff2", { as: "font", type: "font/woff2" });
+  preload("/fonts/inter-tight-v9-latin.woff2", { as: "font", type: "font/woff2" });
   return (
-    <div className={`${inter.variable} ${interTight.variable} ${inter.className} min-h-screen bg-paper text-ink overflow-x-clip`}>
+    <div className="site-fonts min-h-screen bg-paper text-ink overflow-x-clip">
       <RevealOnScroll />
       {[softwareLd, orgLd, faqLd].map((ld, i) => (
         <script key={i} type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(ld) }} />

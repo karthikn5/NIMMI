@@ -31,6 +31,11 @@ const nextConfig: NextConfig = {
           { key: "Content-Security-Policy", value: "frame-ancestors *; base-uri 'self'; object-src 'none'; form-action 'self'" },
         ],
       },
+      {
+        // public/fonts: a changed font gets a new file name, so browsers can keep these for a year.
+        source: "/fonts/:file*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+      },
     ];
   },
   images: {

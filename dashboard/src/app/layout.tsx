@@ -1,17 +1,8 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
+import { preload } from "react-dom";
 import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+import "./fonts.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://nimmiai.in"),
@@ -56,10 +47,13 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // The fonts (fonts.css) start loading with the page, as next/font did: their Latin files only.
+  preload("/fonts/geist-v5-latin.woff2", { as: "font", type: "font/woff2" });
+  preload("/fonts/geist-mono-v6-latin.woff2", { as: "font", type: "font/woff2" });
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className="antialiased"
         suppressHydrationWarning
       >
         {/* Google Tag Manager (noscript) */}

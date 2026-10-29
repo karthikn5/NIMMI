@@ -298,22 +298,38 @@ only on the owner's machines): @.claude/private-notes.md
 
 - Plan, phases and results: `NIMMI_AGENT_PLAN.md` (phases 0-6 built Oct 2026, local; not pushed yet).
 - Backend `agent/`: `router.py` (`/api/agent`: messages stream server-sent events; runs replay from any process; stop;
-  threads; actions confirm/cancel/undo; jobs for the builder's cards; usage), `loop.py` (model, tools, model again: 6
-  rounds; a heartbeat reads stop_requested; also runs builder steps), `providers.py` (Gemini, OpenAI, Groq with tools;
-  AGENT_MODELS order; a model at its limit rests as the service says, up to an hour; `ask_json`; `cost_inr`),
+  threads; actions confirm/cancel/undo, runs/{id}/undo (Undo all); jobs for the builder's cards; usage), `loop.py` (the
+  answer in layers, below; a heartbeat reads stop_requested; also runs builder steps), `intake.py`, `plan.py`, `check.py`,
+  `output.py` (no emojis, in code), `flows.py` (flows as steps), `providers.py` (Gemini, OpenAI, Groq with tools;
+  AGENT_MODELS order, AGENT_FAST_MODELS for the quick checks; a model at its limit rests as the service says, up to an
+  hour; `ask_json`; `cost_inr`),
   `events.py` (AG-UI event names, saved in agent_events), `registry.py` (levels read / change / confirm; Change and
   adapters for undo; confirm_action, undo_action), `screens.py` (notes per screen, AREAS, POINTS), `prompt.py`,
   `builder.py` + `brand.py` ("create an agent for me"), `guides.py`, `coverage.py` (every route: tool, excluded with
-  a reason, or pending), `mcp.py` (POST /mcp and Nimmi keys), `tools/` (assistants, changes, confirm, build,
-  connections, voice, workspace, more, navigate).
+  a reason, or pending), `mcp.py` (POST /mcp and Nimmi keys), `tools/` (assistants, changes, flow, confirm, build,
+  connections, voice, workspace, more, navigate, work).
+- An answer in layers (NIMMI_AGENT_PLAN.md section 14; built 30 Oct 2026 after live failures: "make GBOT like GTBOT" did
+  one change and claimed five; "create a flow" pasted a table): intake (one fast-model call: "do" or "ask", the areas
+  whose tools it needs whatever page is open, a first plan) -> plan (a checklist in the panel, agent_runs.plan, kept
+  current with update_plan) -> tools (intake's areas, load_tools; a tool's `after` waits for another, write_flow after
+  get_flow; a call made twice in one answer isn't made twice; errors carry a kind) -> guard (an answer while a followed
+  plan has open steps goes back to work) -> check (`<done>`, what the tools really did, in every round; a task's answer
+  is held and reviewed by a fast model: ok, fix (the corrected answer goes) or continue (once), and the plan's statuses
+  set from the ledger). No rule about particular words anywhere: models read the requests.
+- Flows as steps (`flows.py`: outline/build, checked: links lead somewhere, all reachable, no endless loop without a
+  question; blocks keep their place): get_flow, write_flow, draft_flow (from the assistant's knowledge; a sentence
+  with a number the knowledge doesn't have is left out). copy_assistant_settings copies design, avatar, instructions,
+  reply settings, knowledge, flow between assistants in one undoable change (not which pages it shows on).
 - Tools call route functions directly with the person's AuthContext, which skips FastAPI's dependencies: a tool must
   declare the roles its route requires. Read tools never call an AI model or write (a test checks). Change tools return
   a Change (exact settings before/after); confirm tools need a preview and run only on Confirm. Each area's tools come
   on its own screens (AREAS); an unknown screen gets all.
-- Tables: agent_threads, agent_messages, agent_runs (cost_inr), agent_events, agent_actions, agent_jobs, agent_keys.
+- Tables: agent_threads, agent_messages, agent_runs (cost_inr, kind, plan), agent_events, agent_actions, agent_jobs,
+  agent_keys.
 - Dashboard: `components/agent/` (AgentProvider in `app/dashboard/layout.tsx`; AgentPanel: header with status and a
   More menu, history, Changes tab, keyboard shortcuts; AgentComposer: the box, the mic, "/" shortcuts; AgentMessages:
-  welcome, turns, Copy / Read aloud / thumbs / Try again; AgentCards, AgentText, AgentToggle, AgentKeys on Profile),
+  welcome, turns, the plan's checklist, Copy / Read aloud / thumbs / Try again / Undo all; AgentCards, AgentText (tables
+  too), AgentToggle, AgentKeys on Profile),
   `lib/agent/` (screens, stream, changes, useRecorder, useSpeaker). The mic posts a recording to
   `/api/agent/transcribe` (Sarvam, language found by itself); Read aloud is `/api/agent/speak` (Sarvam, Priya, the
   language from the script); thumbs are `/api/agent/runs/{id}/feedback` (agent_runs.feedback).
@@ -325,7 +341,8 @@ only on the owner's machines): @.claude/private-notes.md
 - Limits: AGENT_DAILY_FREE / AGENT_DAILY_PAID per workspace in 24 hours.
 - Keys (Oct 2026): Gemini key free tier (20 requests a day); Groq free tier (8,000 tokens a minute and 200,000 a day per
   model; an answer with a tool is 5,000-8,000); OpenAI no credits.
-- Tests: `tests/test_agent.py`. Real models: `dev-scripts/agent/model_probe.py`, `eval.py`, `build_trial.py`. Browser:
+- Tests: `tests/test_agent.py`. Real models: `dev-scripts/agent/model_probe.py`, `eval.py`, `build_trial.py`,
+  `task_trial.py` (real tasks checked in the database, on a backend and database of its own). Browser:
   `dev-scripts/ui-checks/agent_ui.mjs`, `agent_changes_ui.mjs`, `agent_builder_ui.mjs`, `agent_more_ui.mjs`
   (AGENT_PACE_MS=30000 on free tiers).
 

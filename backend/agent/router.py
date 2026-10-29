@@ -150,13 +150,14 @@ def _action_fields(a: AgentAction) -> dict:
 
 
 def _items(messages: list[AgentMessage], skip_run: Optional[str], errors: Optional[dict] = None,
-           actions: Optional[dict] = None, jobs: Optional[dict] = None) -> list[dict]:
-    """The thread as the panel shows it: the person's messages, the agent's words and the steps it took (with Undo for
-    changes, and the Confirm card for what waited for them), notes of what they did in the panel, and what went wrong
-    on a run that failed (`errors`: run id -> RUN_ERROR event). The run still answering is left out (the panel replays
-    its events), except for the message that started it."""
+           actions: Optional[dict] = None, jobs: Optional[dict] = None, plans: Optional[dict] = None) -> list[dict]:
+    """The thread as the panel shows it: the person's messages, the plan of a task (`plans`: run id -> its steps), the
+    agent's words and the steps it took (with Undo for changes, and the Confirm card for what waited for them; Nimmi's
+    own tools, like keeping the plan, aren't steps), notes of what they did in the panel, and what went wrong on a run
+    that failed (`errors`: run id -> RUN_ERROR event). The run still answering is left out (the panel replays its
+    events), except for the message that started it."""
     results = {m.tool_call_id: m for m in messages if m.role == "tool"}
-    errors, actions, jobs = errors or {}, actions or {}, jobs or {}
+    errors, actions, jobs, plans = errors or {}, actions or {}, jobs or {}, plans or {}
     items: list[dict] = []
     current = None
 
@@ -177,14 +178,18 @@ def _items(messages: list[AgentMessage], skip_run: Optional[str], errors: Option
             items.append({"type": "note", "id": m.id, "text": m.content or ""})
         elif m.role == "user":
             items.append({"type": "user", "id": m.id, "text": m.content or ""})
+            if m.run_id in plans and m.run_id != skip_run:
+                items.append({"type": "plan", "id": f"plan-{m.run_id}", "runId": m.run_id, "steps": plans[m.run_id]})
         elif m.role == "assistant" and m.run_id != skip_run:
             if m.content:
                 items.append({"type": "text", "id": m.id, "text": m.content, "runId": m.run_id})
             for call in m.tool_calls or []:
+                if (t := registry.TOOLS.get(call.get("name") or "")) is not None and t.internal:
+                    continue
                 result = results.get(call.get("id"))
                 ok = result is not None and not (result.content or "").startswith('{"error"')
                 step = {"type": "step", "id": call.get("id"), "name": call.get("name"),
-                        "label": registry.label(call.get("name") or ""), "ok": ok}
+                        "label": registry.label(call.get("name") or ""), "ok": ok, "runId": m.run_id}
                 action = actions.get(call.get("id"))
                 if action is not None and action.inputs is None:  # a change: Undo
                     step.update(_action_fields(action))
@@ -208,8 +213,10 @@ async def get_thread(thread_id: str, ctx: AuthContext = Depends(get_ctx), db: As
     actions = {a.tool_call_id: a for a in (await db.execute(select(AgentAction).where(
         AgentAction.thread_id == thread.id, AgentAction.user_id == ctx.user_id))).scalars().all() if a.tool_call_id}
     jobs = {j.id: j for j in (await db.execute(select(AgentJob).where(AgentJob.thread_id == thread.id))).scalars().all()}
+    plans = {run_id: steps for run_id, steps in (await db.execute(
+        select(AgentRun.id, AgentRun.plan).where(AgentRun.thread_id == thread.id))).all() if steps}
     return {"id": thread.id, "title": thread.title or "Chat",
-            "items": _items(list(messages), running.id if running else None, errors, actions, jobs),
+            "items": _items(list(messages), running.id if running else None, errors, actions, jobs, plans),
             "running": {"id": running.id} if running else None}
 
 
@@ -264,6 +271,20 @@ async def cancel_action(action_id: str, ctx: AuthContext = Depends(get_ctx)):
 async def undo_action(action_id: str, ctx: AuthContext = Depends(get_ctx)):
     result = await registry.undo_action(ctx, action_id)
     await _note(action_id, f"(In the panel they undid: {result['summary']})")
+    return result
+
+
+@router.post("/runs/{run_id}/undo")
+async def undo_run(run_id: str, ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depends(get_db)):
+    """Undo everything one answer changed (the panel's "Undo all")."""
+    run = await _own_run(run_id, ctx, db)
+    thread_id = run.thread_id
+    await db.close()
+    result = await registry.undo_run(ctx, run_id)
+    if result["undone"] or result["kept"]:
+        text = "; ".join(u["summary"] for u in result["undone"]) or "nothing"
+        kept = "".join(f" Kept: {k['summary']} ({k['reason']})" for k in result["kept"])
+        await _note_thread(thread_id, f"(In the panel they undid everything from one answer: {text}.{kept})")
     return result
 
 

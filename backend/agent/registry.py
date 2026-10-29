@@ -12,9 +12,15 @@ Levels, enforced here and never left to the model:
   person clicks Confirm there (confirm_action). Proposals expire after CONFIRM_MINUTES.
 Paying, buying and upgrading are never tools: the agent opens the page and the person decides there.
 
-Inputs are checked before a tool runs, errors go back to the model as plain words, results are clipped, and anything
-that looks like a secret is hidden from the model. Text written by other people is marked as data (untrusted()).
+Inputs are checked before a tool runs, errors go back to the model as plain words with their kind (the input, a
+permission, the plan, not found, busy, a passing failure), results are clipped, and anything that looks like a secret
+is hidden from the model. Text written by other people is marked as data (untrusted()). A lookup that hit a passing
+failure (the database or a service for a moment) is tried once more before the model hears of it.
+
+Some tools are for Nimmi's own work, not the dashboard (`internal`: keeping the plan, loading another area's tools):
+they act on the run (ToolContext.run), never show as steps in the panel and are never offered over MCP.
 """
+import asyncio
 import json
 import logging
 import re
@@ -22,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Awaitable, Callable, Optional
 
+import httpx
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,7 +53,15 @@ _SECRET = re.compile(
 
 
 class ToolError(Exception):
-    """A tool couldn't do what was asked; the message goes back to the model (or the panel) as it is."""
+    """A tool couldn't do what was asked; the message goes back to the model (or the panel) as it is. `kind` says
+    what sort of problem it is (ERROR_KINDS), so the model knows whether to fix its inputs or do something else."""
+
+    def __init__(self, message: str, kind: str = "invalid_input"):
+        super().__init__(message)
+        self.kind = kind
+
+
+ERROR_KINDS = ("invalid_input", "not_allowed", "needs_paid_plan", "not_found", "conflict", "busy", "temporary", "internal")
 
 
 @dataclass
@@ -57,6 +72,8 @@ class ToolContext:
     screen: dict
     tool_call_id: Optional[str] = None
     actions: list = field(default_factory=list)  # what the panel does after the tool: go to a page, point, refresh
+    run: Any = None  # the answer's own state (loop.RunState): its plan and areas, for the internal tools
+    usage: list = field(default_factory=list)  # AI models a tool used itself (draft_flow): counted with the run
 
     def act(self, name: str, value: dict) -> None:
         self.actions.append({"name": name, "value": value})
@@ -96,10 +113,13 @@ class Tool:
     screens: tuple = ()
     preview: Optional[Callable[..., Awaitable[dict]]] = None  # confirm: (tc, db, **inputs) -> {"title", "summary"}
     routes: tuple = ()  # the API routes it does the work of ("GET /api/bots"), for the parity check
+    internal: bool = False  # Nimmi's own work (the plan, loading tools): not a step in the panel, not on MCP
+    after: tuple = ()  # offered in an answer only once one of these tools ran in it (write_flow: after get_flow)
 
 
 def tool(name: str, description: str, label: str, parameters: Optional[dict] = None, *, level: str = "read",
-         roles: tuple = ALL_ROLES, screens: tuple = (), preview=None, routes: tuple = ()):
+         roles: tuple = ALL_ROLES, screens: tuple = (), preview=None, routes: tuple = (), internal: bool = False,
+         after: tuple = ()):
     """Register a tool. Its handler gets (ToolContext, db session, **inputs). A read tool returns what the model reads;
     a change tool returns a Change; a confirm tool needs `preview` and its handler runs only once confirmed."""
     if level not in LEVELS:
@@ -109,7 +129,7 @@ def tool(name: str, description: str, label: str, parameters: Optional[dict] = N
 
     def register(fn):
         TOOLS[name] = Tool(name, description, parameters or {"type": "object", "properties": {}}, fn, label, level,
-                           roles, screens, preview, routes)
+                           roles, screens, preview, routes, internal, after)
         return fn
     return register
 
@@ -118,12 +138,14 @@ def adapter(name: str, read, write, refresh) -> None:
     ADAPTERS[name] = Adapter(read, write, refresh)
 
 
-def available(role: str, screen_id: Optional[str]) -> list[Tool]:
-    """The tools for this person on this screen: everyday ones everywhere, each area's on its own screens, and all of
-    them on a screen nobody described."""
-    from agent.screens import SCREENS
+def available(role: str, screen_id: Optional[str], areas=()) -> list[Tool]:
+    """The tools for this person on this screen: everyday ones everywhere, each area's on its own screens, the areas
+    a request needs (`areas`: intake's or load_tools'), and all of them on a screen nobody described."""
+    from agent.screens import AREAS, SCREENS
     known = screen_id in SCREENS
-    return [t for t in TOOLS.values() if role in t.roles and (not t.screens or not known or screen_id in t.screens)]
+    wanted = {screen_id, *(s for a in areas for s in AREAS.get(a, ()))}
+    return [t for t in TOOLS.values()
+            if role in t.roles and (not t.screens or not known or wanted.intersection(t.screens))]
 
 
 def specs(tools: list[Tool], screen_id: Optional[str] = None) -> list[dict]:
@@ -196,13 +218,25 @@ def dump(result: Any) -> str:
     return text if len(text) <= RESULT_CHARS else text[:RESULT_CHARS] + " ...(cut short)"
 
 
-def _error(e: Exception, name: str, run_id: str) -> str:
+def _error(e: Exception, name: str, run_id: str) -> tuple[str, str]:
+    """The problem in words, and its kind (ERROR_KINDS)."""
     if isinstance(e, HTTPException):
-        return e.detail if isinstance(e.detail, str) else "That didn't work."
+        status = e.status_code
+        kind = ("not_allowed" if status in (401, 403) else "needs_paid_plan" if status == 402 else
+                "not_found" if status == 404 else "conflict" if status == 409 else "busy" if status == 429 else
+                "temporary" if status >= 500 else "invalid_input")
+        return (e.detail if isinstance(e.detail, str) else "That didn't work."), kind
     if isinstance(e, ToolError):
-        return str(e)
+        return str(e), e.kind
+    from agent.providers import ModelError
+    if isinstance(e, ModelError):  # a tool that uses an AI itself (draft_flow) found it busy
+        return ("The AI service is busy right now, so this didn't work. Try it again in a minute." if e.busy else
+                "The AI service didn't answer, so this didn't work. Try it again in a minute."), "busy" if e.busy else "temporary"
+    if isinstance(e, (TimeoutError, httpx.TimeoutException, httpx.NetworkError)):
+        logger.warning(f"Agent tool {name} timed out or lost its connection (run {run_id}): {e!r}")
+        return "A service didn't answer in time, so this didn't work. Try again in a moment.", "temporary"
     logger.exception(f"Agent tool {name} failed (run {run_id})")
-    return "Something went wrong inside Nimmi, so this didn't work. Try again in a moment."
+    return "Something went wrong inside Nimmi, so this didn't work. Try again in a moment.", "internal"
 
 
 @dataclass
@@ -213,6 +247,8 @@ class Outcome:
     action_id: Optional[str] = None
     undoable: bool = False
     proposed: Optional[dict] = None  # confirm level: {"actionId", "title", "summary"}
+    kind: Optional[str] = None  # a problem's kind (ERROR_KINDS); "repeat": the loop answered from an earlier call
+    summary: Optional[str] = None  # what a change did, or what waits for Confirm, in words (the run's ledger)
 
 
 async def _record(db: AsyncSession, tc: ToolContext, tool_name: str, **fields) -> str:
@@ -224,16 +260,29 @@ async def _record(db: AsyncSession, tc: ToolContext, tool_name: str, **fields) -
     return row.id
 
 
+def failed(message: str, kind: str) -> Outcome:
+    return Outcome(dump({"error": message, "kind": kind}), False, kind=kind)
+
+
 async def run(tc: ToolContext, name: str, inputs: dict) -> Outcome:
-    """Run one tool for the model."""
+    """Run one tool for the model. A lookup that hit a passing failure is tried once more."""
     t = TOOLS.get(name)
     if t is None:
-        return Outcome(dump({"error": f"There is no tool named {name}."}), False)
+        return failed(f"There is no tool named {name}.", "invalid_input")
     if tc.ctx.role not in t.roles:
-        return Outcome(dump({"error": "The person's role in this workspace doesn't allow this."}), False)
+        return failed("The person's role in this workspace doesn't allow this.", "not_allowed")
     clean, problem = check_inputs(t.parameters, inputs if isinstance(inputs, dict) else {})
     if problem:
-        return Outcome(dump({"error": problem}), False)
+        return failed(problem, "invalid_input")
+    outcome = await _run_once(tc, t, clean)
+    if outcome.kind == "temporary" and t.level == "read":
+        await asyncio.sleep(0.5)
+        outcome = await _run_once(tc, t, clean)
+    return outcome
+
+
+async def _run_once(tc: ToolContext, t: Tool, clean: dict) -> Outcome:
+    name = t.name
     try:
         async with database.async_session() as db:
             if t.level == "confirm":
@@ -243,7 +292,7 @@ async def run(tc: ToolContext, name: str, inputs: dict) -> Outcome:
                 return Outcome(dump({"waiting_for_confirmation": plan["summary"],
                                      "note": "Nothing has happened yet. The person sees Confirm and Cancel buttons in the "
                                              "panel; tell them in one line what happens if they confirm."}),
-                               True, action_id, proposed=proposed)
+                               True, action_id, proposed=proposed, summary=plan["summary"])
             result = await t.handler(tc, db, **clean)
             if t.level == "change":
                 if not isinstance(result, Change):
@@ -254,9 +303,10 @@ async def run(tc: ToolContext, name: str, inputs: dict) -> Outcome:
                                           entity_id=result.entity_id, before=result.before, after=result.after)
                 tc.act("changed", result.refresh)
                 return Outcome(dump({"done": result.summary, **({"details": result.result} if result.result else {}),
-                                     "note": "They can undo it with the Undo link next to this step in your panel (not on the page)."}), True, action_id, undoable=True)
+                                     "note": "They can undo it with the Undo link next to this step in your panel (not on the page)."}),
+                               True, action_id, undoable=True, summary=result.summary)
     except Exception as e:  # noqa: BLE001 (each kind is turned into words in _error)
-        return Outcome(dump({"error": _error(e, name, tc.run_id)}), False)
+        return failed(*_error(e, name, tc.run_id))
     return Outcome(dump(result), True)
 
 
@@ -290,7 +340,7 @@ async def confirm_action(ctx: AuthContext, action_id: str) -> dict:
         try:
             result = await t.handler(tc, db, **(row.inputs or {}))
         except Exception as e:  # noqa: BLE001
-            row.state, row.error = "failed", _error(e, row.tool, row.run_id or "")
+            row.state, row.error = "failed", _error(e, row.tool, row.run_id or "")[0]
             await db.commit()
             return {"state": "failed", "message": row.error, "summary": row.summary}
         if isinstance(result, Change):
@@ -339,3 +389,24 @@ async def undo_action(ctx: AuthContext, action_id: str) -> dict:
         row.state, row.decided_at = "undone", now()
         await db.commit()
         return {"state": "undone", "summary": row.summary, "refresh": [a.refresh(row.entity_id)]}
+
+
+async def undo_run(ctx: AuthContext, run_id: str) -> dict:
+    """Undo every change one answer made, newest first (so each finds the settings as it left them). A change that
+    was changed again since is kept, with the reason."""
+    from sqlalchemy import select
+    from backend.models import AgentAction
+    async with database.async_session() as db:
+        rows = (await db.execute(select(AgentAction).where(
+            AgentAction.run_id == run_id, AgentAction.owner_id == ctx.owner_id, AgentAction.user_id == ctx.user_id,
+            AgentAction.state == "done", AgentAction.adapter.isnot(None)).order_by(AgentAction.created_at.desc()))).scalars().all()
+    undone, kept, refresh = [], [], []
+    for row in rows:
+        try:
+            result = await undo_action(ctx, row.id)
+        except HTTPException as e:
+            kept.append({"actionId": row.id, "summary": row.summary, "reason": e.detail})
+            continue
+        undone.append({"actionId": row.id, "summary": result["summary"]})
+        refresh += [r for r in result["refresh"] if r not in refresh]
+    return {"undone": undone, "kept": kept, "refresh": refresh}

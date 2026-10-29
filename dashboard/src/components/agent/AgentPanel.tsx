@@ -92,8 +92,16 @@ export default function AgentPanel({ docked }: { docked: boolean }) {
     }, [agent.items]);
     const working = [...agent.items].reverse().find((i) => i.type === "step" && i.running);
     const lastItem = agent.items[agent.items.length - 1];
-    const thinking = agent.running && (!lastItem || lastItem.type === "user" || lastItem.type === "note" || (lastItem.type === "step" && !lastItem.running));
-    const status = listening ? "Listening…" : agent.running ? (working && working.type === "step" ? `${working.label}…` : "Thinking…")
+    const thinking = agent.running && (!lastItem || lastItem.type === "user" || lastItem.type === "note" || lastItem.type === "plan"
+                                       || (lastItem.type === "step" && !lastItem.running));
+    // While a task runs: the step of its plan being worked on, and how far along it is.
+    const plan = agent.running ? [...agent.items].reverse().find((i) => i.type === "plan") : undefined;
+    const current = plan?.type === "plan" ? plan.steps.findIndex((s) => s.status === "doing") : -1;
+    const status = listening ? "Listening…" : agent.running
+        ? (agent.waitingNote ? agent.waitingNote
+            : working && working.type === "step" ? `${working.label}…`
+            : plan?.type === "plan" && current >= 0 ? `Step ${current + 1} of ${plan.steps.length}: ${plan.steps[current].title}`
+            : "Thinking…")
         : agent.ready === false ? "Not set up on this server" : "Ready to help";
 
     return (

@@ -26,6 +26,7 @@ FLUSH_SEC = 0.15
 POLL_SEC = 0.5
 PING_SEC = 15.0
 STALE_SEC = 60.0  # a run whose process sent no heartbeat for this long has died (a deploy, a crash)
+ENDING_SEC = 5.0  # a run that ended this recently still sends its own last event
 DONE = ("RUN_FINISHED", "RUN_ERROR")
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
@@ -124,6 +125,8 @@ async def _end_dead_run(run_id: str) -> Optional[dict]:
             return {"type": "RUN_ERROR", "message": "This answer is no longer available.", "seq": 0}
         if run.state == "running" and not stale(run):
             return None
+        if run.state != "running" and (aware(run.finished_at) or now()) > now() - timedelta(seconds=ENDING_SEC):
+            return None  # it has just ended: its own last event is on its way (loop.py saves the run first)
         if run.state == "running":
             run.state, run.error, run.finished_at = "failed", "interrupted: the server restarted", now()
         event = ({"type": "RUN_ERROR", "message": "The answer was cut off because the server restarted. Please ask again."}

@@ -595,6 +595,77 @@ and would make the model try to call them.
 4. Start with phase 1 (screen questions) as one piece of work, then phase 2 and 3: is this order right for you, or
    do you want "create an agent" (phase 3) first? Phase 3 needs the policy layer from phase 2 either way.
 
+## 14. Phase 7: tasks done right (30 Oct 2026)
+
+### What went wrong on live (30 Oct 2026, the owner's own test on nimmiai.in, GPT-OSS answering)
+1. "update GBOT as like GTBOT": Nimmi changed one thing (the instructions), then answered that design, instructions,
+   behaviour, knowledge and flow had all been copied.
+2. "create a flow for GBOT based on the knowledge": "I can't create brand-new blocks", then a Markdown table of a
+   flow, with internal block ids and emoji numbers.
+
+The causes, rather than the symptoms:
+- Nothing kept track of what was asked against what was done: one loop of model, tools, model, and whatever it said
+  last was the answer.
+- The answer was free text: nothing compared it with what the tools really did.
+- Missing abilities: no way to write a whole flow, or to copy one assistant to another. get_assistant showed the
+  first 2,000 characters of the instructions and 800 of the knowledge, so even retyping couldn't copy faithfully.
+- Formatting rules lived only in the prompt, and the panel showed tables as raw pipes.
+
+### The design: layers around the loop
+Each layer is general: no rule about particular requests or words anywhere; models read the requests.
+
+| Layer | What it does | Where |
+|---|---|---|
+| First look | One short call to a fast model: "do" or "ask", and which groups of tools the message needs | `agent/intake.py` |
+| Tools by group | Only those groups come with the answer (and a small core), whatever page is open; `load_tools` brings more. A copy task's tools are about 1,300 tokens a round instead of 4,100 | `agent/groups.py` |
+| Plan | A task of three or more steps gets a checklist the model writes and keeps current (`update_plan`), in the panel and kept with the chat. A step can't be "done" in an answer where no tool has worked | `agent/plan.py`, `tools/work.py` |
+| Executor | Model, tools, model again. A call made twice isn't made twice, a lookup answers from before, a failed call isn't blindly retried; a tool comes once what it depends on has run (`write_flow` after `get_flow`); errors carry their kind | `agent/loop.py`, `registry.py` |
+| Guard | An answer while a plan the model follows has open steps sends it back to them (twice at most) | `loop.py` |
+| Check | What the tools really did (`<done>`) is in front of the model every round. A task's answer is held and reviewed by a fast model against it: ok, fix (the corrected answer goes), or continue (once); the plan's statuses are set from it | `agent/check.py` |
+| Recovery | A model at its rate limit is waited for (a task: up to a minute, and the panel says so). Cut short after changes, Nimmi says from the record what it did and what's left. Undo all puts an answer's changes back | `providers.py`, `loop.py`, `POST /api/agent/runs/{id}/undo` |
+| Output | Emojis taken out in code (keycap numbers become "1."); tables render; never ids | `agent/output.py`, `AgentText.tsx` |
+| Memory | The workspace's assistants by name and id (names need no lookup); what Nimmi changed earlier in the chat (for "undo that" and follow-ups) | `loop.py` |
+
+New abilities: flows as steps (`agent/flows.py`: get_flow, write_flow, draft_flow), checked before they're saved
+(every link leads to a step, all reachable, no endless loop without a question, no `{name}` placeholders the widget
+can't fill); draft_flow writes from the assistant's own knowledge, code leaves out any sentence with a number the
+knowledge doesn't have, a fast model points out claims it doesn't support (left out too), at most 16 steps, sent back
+once with what to fix. copy_assistant_settings copies design, avatar, instructions, reply settings, knowledge and
+flow in one undoable change (not which pages it shows on). update_instructions edits part of the instructions.
+The design tool sets the character launcher (its height, Violet).
+
+### Results (30 Oct 2026, local; a trial backend with a database of its own, `dev-scripts/agent/task_trial.py`)
+- Tests: 366 backend tests pass (58 for the agent); each new behaviour was checked to fail without its fix.
+- The real AI: GPT-OSS 120B's free daily allowance (200,000 tokens) had been used up by the day's testing, so the
+  tasks ran on Qwen 3.8 27B and GPT-OSS 20B (Groq free tier: weaker models, 7,000-8,000 tokens a minute). Gemini was
+  at its quota or overloaded. With all layers in place:
+  - "update GBOT as like GTBOT" (the owner's words): every part copied in one step, the result read back, a true
+    answer ("the avatar was already the same"), and it noticed GBOT's welcome still says "I'm GTBOT" and offered to
+    fix it. Before: one change, five claimed.
+  - "create a flow for teh GBOT based on the knowledge we use , and it buisness logics": an 11-step flow from the
+    knowledge (the details asked once, an end for anything else), described in plain words. Before: "I can't", and a
+    table.
+  - Three changes in one message: all three, with a plan of three done. Tamil for GBOT's phone agent, asked from the
+    Assistants page: done (the voice tools came by group). Something it can't do (WhatsApp to all leads): said so,
+    and offered what it can.
+  - The browser, real panel and real AI (`dev-scripts/ui-checks/agent_plan_ui.mjs`): two changes, a checked answer,
+    Undo all 2 put both back, the chat came back after a reload: all passed.
+- What the trials caught, and what changed because of it: a small model's plans led the work astray ("open the design
+  tab", "test it", a copy of only the design), so the answering model makes the plan; a model ticked a step done
+  without doing anything (now refused), and when it then claimed success the review caught it; a busy AI inside a tool
+  showed as "something went wrong" (now "busy"); a drafted flow had 24 steps, invented programmes and "{name}" (now
+  checked); a model wrote made-up FAQs into the knowledge (the rules and the tool now forbid it); a run's record was
+  saved after its last event (now before).
+- Costs per task on these models: 15,000-20,000 tokens, 2-4 rounds, 1 to 2 minutes (most of it waiting for the free
+  tier's per-minute limits; GPT-OSS 120B answers a round in about 1 second when it has allowance).
+
+### What it needs from the owner
+- A paid AI tier for Nimmi: on the free tier a task can wait or be cut short by per-minute limits (Groq: 8,000 tokens
+  a minute; Qwen refuses any request over 7,000), and one day of testing used GPT-OSS 120B's whole daily allowance.
+  With its own key (AGENT_GROQ_API_KEY) Nimmi never eats into the allowance phone calls and website chat need.
+- AGENT_FAST_MODELS (optional): the models for the first look and the review; default GPT-OSS 20B, then 120B,
+  then Gemini 3.6 Flash.
+
 ---
 
 ### Sources checked (29 Oct 2026)

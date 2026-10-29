@@ -1,12 +1,13 @@
 """
 Tools that change settings the person can undo (level "change"): an assistant's look, instructions, reply settings,
-knowledge and flow text; a voice agent and its script; answers to unanswered questions.
+knowledge and flow (tools/flow.py writes whole flows); copying any of them from another assistant; a voice agent and
+its script; answers to unanswered questions.
 
 Each goes through the same route the dashboard saves with (so the same checks), and returns a registry.Change with
 exactly the settings it changed, before and after. The adapters below read and write those settings for Undo, also
 through the dashboard's routes. Keys: "name", "instructions", "knowledge" (without the business summary, which is
-rewritten in the background), "visual.<key>", "behaviour.<key>", "behaviour.collect.<key>", "flow_block.<id>"; for
-a voice agent and a script, their form's field names.
+rewritten in the background), "visual.<key>", "behaviour.<key>", "behaviour.collect.<key>", "flow" (the whole flow),
+"flow_block.<id>"; for a voice agent and a script, their form's field names.
 """
 import copy
 import re
@@ -62,6 +63,8 @@ def _get(bot, key: str):
         return reply_rules.collect(bot.behaviour).get(key[18:])
     if key.startswith("behaviour."):
         return reply_rules.clean(bot.behaviour).get(key[10:])
+    if key == "flow":
+        return copy.deepcopy(bot.flow_data or {"nodes": [], "edges": []})
     if key.startswith("flow_block."):
         node = next((n for n in (bot.flow_data or {}).get("nodes") or [] if n.get("id") == key[11:]), None)
         return copy.deepcopy(node.get("data")) if node else None
@@ -97,6 +100,9 @@ async def _write_assistant(ctx, db, bot_id: str, values: dict) -> None:
         elif key.startswith("behaviour."):
             rules[key[10:]] = value
             data["behaviour"] = rules
+        elif key == "flow":
+            flow = copy.deepcopy(value or {"nodes": [], "edges": []})
+            data["flow_data"] = flow
         elif key.startswith("flow_block."):
             node = next((n for n in flow.get("nodes") or [] if n.get("id") == key[11:]), None)
             if node is None:
@@ -132,13 +138,15 @@ DESIGN = {  # input -> (setting, words)
     "greeting_after_seconds": ("greeting_delay", "greeting shows after (seconds)"),
     "hide_on_phones": ("hide_on_mobile", "hidden on phones"), "offer_talk_to_a_person": ("show_human_toggle", "'Talk to a person' switch"),
     "starters": ("starters", "suggested questions"), "font": ("font_family", "font"),
+    "character_height": ("character_height", "character's height"), "animated_character": ("character_animation", "animated character"),
 }
 LIMITS = {"welcome_message": 300, "launcher_greeting": 200, "subtitle": 80, "input_placeholder": 80}
 
 
 @tool("update_assistant_design", "Change how an assistant's chat looks: name, colours (hex, like #16a34a), font, "
-      "launcher shape and side, welcome message, greeting beside the launcher, opening by itself after N seconds (0 off), "
-      "suggested questions (up to 4). Only the inputs given change.", "Changing the design",
+      "launcher shape and side (character: the avatar stands at full height, character_height 80-220 px; "
+      "animated_character violet: Nimmi's animated Violet stands there), welcome message, greeting beside the launcher, "
+      "opening by itself after N seconds (0 off), suggested questions (up to 4). Only the inputs given change.", "Changing the design",
       {"type": "object", "required": ["assistant_id"], "properties": {
           **ASSISTANT, "name": {"type": "string", "description": "The assistant's name (up to 60 characters)."},
           **{k: {"type": "string"} for k in DESIGN if k.endswith("_colour")},
@@ -149,7 +157,8 @@ LIMITS = {"welcome_message": 300, "launcher_greeting": 200, "subtitle": 80, "inp
           "input_placeholder": {"type": "string"},
           "open_by_itself_after_seconds": {"type": "integer"}, "greeting_after_seconds": {"type": "integer"},
           "hide_on_phones": {"type": "boolean"}, "offer_talk_to_a_person": {"type": "boolean"},
-          "starters": {"type": "array", "items": {"type": "string"}}}},
+          "starters": {"type": "array", "items": {"type": "string"}},
+          "character_height": {"type": "integer"}, "animated_character": {"type": "string", "enum": ["none", "violet"]}}},
       level="change", roles=MANAGERS, routes=("PATCH /api/bots/{bot_id}", "POST /api/bots/{bot_id}/config"), screens=AREAS["assistant"])
 async def update_assistant_design(tc, db, assistant_id, name=None, **given):
     bot = await get_owned_bot(assistant_id, tc.ctx, db)
@@ -174,6 +183,10 @@ async def update_assistant_design(tc, db, assistant_id, name=None, **given):
             value = max(0, min(int(value), 60))
         elif key == "starters":
             value = [s.strip()[:80] for s in value if s.strip()][:4]
+        elif key == "character_height":
+            value = max(80, min(int(value), 220))
+        elif key == "animated_character":
+            value = "" if value == "none" else value
         values[f"visual.{setting}"] = value
         names[f"visual.{setting}"] = words
     if not values:
@@ -182,14 +195,24 @@ async def update_assistant_design(tc, db, assistant_id, name=None, **given):
 
 
 @tool("update_instructions", "Change an assistant's instructions (what it should do and avoid when it chats). "
-      "mode 'append' adds the text at the end; 'replace' replaces them all.", "Changing the instructions",
+      "mode 'append' adds the text at the end; 'replace' replaces them all; 'edit' replaces only the part given in "
+      "find (copied exactly from get_assistant) with text.", "Changing the instructions",
       {"type": "object", "required": ["assistant_id", "text"], "properties": {
-          **ASSISTANT, "text": {"type": "string"}, "mode": {"type": "string", "enum": ["append", "replace"], "description": "Default append."}}},
+          **ASSISTANT, "text": {"type": "string"}, "mode": {"type": "string", "enum": ["append", "replace", "edit"], "description": "Default append."},
+          "find": {"type": "string", "description": "edit: the exact words to replace."}}},
       level="change", roles=MANAGERS, routes=("PATCH /api/bots/{bot_id}",), screens=AREAS["assistant"])
-async def update_instructions(tc, db, assistant_id, text, mode="append"):
+async def update_instructions(tc, db, assistant_id, text, mode="append", find=None):
     bot = await get_owned_bot(assistant_id, tc.ctx, db)
     current = bot.system_prompt or ""
-    new = text.strip() if mode == "replace" else (current.rstrip() + "\n\n" + text.strip()).strip()
+    if mode == "edit":
+        times = current.count(find or "\0")
+        if not find or not times:
+            raise ToolError("Those words aren't in the instructions as written: copy them exactly from get_assistant.")
+        if times > 1:
+            raise ToolError(f"Those words are in the instructions {times} times: give more of the text around them.")
+        new = current.replace(find, text.strip(), 1).strip()
+    else:
+        new = text.strip() if mode == "replace" else (current.rstrip() + "\n\n" + text.strip()).strip()
     if len(new) > 20000:
         raise ToolError("The instructions would be too long (over 20,000 characters).")
     return await _change_assistant(tc, db, bot, {"instructions": new}, "instructions", {"instructions": "instructions"})
@@ -223,7 +246,8 @@ async def update_reply_settings(tc, db, assistant_id, **given):
 
 
 @tool("add_knowledge_text", "Add facts to an assistant's written knowledge (prices, timings, policies, answers): it "
-      "answers from them from then on.", "Adding to the knowledge",
+      "answers from them from then on. Only facts the person gave you or a tool found: never write them yourself.",
+      "Adding to the knowledge",
       {"type": "object", "required": ["assistant_id", "text"], "properties": {
           **ASSISTANT, "text": {"type": "string", "description": "The facts, in plain words (up to 5,000 characters)."}}},
       level="change", roles=MANAGERS, routes=("PATCH /api/bots/{bot_id}",), screens=AREAS["assistant"])
@@ -275,11 +299,11 @@ async def remove_knowledge_source(tc, db, assistant_id, name):
                   {"kind": "assistant", "id": bot.bot_id})
 
 
-@tool("edit_flow_block", "Change what one block of an assistant's flow says (block ids from get_flow). Its choices and "
-      "links stay as they are.", "Editing the flow",
+@tool("edit_flow_block", "Change what one step of an assistant's flow says (step ids from get_flow). Its choices and "
+      "links stay as they are; to change those, or add and remove steps, use write_flow.", "Editing the flow",
       {"type": "object", "required": ["assistant_id", "block_id", "message"], "properties": {
           **ASSISTANT, "block_id": {"type": "string"}, "message": {"type": "string", "description": "What the block says or asks."}}},
-      level="change", roles=MANAGERS, routes=("PATCH /api/bots/{bot_id}",), screens=AREAS["assistant"])
+      level="change", roles=MANAGERS, routes=("PATCH /api/bots/{bot_id}",), screens=AREAS["assistant"], after=("get_flow",))
 async def edit_flow_block(tc, db, assistant_id, block_id, message):
     bot = await get_owned_bot(assistant_id, tc.ctx, db)
     data = _get(bot, f"flow_block.{block_id}")
@@ -290,6 +314,72 @@ async def edit_flow_block(tc, db, assistant_id, block_id, message):
     new = {**data, "message": message.strip()[:1000]}
     change = await _change_assistant(tc, db, bot, {f"flow_block.{block_id}": new}, "flow", {})
     change.summary = f"{bot.bot_name}: flow block {block_id} now says {_short(message.strip(), 80)}"
+    return change
+
+
+# ─── One assistant set up like another ──────────────────────────────
+
+PARTS = {"design": "design", "avatar": "avatar", "instructions": "instructions", "reply_settings": "reply settings",
+         "knowledge": "knowledge", "flow": "flow"}
+NOT_DESIGN = {"logo_url", "page_rule", "page_paths"}  # the picture is its own part; which pages it shows on is per website
+
+
+@tool("copy_assistant_settings", "Copy settings from one assistant to another, exactly and in one step: design "
+      "(colours, font, launcher, welcome message, suggested questions), avatar (its picture), instructions, "
+      "reply_settings (reply rules and the details it collects), knowledge (everything it answers from, websites and "
+      "files included), flow. Use it whenever they want an assistant set up like another one, rather than retyping: "
+      "then copy every part unless they name some. Undo puts back what it had.", "Copying from another assistant",
+      {"type": "object", "required": ["from_assistant_id", "to_assistant_id", "parts"], "properties": {
+          "from_assistant_id": {"type": "string", "description": "The assistant to copy from."},
+          "to_assistant_id": {"type": "string", "description": "The assistant that changes."},
+          "parts": {"type": "array", "items": {"type": "string", "enum": list(PARTS)}}}},
+      level="change", roles=MANAGERS, routes=("PATCH /api/bots/{bot_id}",), screens=AREAS["assistant"])
+async def copy_assistant_settings(tc, db, from_assistant_id, to_assistant_id, parts):
+    source = await get_owned_bot(from_assistant_id, tc.ctx, db)
+    target = await get_owned_bot(to_assistant_id, tc.ctx, db)
+    if source.bot_id == target.bot_id:
+        raise ToolError("Those are the same assistant: say which one to copy from and which one changes.")
+    parts = [p for p in dict.fromkeys(parts) if p in PARTS]
+    if not parts:
+        raise ToolError(f"Say which parts to copy: {', '.join(PARTS)}.")
+    visual = source.visual_config or {}
+    values: dict = {}
+    groups: dict[str, list] = {}  # part -> its keys, to say what changed
+    if "design" in parts:
+        groups["design"] = [f"visual.{k}" for k in visual if k not in NOT_DESIGN]
+        values.update({k: copy.deepcopy(visual[k[7:]]) for k in groups["design"]})
+    if "avatar" in parts:
+        groups["avatar"] = ["visual.logo_url"]
+        values["visual.logo_url"] = visual.get("logo_url") or ""
+    if "instructions" in parts:
+        groups["instructions"] = ["instructions"]
+        values["instructions"] = source.system_prompt or ""
+    if "reply_settings" in parts:
+        rules = reply_rules.clean(source.behaviour)
+        groups["reply_settings"] = [f"behaviour.{k}" for k in rules]
+        values.update({f"behaviour.{k}": copy.deepcopy(v) for k, v in rules.items()})
+    if "knowledge" in parts:
+        groups["knowledge"] = ["knowledge"]
+        values["knowledge"] = _without_summary(source.knowledge_base or "")
+    if "flow" in parts:
+        groups["flow"] = ["flow"]
+        values["flow"] = copy.deepcopy(source.flow_data or {"nodes": [], "edges": []})
+    change = await _change_assistant(tc, db, target, values, "copied settings", {})
+    differs = [p for p in parts if any(change.before.get(k) != change.after.get(k) for k in groups[p])]
+    words = []
+    for p in differs:
+        if p == "design":
+            n = sum(change.before.get(k) != change.after.get(k) for k in groups[p])
+            words.append(f"design ({n} setting{'s' if n != 1 else ''})")
+        elif p == "flow":
+            n = len([x for x in (change.after.get("flow") or {}).get("nodes") or [] if x.get("type") != "start"])
+            words.append(f"flow ({n} steps)")
+        else:
+            words.append(PARTS[p])
+    same = [PARTS[p] for p in parts if p not in differs]
+    change.summary = (f"{target.bot_name}: copied from {source.bot_name}: {', '.join(words) or 'nothing (already the same)'}"
+                      + (f"; already the same: {', '.join(same)}" if same and words else ""))
+    change.result = {"copied": [PARTS[p] for p in differs], "already_the_same": same}
     return change
 
 

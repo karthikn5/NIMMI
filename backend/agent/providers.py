@@ -1,7 +1,9 @@
 """
 The agent's AI models: one streaming call that may ask for tools, on Gemini or an OpenAI-style API (OpenAI, Groq).
 
-Models are tried in order (AGENT_MODELS: ids from voice/ai_models.py; only those whose service key is set). Nimmi can
+Models are tried in order (AGENT_MODELS: ids from voice/ai_models.py; only those whose service key is set). The quick
+checks around an answer (intake.py's first look, check.py's review) use AGENT_FAST_MODELS, small and fast ones, so
+they cost little and don't spend the main model's per-minute allowance. Nimmi can
 have keys of its own (AGENT_GROQ_API_KEY, AGENT_GEMINI_API_KEY, AGENT_OPENAI_API_KEY), so its use never eats the quota
 that phone calls and website chat need; without them it uses the backend's keys. The next
 one answers when one fails before saying anything; one that was rate-limited or failed rests a while, as on calls.
@@ -31,6 +33,7 @@ from voice import ai_models
 logger = logging.getLogger(__name__)
 
 AGENT_MODELS = [m.strip() for m in os.getenv("AGENT_MODELS", "gemini-3.6-flash,gpt-oss-120b,gpt-oss-20b").split(",") if m.strip()]
+FAST_MODELS = [m.strip() for m in os.getenv("AGENT_FAST_MODELS", "gpt-oss-20b,gpt-oss-120b,gemini-3.6-flash").split(",") if m.strip()]
 RUNS_ON = ("gemini", "openai", "groq")  # the services this client talks to
 GAP_SEC = float(os.getenv("AGENT_MODEL_GAP_SEC", "30"))  # the longest silence: thinking before the first words, or a stall
 CALL_SEC = float(os.getenv("AGENT_MODEL_CALL_SEC", "90"))  # one whole model call
@@ -69,11 +72,21 @@ class Usage:
 
 
 class ModelError(Exception):
-    """No model could answer, or the one answering stopped part way. `busy`: they were all at their rate limits."""
+    """No model could answer, or the one answering stopped part way. `busy`: they were all at their rate limits;
+    `wait`: seconds until the first is free again, as the services said (a daily allowance: up to an hour)."""
 
-    def __init__(self, message: str, busy: bool = False):
+    def __init__(self, message: str, busy: bool = False, wait: float = 0.0):
         super().__init__(message)
         self.busy = busy
+        self.wait = wait
+
+
+def when_free(error: "ModelError") -> str:
+    """When to try again, in words: a per-minute limit is a minute; a used-up allowance is longer, and said so."""
+    if error.wait <= 120:
+        return "in a minute"
+    minutes = round(error.wait / 60)
+    return "in about an hour or later" if minutes >= 55 else f"in about {minutes} minutes"
 
 
 def http() -> httpx.AsyncClient:
@@ -89,10 +102,10 @@ def key(runs_on: str) -> str:
     return os.getenv(f"AGENT_{name}") or os.getenv(name, "")
 
 
-def models() -> list[ai_models.AiModel]:
-    """The models the agent may use on this server, in the order it tries them."""
+def models(role: str = "main") -> list[ai_models.AiModel]:
+    """The models the agent may use on this server, in the order it tries them; role "fast": the quick checks'."""
     out = []
-    for model_id in AGENT_MODELS:
+    for model_id in FAST_MODELS if role == "fast" else AGENT_MODELS:
         m = ai_models.AI_MODELS_BY_ID.get(model_id)
         if m and m.runs_on in RUNS_ON and m.functions and key(m.runs_on):
             out.append(m)
@@ -311,50 +324,61 @@ def _rest(m: ai_models.AiModel, error: Exception) -> bool:
 
 
 async def stream(system: str, context: str, history: list[dict], tools: list[dict],
-                 force_answer: bool = False) -> AsyncIterator["Text | ToolCall | Usage"]:
+                 force_answer: bool = False, role: str = "main", patience: float = WAIT_FOR_BUSY_SEC,
+                 on_wait=None) -> AsyncIterator["Text | ToolCall | Usage"]:
     """One answer from the first model that gives one. `force_answer`: the tools are still described (the
-    conversation has used them) but the model must answer in words."""
+    conversation has used them) but the model must answer in words. When every model is at its rate limit and one is
+    free again within `patience` seconds, it waits for it (`on_wait(seconds)` is told first) rather than fail: a task
+    half done is better finished a minute later."""
     last: Optional[Exception] = None
-    available = models()
-    soonest = min((_resting.get(m.id, 0) for m in available), default=0) - time.monotonic()
-    if available and 0 < soonest <= WAIT_FOR_BUSY_SEC:
-        await asyncio.sleep(soonest)  # all busy for a few more seconds (a per-minute limit): worth the wait
-    busy = 0
-    for m in available:
-        if _resting.get(m.id, 0) > time.monotonic():
-            busy += 1
-            continue
-        call = _gemini if m.runs_on == "gemini" else _openai_style
-        started, said = time.monotonic(), False
-        try:
-            async with aclosing(call(m, system, context, history, tools, force_answer)) as items:
-                async for item in items:
-                    if not said and not isinstance(item, Usage):
-                        said = True
-                        logger.info(f"Agent answer from {m.id}: first output after {time.monotonic() - started:.2f}s")
-                    yield item
-            if said:
-                return
-            raise ModelError("an empty answer")
-        except (ModelError, _StatusError, httpx.HTTPError) as e:
-            last = e
-            if said:
-                logger.warning(f"Agent model {m.id} stopped part way: {str(e)[:200]}")
-                raise ModelError(f"{m.name} stopped part way") from e
-            logger.warning(f"Agent model {m.id} failed: {str(e)[:300]}")
-            busy += _rest(m, e)
-    if available and busy == len(available):
-        raise ModelError("Every AI model is at its rate limit or quota", busy=True)
-    raise ModelError("No AI model could answer" + (f" ({str(last)[:120]})" if last else ": none is set up"))
+    available = models(role)
+    waited = 0.0
+    while True:
+        soonest = min((_resting.get(m.id, 0) for m in available), default=0) - time.monotonic()
+        if available and 0 < soonest <= patience - waited:
+            if on_wait is not None:
+                await on_wait(soonest)
+            await asyncio.sleep(soonest)  # all busy for a little longer (a per-minute limit): worth the wait
+            waited += soonest
+        busy = 0
+        for m in available:
+            if _resting.get(m.id, 0) > time.monotonic():
+                busy += 1
+                continue
+            call = _gemini if m.runs_on == "gemini" else _openai_style
+            started, said = time.monotonic(), False
+            try:
+                async with aclosing(call(m, system, context, history, tools, force_answer)) as items:
+                    async for item in items:
+                        if not said and not isinstance(item, Usage):
+                            said = True
+                            logger.info(f"Agent answer from {m.id}: first output after {time.monotonic() - started:.2f}s")
+                        yield item
+                if said:
+                    return
+                raise ModelError("an empty answer")
+            except (ModelError, _StatusError, httpx.HTTPError) as e:
+                last = e
+                if said:
+                    logger.warning(f"Agent model {m.id} stopped part way: {str(e)[:200]}")
+                    raise ModelError(f"{m.name} stopped part way") from e
+                logger.warning(f"Agent model {m.id} failed: {str(e)[:300]}")
+                busy += _rest(m, e)
+        if available and busy == len(available):
+            soonest = min(_resting.get(m.id, 0) for m in available) - time.monotonic()
+            if 0 < soonest <= patience - waited:
+                continue  # each was at its limit, and one is free again soon enough: wait for it and try again
+            raise ModelError("Every AI model is at its rate limit or quota", busy=True, wait=max(soonest, 0.0))
+        raise ModelError("No AI model could answer" + (f" ({str(last)[:120]})" if last else ": none is set up"))
 
 
-async def ask_json(system: str, text: str) -> tuple[dict, list[Usage]]:
+async def ask_json(system: str, text: str, role: str = "main", patience: float = WAIT_FOR_BUSY_SEC) -> tuple[dict, list[Usage]]:
     """One answer as a JSON object (no tools), from the first model that gives a valid one; asked again once if the
     first answer isn't JSON. Returns (the object, the token counts)."""
     usage: list[Usage] = []
     for _attempt in range(2):
         pieces = []
-        async with aclosing(stream(system, "", [{"role": "user", "content": text}], [])) as items:
+        async with aclosing(stream(system, "", [{"role": "user", "content": text}], [], role=role, patience=patience)) as items:
             async for item in items:
                 if isinstance(item, Text):
                     pieces.append(item.text)

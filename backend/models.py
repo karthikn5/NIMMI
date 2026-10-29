@@ -762,6 +762,8 @@ class AgentRun(Base):
     cost_inr = Column(Float, nullable=True)  # what the AI cost, at the models' list prices (agent/providers.cost_inr)
     feedback = Column(String, nullable=True)  # the person's thumbs on the answer: up, down
     feedback_note = Column(Text, nullable=True)
+    kind = Column(String(10), nullable=True)  # what intake made of the message: "do" (a task) or "ask"
+    plan = Column(JSON, nullable=True)  # a task's checklist: [{"title", "status", "note"}] (agent/plan.py)
     error = Column(Text, nullable=True)
     last_seq = Column(Integer, default=0)
     started_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)

@@ -1,10 +1,12 @@
-"""Tools about the workspace's assistants: the list, one assistant's setup, its flow, leads and unanswered questions."""
+"""Tools about the workspace's assistants: the list, one assistant's setup, leads and unanswered questions (flows:
+tools/flow.py)."""
 from auth import get_owned_bot
 from agent.screens import AREAS
 from agent.registry import tool, untrusted
 
 ASSISTANT = {"assistant_id": {"type": "string"}}
-LOOK = ("color", "font_family", "launcher_shape", "character_animation", "position", "welcome_message", "launcher_greeting",
+INSTRUCTIONS = 4000  # characters of the instructions get_assistant shows
+LOOK = ("color", "font_family", "launcher_shape", "character_animation", "character_height", "position", "welcome_message", "launcher_greeting",
         "auto_open_delay", "greeting_delay", "page_rule", "page_paths", "hide_on_mobile", "show_human_toggle", "subtitle",
         "starters", "input_placeholder")
 
@@ -44,6 +46,7 @@ async def get_assistant(tc, db, assistant_id):
     look = {k: v for k, v in (config.get("visual_config") or {}).items() if k in LOOK and v not in (None, "", [])}
     look["avatar"] = "set" if (config.get("visual_config") or {}).get("logo_url") else "none"
     knowledge = config.get("knowledge_base") or ""
+    prompt_text = config.get("system_prompt") or ""
     stats = await knowledge_stats(bot.bot_id, ctx=tc.ctx, db=db)
     steps = _flow_steps(config.get("flow_data") or {})
     return {
@@ -51,23 +54,16 @@ async def get_assistant(tc, db, assistant_id):
         "knowledge": {"sources": knowledge_sources.listing(knowledge), "characters": len(knowledge),
                       "search_index": "ready" if stats.get("indexed") else "not built yet",
                       "beginning": untrusted(knowledge[:800])},
-        "instructions": untrusted((config.get("system_prompt") or "")[:2000]),
+        "instructions": untrusted(prompt_text[:INSTRUCTIONS]),
+        **({"instructions_cut_short": f"only the first {INSTRUCTIONS} of {len(prompt_text)} characters are shown; to "
+                                      "change part of them, use update_instructions with mode edit"}
+           if len(prompt_text) > INSTRUCTIONS else {}),
         "behaviour": config.get("behaviour") or {},
         "flow": {"steps": len(steps), "kinds": sorted({s["type"] for s in steps if s.get("type")})},
         "ai": {"provider": config.get("ai_provider"), "model": config.get("ai_model"),
                "own_api_key": bool(config.get("has_ai_api_key"))},
         "phone_call_backs": bool(config.get("callbacks_enabled")),
     }
-
-
-@tool("get_flow", "An assistant's flow: its blocks in order (type, and what each says or asks).", "Reading the flow",
-      {"type": "object", "required": ["assistant_id"], "properties": ASSISTANT}, routes=("GET /api/bots/{bot_id}/config",), screens=AREAS["assistant"])
-async def get_flow(tc, db, assistant_id):
-    bot = await get_owned_bot(assistant_id, tc.ctx, db)
-    flow = bot.flow_data or {}
-    links = [{"from": e.get("source"), "to": e.get("target"), **({"choice": e["sourceHandle"]} if e.get("sourceHandle") else {})}
-             for e in flow.get("edges") or []]
-    return {"blocks": untrusted(_flow_steps(flow)), "links": links}
 
 
 @tool("get_leads", "The details visitors left with an assistant (newest first), and how many there are.",

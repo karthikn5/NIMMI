@@ -14,7 +14,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from agent import events, loop, prompt, providers, registry
+from agent import check, events, intake, loop, prompt, providers, registry
 from agent.providers import Text, ToolCall, Usage
 from voice.ai_models import AI_MODELS_BY_ID
 
@@ -31,9 +31,9 @@ class Script:
         self.turns = list(turns)
         self.calls = []
 
-    async def __call__(self, system, context, history, tools, force_answer=False):
+    async def __call__(self, system, context, history, tools, force_answer=False, **options):
         self.calls.append({"system": system, "context": context, "history": [dict(h) for h in history],
-                           "tools": tools, "force": force_answer})
+                           "tools": tools, "force": force_answer, "patience": options.get("patience")})
         turn = self.turns.pop(0) if self.turns else [Text("(the script ran out)")]
         if isinstance(turn, Exception):
             raise turn
@@ -48,10 +48,20 @@ class Script:
 
 @pytest.fixture
 def model(monkeypatch):
+    """A scripted model for the answer itself. The first look at the message (intake) and the review of the answer
+    (check) are left out unless a test scripts them (the `brain` fixture): then a message is a plain question."""
+    async def no_intake(message, screen, before, usage):
+        return intake.Intake()
+
+    async def no_review(request, steps, ledger, draft, usage, may_continue):
+        return check.Verdict()
+
     def use(*turns):
         script = Script(*turns)
         monkeypatch.setattr(providers, "stream", script)
-        monkeypatch.setattr(providers, "models", lambda: [GEMINI])
+        monkeypatch.setattr(providers, "models", lambda *_: [GEMINI])
+        monkeypatch.setattr(intake, "understand", no_intake)
+        monkeypatch.setattr(check, "review", no_review)
         return script
     return use
 
@@ -109,7 +119,7 @@ def test_an_answer_is_streamed_saved_and_replayed(client, make_user, model):
     assert '"id": "assistants"' in call["context"] and "Kavya (owner, their own workspace)" in call["context"]
     assert call["history"] == [{"role": "user", "content": "hi", "tool_calls": None, "tool_call_id": None, "name": None,
                                 "raw": None}]
-    assert sorted(t["name"] for t in call["tools"]) == sorted(t.name for t in registry.available("owner", "assistants"))
+    assert sorted(t["name"] for t in call["tools"]) == sorted(t.name for t in registry.available("owner", "assistants") if not t.after)
     assert call["force"] is False
 
     # Saved: the thread reads back the same, and the run has its numbers.
@@ -154,8 +164,9 @@ def test_tools_act_as_the_person_and_their_results_go_back_to_the_model(client, 
 
     thread = client.get(f"/api/agent/threads/{evs[0]['threadId']}", headers=user.h()).json()
     assert [i["type"] for i in thread["items"]] == ["user", "text", "step", "text"]
-    assert thread["items"][2] == {"type": "step", "id": "c1", "name": "list_assistants",
-                                  "label": "Looking at your assistants", "ok": True}
+    step = dict(thread["items"][2])
+    assert step.pop("runId") == evs[0]["runId"]
+    assert step == {"type": "step", "id": "c1", "name": "list_assistants", "label": "Looking at your assistants", "ok": True}
 
     # The next message carries the whole conversation, tool round included.
     later = model([Text("Still one.")])
@@ -258,7 +269,7 @@ def test_a_run_whose_server_process_died_is_closed_for_whoever_follows_it(client
 def test_not_set_up_daily_limit_and_empty_messages(client, make_user, model, monkeypatch):
     from agent import router
     user = make_user()
-    monkeypatch.setattr(providers, "models", lambda: [])
+    monkeypatch.setattr(providers, "models", lambda *_: [])
     assert client.get("/api/agent/status", headers=user.h()).json()["ready"] is False
     assert client.post("/api/agent/messages", json={"text": "hi"}, headers=user.h()).status_code == 503
 
@@ -356,9 +367,9 @@ def test_tool_inputs_errors_secrets_and_long_results(run, monkeypatch):
     assert "must be one of" in go({"mode": "nope"})[0]
     assert "should be an integer" in go({"mode": "ok", "count": True})[0]
     assert "should be a boolean" in go({"mode": "ok", "flag": "yes"})[0]
-    assert go({"mode": "http"}) == ('{"error":"Your role doesn\'t allow this"}', False)
+    assert go({"mode": "http"}) == ('{"error":"Your role doesn\'t allow this","kind":"not_allowed"}', False)
     text, ok = go({"mode": "boom"})
-    assert not ok and "internal detail" not in text and "Something went wrong inside Nimmi" in text
+    assert not ok and "internal detail" not in text and "Something went wrong inside Nimmi" in text and '"kind":"internal"' in text
     text, ok = go({"mode": "secret"})
     assert ok and text.count("[hidden]") == 3 and "enc:v1" not in text and "gsk_" not in text
     text, _ = go({"mode": "long"})
@@ -384,7 +395,7 @@ def service(monkeypatch):
             seen.append({"url": str(request.url), "body": json.loads(request.content), "headers": request.headers})
             return reply(request)
         monkeypatch.setattr(providers, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
-        monkeypatch.setattr(providers, "models", lambda: list(available))
+        monkeypatch.setattr(providers, "models", lambda *_: list(available))
         monkeypatch.setattr(providers, "_resting", {})
         for name in ("GEMINI_API_KEY", "GROQ_API_KEY", "OPENAI_API_KEY"):
             monkeypatch.setenv(name, f"test-{name}")
@@ -545,7 +556,7 @@ def test_every_read_tool_works_stays_in_the_workspace_and_never_calls_an_ai(clie
     special = {"go_to": {"page": "builder", "assistant_id": mine}, "point_at": {"element": "nav.voice"},
                "connection_guide": {"provider": "calcom", "assistant_id": mine}, "get_call": {"call_id": run(a_call)}}
     for name, t in registry.TOOLS.items():
-        if t.level != "read":
+        if t.level != "read" or t.internal:  # Nimmi's own tools act on a run: tested with the plan
             continue
         takes_assistant = "assistant_id" in t.parameters.get("properties", {})
         inputs = special.get(name) or ({"assistant_id": mine} if takes_assistant else {})
@@ -1232,3 +1243,508 @@ def test_recordings_reach_sarvam_with_a_type_it_takes(run, monkeypatch):
     assert sent == ["audio/webm"]
     assert run(sarvam.transcribe, b"voice", "speech.mp4", "audio/mp4") == "hello"
     assert sent[1:] == ["audio/mp4", "application/octet-stream"]
+
+
+# ─── Tasks done right: plan, guard, review, flows, copies (NIMMI_AGENT_PLAN.md, section 14) ───
+
+@pytest.fixture
+def brain(monkeypatch):
+    """Scripts the first look at a message and the reviews of its answer (call it after `model`, which turns them off).
+    Records what each review was given."""
+    class Brain:
+        first = intake.Intake()
+        verdicts: list = []
+        reviews: list = []
+        looks: list = []
+
+    b = Brain()
+
+    async def understand(message, screen, before, usage):
+        b.looks.append({"message": message, "screen": screen, "before": before})
+        return b.first
+
+    async def review(request, steps, ledger, draft, usage, may_continue):
+        b.reviews.append({"request": request, "steps": [dict(s) for s in steps], "changed": list(ledger.changed),
+                          "failed": [f for _, f in ledger.failed], "draft": draft, "may_continue": may_continue})
+        return b.verdicts.pop(0) if b.verdicts else check.Verdict()
+
+    def use(first=None, *verdicts):
+        b.first, b.verdicts, b.reviews, b.looks = first or intake.Intake(), list(verdicts), [], []
+        monkeypatch.setattr(intake, "understand", understand)
+        monkeypatch.setattr(check, "review", review)
+        return b
+    return use
+
+
+def customs(evs, name):
+    return [e["value"] for e in evs if e["type"] == "CUSTOM" and e["name"] == name]
+
+
+def test_a_task_gets_a_plan_the_panel_shows_keeps_current_and_brings_back(client, make_user, model, brain, run):
+    user = make_user()
+    bot = user.bot("Clinic Desk")
+    steps = ("Read Clinic Desk's setup", "Make it green", "Check the result")
+    script = model([ToolCall("p1", "update_plan", {"steps": [{"title": steps[0], "status": "doing"},
+                                                             {"title": steps[1], "status": "pending"},
+                                                             {"title": steps[2], "status": "pending"}]}),
+                    ToolCall("c1", "get_assistant", {"assistant_id": bot})],
+                   [ToolCall("c2", "update_assistant_design", {"assistant_id": bot, "brand_colour": "#16a34a"})],
+                   [ToolCall("p2", "update_plan", {"steps": [{"title": s, "status": "done"} for s in steps]})],
+                   [Text("Clinic Desk is green now.")])
+    b = brain(intake.Intake("do", ("design",), True))
+    evs = ask(user, "make clinic desk green and check it")
+    plans = customs(evs, "plan")
+    assert [s["status"] for s in plans[0]["steps"]] == ["doing", "pending", "pending"]  # the model's own plan
+    assert [s["status"] for s in plans[-1]["steps"]] == ["done"] * 3
+    # Nimmi's own tool isn't a step in the panel; the dashboard's tools are.
+    assert [e["toolCallName"] for e in evs if e["type"] == "TOOL_CALL_START"] == ["get_assistant", "update_assistant_design"]
+    # A task without a plan yet is told to make one; then the plan is in front of the model every round, and so is
+    # what its tools really did.
+    assert "<task>" in script.calls[0]["context"] and "<plan>" not in script.calls[0]["context"]
+    assert "[pending] Make it green" in script.calls[1]["context"] and "<task>" not in script.calls[1]["context"]
+    assert "Changed: Clinic Desk: design: brand colour" in script.calls[3]["context"]
+    assert {c["patience"] for c in script.calls} == {loop.TASK_PATIENCE_SEC}  # a task waits out a rate limit
+    # Only the groups it needs: the design tool, not the voice agent's or the flow's.
+    offered = {t["name"] for t in script.calls[0]["tools"]}
+    assert "update_assistant_design" in offered and "update_voice_agent" not in offered and "draft_flow" not in offered
+    # A task's words are held until checked: one piece, after the review.
+    assert said(evs) == "Clinic Desk is green now." and len(b.reviews) == 1
+    assert b.reviews[0]["changed"][0].startswith("Clinic Desk: design: brand colour")
+    from database import async_session
+    from backend.models import AgentRun
+
+    async def saved():
+        async with async_session() as db:
+            row = await db.get(AgentRun, evs[0]["runId"])
+            return row.kind, row.plan
+    kind, kept = run(saved)
+    assert kind == "do" and [s["status"] for s in kept] == ["done"] * 3
+    thread = client.get(f"/api/agent/threads/{evs[0]['threadId']}", headers=user.h()).json()
+    assert [i["type"] for i in thread["items"]] == ["user", "plan", "step", "step", "text"]
+    assert thread["items"][1]["steps"] == kept
+
+
+def test_an_answer_while_plan_steps_are_open_sends_the_model_back_and_is_never_shown(client, make_user, model, brain):
+    user = make_user()
+    bot = user.bot("Desk")
+    script = model([ToolCall("p0", "update_plan", {"steps": [{"title": "Change the welcome", "status": "doing"},
+                                                             {"title": "Change the colour", "status": "pending"}]})],
+                   [Text("All done, everything is set!")],  # nothing was done: not shown, back to work
+                   [ToolCall("c1", "update_assistant_design", {"assistant_id": bot, "welcome_message": "Hello there"}),
+                    ToolCall("p1", "update_plan", {"steps": [{"title": "Change the welcome", "status": "done"},
+                                                             {"title": "Change the colour", "status": "failed", "note": "no colour given"}]})],
+                   [Text("I changed the welcome message. Which colour would you like?")])
+    b = brain(intake.Intake("do", ("design",), True))
+    evs = ask(user, "change the welcome and the colour")
+    assert "All done" not in said(evs) and said(evs).startswith("I changed the welcome message")
+    nudge = script.calls[2]["history"][-1]
+    assert nudge["role"] == "user" and "open steps: Change the welcome; Change the colour" in nudge["content"]
+    assert len(b.reviews) == 1 and b.reviews[0]["draft"].startswith("I changed the welcome")  # only the real answer
+    thread = client.get(f"/api/agent/threads/{evs[0]['threadId']}", headers=user.h()).json()
+    assert "All done" not in json.dumps(thread)  # the guard's exchange isn't kept with the chat
+
+    # A task without a plan to follow isn't the guard's: the review checks it against what was done, for less.
+    script = model([Text("Done!")], [Text("Sorry: I haven't changed anything yet.")])
+    b = brain(intake.Intake("do", ("design",), True), check.Verdict("fix", answer="I haven't changed anything yet."))
+    evs = ask(user, "change the welcome and the colour")
+    assert len(script.calls) == 1 and len(b.reviews) == 1 and said(evs) == "I haven't changed anything yet."
+
+
+def test_the_answer_is_checked_against_what_was_really_done_corrected_or_finished(client, make_user, model, brain):
+    user = make_user()
+    bot = user.bot("Desk")
+    # A plain question by intake's look, but the model changed something: the answer is held and reviewed.
+    model([ToolCall("c1", "update_assistant_design", {"assistant_id": bot, "brand_colour": "#000000"})],
+          [Text("Done: I changed the colour, the font and the flow.")])
+    b = brain(None, check.Verdict("fix", answer="I changed the colour to black. The font and the flow weren't changed."))
+    evs = ask(user, "make it black, use Poppins and redo the flow")
+    assert said(evs) == "I changed the colour to black. The font and the flow weren't changed."
+    assert b.reviews[0]["draft"].startswith("Done: I changed the colour, the font")
+    thread = client.get(f"/api/agent/threads/{evs[0]['threadId']}", headers=user.h()).json()
+    assert thread["items"][-1]["text"].startswith("I changed the colour to black")  # what's kept is what was shown
+
+    # "continue": part of the request was never tried: Nimmi carries on with it once, then answers.
+    script = model([ToolCall("c2", "update_assistant_design", {"assistant_id": bot, "brand_colour": "#ffffff"})],
+                   [Text("White it is.")],
+                   [ToolCall("c3", "update_assistant_design", {"assistant_id": bot, "font": "Poppins"})],
+                   [Text("It's white, with Poppins.")])
+    b = brain(intake.Intake("do", ("design",), True), check.Verdict("continue", todo=["the font: Poppins"]), check.Verdict())
+    evs = ask(user, "white, and the Poppins font")
+    assert said(evs) == "It's white, with Poppins." and "White it is." not in said(evs)
+    assert "isn't done yet: the font: Poppins" in script.calls[2]["history"][-1]["content"]
+    assert [r["may_continue"] for r in b.reviews] == [True, False]  # it carries on once at most
+    assert config(user, bot)["visual_config"]["font_family"] == "'Poppins', sans-serif"
+
+
+def test_a_call_made_twice_in_one_answer_is_not_made_twice(client, make_user, model):
+    user = make_user()
+    bot = user.bot()
+    model([ToolCall("c1", "update_assistant_design", {"assistant_id": bot, "brand_colour": "#123456"})],
+          [ToolCall("c2", "update_assistant_design", {"assistant_id": bot, "brand_colour": "#123456"})],
+          [ToolCall("c3", "update_assistant_design", {"assistant_id": bot, "brand_colour": "teal"})],
+          [ToolCall("c4", "update_assistant_design", {"assistant_id": bot, "brand_colour": "teal"})],
+          [Text("Done.")])
+    results = {e["toolCallId"]: e for e in ask(user, "go") if e["type"] == "TOOL_CALL_RESULT"}
+    assert results["c1"]["ok"] and results["c1"]["actionId"]
+    assert results["c2"]["ok"] and "wasn't made twice" in results["c2"]["content"] and "actionId" not in results["c2"]
+    assert not results["c3"]["ok"] and "hex colour" in results["c3"]["content"]
+    assert not results["c4"]["ok"] and "failed a moment ago" in results["c4"]["content"]
+    assert len(client.get("/api/agent/actions", headers=user.h()).json()) == 1
+
+
+def test_emojis_never_reach_the_person(client, make_user, model):
+    user = make_user()
+    model([Text("1️⃣ Programs 2️⃣ Fees ✅ Done \U0001F680")])
+    evs = ask(user, "hi")
+    assert said(evs) == "1. Programs 2. Fees  Done "
+    from agent import output
+    assert output.clean("Design → Launcher, © Nimmi") == "Design → Launcher, © Nimmi"  # arrows and signs stay
+
+
+def test_the_tools_a_message_needs_come_whatever_page_is_open(client, make_user, model, brain):
+    user = make_user()
+    bot = user.bot()
+    on_assistants = {"path": "/dashboard", "id": "assistants", "title": "Assistants"}
+    script = model([ToolCall("l1", "load_tools", {"group": "whatsapp"})], [Text("ok")])
+    brain(intake.Intake("do", ("voice_agent",), True))
+    ask(user, f"make {bot}'s phone agent speak Tamil", screen=on_assistants)
+    first, second = ({t["name"] for t in c["tools"]} for c in script.calls[:2])
+    assert {"get_voice_agent", "update_voice_agent", "list_assistants", "go_to", "update_plan"} <= first
+    assert "update_assistant_design" not in first  # the page's own tools don't come along: only what it needs
+    assert "update_whatsapp_number" not in first and "update_whatsapp_number" in second  # load_tools: from the next step
+    from agent import groups
+    every = set(registry.TOOLS)
+    assert set(groups.CORE) | groups.tools_of(groups.GROUPS) == every, every - set(groups.CORE) - groups.tools_of(groups.GROUPS)
+    assert all(n in every for n in groups.CORE) and all(groups.tools_of([g]) <= every for g in groups.GROUPS)
+    # write_flow and edit_flow_block wait until the flow was read in that answer.
+    script = model([ToolCall("g1", "get_flow", {"assistant_id": bot})], [Text("ok")])
+    brain(intake.Intake("do", ("flow",), True))
+    ask(user, "add a step to the flow")
+    first, second = ({t["name"] for t in c["tools"]} for c in script.calls[:2])
+    assert "get_flow" in first and "write_flow" not in first and "edit_flow_block" not in first
+    assert {"write_flow", "edit_flow_block"} <= second
+
+
+def test_when_the_first_look_fails_nimmi_answers_as_before(client, make_user, model, monkeypatch, run):
+    user = make_user()
+    model([Text("Hello!")])
+
+    async def busy(*args, **kwargs):
+        raise providers.ModelError("Every AI model is at its rate limit or quota", busy=True)
+    monkeypatch.setattr(providers, "ask_json", busy)
+    from agent import intake as first_look
+    import importlib
+    real = importlib.reload(first_look)  # the real function, not the fixture's stand-in
+    assert run(real.understand, "hi", {}, [], []) == real.Intake()  # not looked: the open page's tools, as before
+    assert real.parse({"kind": "DO", "needs": ["copy", "nowhere", "copy", 3]}) == real.Intake("do", ("copy",), True)
+    assert real.parse({"kind": "maybe"}) == real.Intake("ask", (), True)
+    from agent import loop as answering
+    st = answering.RunState("r", real.Intake())
+    assert {t.name for t in st.tools("owner", "builder")} >= {"update_assistant_design", "add_knowledge_text"}
+
+
+def test_reviews_are_read_safely_and_only_carry_on_when_allowed():
+    assert check.parse({"verdict": "fix"}, 0, True).kind == "ok"  # nothing to show instead: the draft goes
+    assert check.parse({"verdict": "fix", "answer": "Only the colour changed ✅"}, 0, True).answer == "Only the colour changed"
+    assert check.parse({"verdict": "continue", "todo": ["the font"]}, 0, False).kind == "ok"
+    assert check.parse({"verdict": "continue", "todo": []}, 0, True).kind == "ok"
+    assert check.parse({"verdict": "continue", "todo": ["the font"]}, 0, True).todo == ["the font"]
+    assert check.parse({"plan": ["done", "failed"]}, 2, True).plan == ["done", "failed"]
+    assert check.parse({"plan": ["done"]}, 2, True).plan is None and check.parse({"plan": ["done", "maybe"]}, 2, True).plan is None
+    ledger = check.Ledger()
+    ok = registry.Outcome("{}", True, "a1", summary="Desk: design: brand colour: x to y")
+    ledger.add(registry.TOOLS["update_assistant_design"], "Changing the design", ok)
+    ledger.add(registry.TOOLS["update_assistant_design"], "Changing the design", registry.Outcome("{}", True, kind="repeat"))
+    ledger.add(registry.TOOLS["delete_assistant"], "Deleting", registry.Outcome("{}", True, "a2", summary="Delete Desk"))
+    ledger.add(registry.TOOLS["write_flow"], "Writing the flow", registry.failed("Step x goes nowhere", "invalid_input"))
+    assert ledger.acted() and ledger.lines()[:3] == ["Changed: Desk: design: brand colour: x to y",
+                                                     "Waiting for their Confirm in the panel (not done until they click it): Delete Desk",
+                                                     "Didn't work: Writing the flow: Step x goes nowhere"]
+
+
+def test_a_flow_is_read_and_written_as_steps_checked_first_and_undone(client, make_user, model):
+    from agent.builder import flow as starter
+    user = make_user()
+    bot = user.bot("Desk")
+    old = starter("Hi! I help with courses.", [{"label": "Courses", "answer": "We teach Python."}])
+    client.patch(f"/api/bots/{bot}", json={"flow_data": old}, headers=user.h())
+    new_steps = [{"id": "n-hi", "type": "message", "text": "Hi! I help with courses."},
+                 {"id": "email", "type": "email_question", "text": "Your email, so we can send the brochure?"},
+                 {"id": "done", "type": "end", "text": "Thanks! Ask me anything."}]
+    script = model([ToolCall("g1", "get_flow", {"assistant_id": bot})],
+                   [ToolCall("w1", "write_flow", {"assistant_id": bot, "steps": [{"id": "a", "type": "message", "text": "x", "next": "nowhere"}]})],
+                   [ToolCall("w2", "write_flow", {"assistant_id": bot, "steps": new_steps})],
+                   [Text("Added an email question.")])
+    evs = ask(user, "ask for their email after the welcome, then end")
+    results = {e["toolCallId"]: e for e in evs if e["type"] == "TOOL_CALL_RESULT"}
+    read = script.calls[1]["history"][-1]["content"]
+    assert read.startswith('Steps: <data>[{"id":"n-hi","type":"message"') and '"type":"choices"' in read and "Ask something else" in read
+    assert not results["w1"]["ok"] and "no step with that id" in results["w1"]["content"]
+    assert results["w2"]["ok"] and results["w2"]["undoable"]
+    flow = config(user, bot)["flow_data"]
+    links = sorted((e["source"], e["target"]) for e in flow["edges"])
+    assert links == [("email", "done"), ("n-hi", "email"), ("start-1", "n-hi")]
+    hi = next(n for n in flow["nodes"] if n["id"] == "n-hi")
+    assert hi["position"] == next(n for n in old["nodes"] if n["id"] == "n-hi")["position"]  # kept its place
+    assert next(n for n in flow["nodes"] if n["id"] == "email")["data"]["variableName"] == "email"
+    assert "the flow now has 3 steps (it had 5)" in client.get("/api/agent/actions", headers=user.h()).json()[0]["summary"]
+    assert client.post(f"/api/agent/actions/{results['w2']['actionId']}/undo", headers=user.h()).status_code == 200
+    assert config(user, bot)["flow_data"] == old
+
+
+def test_a_drafted_flow_says_only_what_the_knowledge_says(client, make_user, model, monkeypatch, run):
+    from agent.tools import flow as flow_tools
+    user = make_user()
+    bot = user.bot("Academy")
+    client.patch(f"/api/bots/{bot}", json={"knowledge_base": "Kd Academy teaches Python and data science in Chennai. "
+                                                             "The Python course is 6 weeks long. Classes run on weekends."},
+                 headers=user.h())
+    asked = []
+
+    async def ask_json(system, text, role="main", patience=None):
+        asked.append((role, system == flow_tools.CHECK, text))
+        if system == flow_tools.CHECK:  # the fast model's fact check: what the knowledge doesn't say
+            return {"unsupported": [{"id": "pick", "text": "Digital marketing"},
+                                    {"id": "courses", "text": "We also run a free career fair."}]}, [Usage("gpt-oss-20b", 900, 60)]
+        return {"steps": [
+            {"id": "hi", "type": "message", "text": "Welcome to Kd Academy!"},
+            {"id": "pick", "type": "choices", "text": "What would you like to know?", "save_as": "topic",
+             "choices": [{"label": "Courses", "next": "courses"}, {"label": "Fees", "next": "fees"},
+                         {"label": "Digital marketing", "next": "courses"}]},
+            {"id": "courses", "type": "message", "next": "name",
+             "text": "We teach Python and data science. The Python course is 6 weeks long. We also run a free career fair."},
+            {"id": "fees", "type": "message", "text": "The course costs Rs 25,000.", "next": "name"},  # a price it never gave
+            {"id": "name", "type": "text_question", "text": "May I have your name?", "save_as": "name"},
+            {"id": "phone", "type": "phone_question", "text": "And your phone number?"},
+            {"id": "bye", "type": "end", "text": "Thank you, {name}! Our team will call you."}]}, [Usage("gpt-oss-120b", 3000, 400)]
+    monkeypatch.setattr(providers, "ask_json", ask_json)
+    model([ToolCall("d1", "draft_flow", {"assistant_id": bot, "goal": "get course enquiries"})], [Text("A new flow is in.")])
+    evs = ask(user, "make a flow from what it knows")
+    result = next(e for e in evs if e["type"] == "TOOL_CALL_RESULT")
+    assert result["ok"] and result["undoable"], result["content"]
+    assert [(role, checking) for role, checking, _ in asked] == [("main", False), ("fast", True)]
+    assert "Kd Academy teaches Python" in asked[0][2] and "get course enquiries" in asked[0][2]
+    flow = config(user, bot)["flow_data"]
+    nodes = {n["id"]: n for n in flow["nodes"]}
+    assert "fees" not in nodes  # its only sentence had a price the knowledge doesn't have
+    assert ("pick", "name", "Fees") in [(e["source"], e["target"], e["sourceHandle"]) for e in flow["edges"]]
+    assert nodes["pick"]["data"]["options"] == ["Courses", "Fees"]  # the fact check's finds are left out too
+    assert nodes["courses"]["data"]["message"] == "We teach Python and data science. The Python course is 6 weeks long."
+    assert nodes["bye"]["data"]["message"] == "Thank you! Our team will call you."  # the widget can't fill {name}
+    summary = client.get("/api/agent/actions", headers=user.h()).json()[0]["summary"]
+    assert "a new flow from its knowledge, 6 steps" in summary and "left out 3 sentence(s) or choice(s)" in summary
+    from backend.models import AgentRun
+    from database import async_session
+
+    async def cost():
+        async with async_session() as db:
+            return (await db.get(AgentRun, evs[0]["runId"])).tokens_in
+    assert run(cost) >= 3900  # the drafting and checking calls count with the run
+
+
+def test_a_draft_that_doesnt_hold_together_goes_back_once_then_says_why(client, make_user, model, monkeypatch):
+    user = make_user()
+    bot = user.bot("Academy")
+    client.patch(f"/api/bots/{bot}", json={"knowledge_base": "Kd Academy teaches Python in Chennai, on weekends, online too."},
+                 headers=user.h())
+    long = {"steps": [{"id": f"m{i}", "type": "message", "text": "Python on weekends."} for i in range(20)] + [{"id": "e", "type": "end"}]}
+    good = {"steps": [{"id": "hi", "type": "message", "text": "Hi! We teach Python."}, {"id": "e", "type": "end", "text": "Ask me anything."}]}
+    answers = [long, {"unsupported": []}, good]
+    sent = []
+
+    async def ask_json(system, text, role="main", patience=None):
+        sent.append(text)
+        return answers.pop(0), []
+    monkeypatch.setattr(providers, "ask_json", ask_json)
+    model([ToolCall("d1", "draft_flow", {"assistant_id": bot})], [Text("ok")])
+    assert next(e for e in ask(user, "make a flow") if e["type"] == "TOOL_CALL_RESULT")["ok"]
+    assert "It has 21 steps; keep it to 16" in sent[2]  # sent back with what to fix
+    assert len(config(user, bot)["flow_data"]["nodes"]) == 3
+
+    answers[:] = [long, {"unsupported": []}, long]
+    model([ToolCall("d2", "draft_flow", {"assistant_id": bot})], [Text("ok")])
+    result = next(e for e in ask(user, "make a flow") if e["type"] == "TOOL_CALL_RESULT")
+    assert not result["ok"] and "nothing was changed" in result["content"] and len(config(user, bot)["flow_data"]["nodes"]) == 3
+
+
+def test_a_task_cut_short_by_a_busy_ai_says_exactly_what_it_did(client, make_user, model, brain, run):
+    user = make_user()
+    bot = user.bot("Desk")
+    model([ToolCall("p1", "update_plan", {"steps": [{"title": "Make it green", "status": "done"},
+                                                    {"title": "Change the welcome", "status": "pending"}]}),
+           ToolCall("c1", "update_assistant_design", {"assistant_id": bot, "brand_colour": "#16a34a"})],
+          providers.ModelError("Every AI model is at its rate limit or quota", busy=True))
+    brain(intake.Intake("do", ("design",), True))
+    evs = ask(user, "make it green and change the welcome")
+    text = said(evs)
+    assert text.startswith("I couldn't finish: the AI service is at its limit right now. What I did before that:")
+    assert "- Desk: design: brand colour" in text and "Not done yet: Change the welcome." in text
+    assert evs[-1]["type"] == "RUN_FINISHED" and not [e for e in evs if e["type"] == "RUN_ERROR"]
+    from backend.models import AgentRun
+    from database import async_session
+
+    async def saved():
+        async with async_session() as db:
+            return (await db.get(AgentRun, evs[0]["runId"])).error
+    assert run(saved).startswith("cut short:")
+    # Nothing done yet: the usual message.
+    model(providers.ModelError("Every AI model is at its rate limit or quota", busy=True))
+    brain(intake.Intake("do", ("design",), True))
+    evs = ask(user, "make it red")
+    assert [e["message"] for e in evs if e["type"] == "RUN_ERROR"][0].startswith("The AI service is busy right now")
+
+
+def test_a_task_waits_for_a_model_at_its_rate_limit_rather_than_fail(run, service, monkeypatch):
+    calls = []
+
+    def reply(request):
+        calls.append(time.monotonic())
+        if len(calls) == 1:
+            return httpx.Response(429, text='{"error": "tokens per minute"}', headers={"retry-after": "0.2"})
+        return httpx.Response(200, text=sse_body({"choices": [{"delta": {"content": "Done."}}]}, done=True))
+    service(reply, GROQ)
+    monkeypatch.setattr(providers, "_rest", lambda m, e: providers._resting.__setitem__(m.id, time.monotonic() + 0.2) or True)
+    told = []
+
+    async def on_wait(seconds):
+        told.append(seconds)
+    items = run(collect, providers.stream("S", "", [{"role": "user", "content": "hi"}], [], patience=5, on_wait=on_wait))
+    assert [i.text for i in items if isinstance(i, Text)] == ["Done."] and len(calls) == 2 and told and told[0] <= 0.2
+    # Without the patience (a plain question), the same limit is an error at once.
+    calls.clear()
+    with pytest.raises(providers.ModelError) as e:
+        run(collect, providers.stream("S", "", [{"role": "user", "content": "hi"}], [], patience=0))
+    assert e.value.busy and len(calls) == 1
+
+
+def test_one_assistant_set_up_like_another_and_all_of_it_undone_at_once(client, make_user, model):
+    user = make_user()
+    source, target = user.bot("GTBOT"), user.bot("GBOT")
+    from agent.builder import flow as starter
+    client.patch(f"/api/bots/{source}", json={
+        "visual_config": {**config(user, source)["visual_config"], "color": "#166534", "font_family": "'Poppins', sans-serif",
+                          "welcome_message": "Hi! I'm GTBOT.", "logo_url": "https://example.com/gt.png", "page_rule": "only"},
+        "system_prompt": "You are GradTwin's assistant. Help with internships.",
+        "knowledge_base": "GradTwin runs internship programs and corporate training.",
+        "behaviour": {"reply_length": "short"},
+        "flow_data": starter("Hi! I help with internships.", [{"label": "Programs", "answer": "Internships in IT."}]),
+    }, headers=user.h())
+    before = config(user, target)
+    model([ToolCall("k1", "copy_assistant_settings", {"from_assistant_id": source, "to_assistant_id": target,
+                                                      "parts": ["design", "instructions", "reply_settings", "knowledge", "flow"]})],
+          [ToolCall("k2", "update_assistant_design", {"assistant_id": target, "name": "GBOT Two"})],
+          [Text("GBOT is set up like GTBOT.")])
+    evs = ask(user, "set up GBOT like GTBOT")
+    src, now_ = config(user, source), config(user, target)
+    for key in ("color", "font_family", "welcome_message"):
+        assert now_["visual_config"][key] == src["visual_config"][key], key
+    assert now_["visual_config"].get("logo_url") != "https://example.com/gt.png"  # the avatar is its own part
+    assert now_["visual_config"].get("page_rule") != "only"  # where it shows is per website
+    assert now_["system_prompt"] == src["system_prompt"] and now_["flow_data"] == src["flow_data"]
+    assert "GradTwin runs internship programs" in now_["knowledge_base"]
+    assert now_["behaviour"]["reply_length"] == "short"
+    summary = client.get("/api/agent/actions", headers=user.h()).json()[1]["summary"]
+    assert summary.startswith("GBOT: copied from GTBOT: design (") and "instructions" in summary and "flow (5 steps)" in summary
+
+    # Undo all: every change of that answer, newest first; the chat is told.
+    undone = client.post(f"/api/agent/runs/{evs[0]['runId']}/undo", headers=user.h()).json()
+    assert len(undone["undone"]) == 2 and undone["kept"] == [] and undone["refresh"] == [{"kind": "assistant", "id": target}]
+    after = config(user, target)
+    assert after["bot_name"] == before["bot_name"] and after["system_prompt"] == before["system_prompt"]
+    assert after["visual_config"].get("color") == before["visual_config"].get("color") and after["flow_data"] == before["flow_data"]
+    thread = client.get(f"/api/agent/threads/{evs[0]['threadId']}", headers=user.h()).json()
+    assert "undid everything from one answer" in thread["items"][-1]["text"]
+    assert client.post(f"/api/agent/runs/{evs[0]['runId']}/undo", headers=make_user().h()).status_code == 404
+    # The same assistant twice, or nothing to copy: said plainly.
+    model([ToolCall("k3", "copy_assistant_settings", {"from_assistant_id": source, "to_assistant_id": source, "parts": ["flow"]})],
+          [Text("ok")])
+    assert "same assistant" in next(e for e in ask(user, "copy") if e["type"] == "TOOL_CALL_RESULT")["content"]
+
+
+def test_instructions_can_be_edited_in_part(client, make_user, model):
+    user = make_user()
+    bot = user.bot()
+    client.patch(f"/api/bots/{bot}", json={"system_prompt": "Be polite. Office hours are 9 to 5. Be polite."}, headers=user.h())
+    model([ToolCall("e1", "update_instructions", {"assistant_id": bot, "mode": "edit", "find": "9 to 5", "text": "10 to 6"}),
+           ToolCall("e2", "update_instructions", {"assistant_id": bot, "mode": "edit", "find": "Be polite.", "text": "Be kind."}),
+           ToolCall("e3", "update_instructions", {"assistant_id": bot, "mode": "edit", "find": "not there", "text": "x"})],
+          [Text("ok")])
+    results = [e for e in ask(user, "hours are 10 to 6 now") if e["type"] == "TOOL_CALL_RESULT"]
+    assert results[0]["ok"] and config(user, bot)["system_prompt"] == "Be polite. Office hours are 10 to 6. Be polite."
+    assert not results[1]["ok"] and "2 times" in results[1]["content"]
+    assert not results[2]["ok"] and "copy them exactly" in results[2]["content"]
+
+
+def test_a_plan_step_is_done_only_once_a_tool_did_it_and_the_plan_follows_the_rounds_work(client, make_user, model, brain):
+    user = make_user()
+    bot = user.bot("Desk")
+    script = model([ToolCall("p1", "update_plan", {"steps": [{"title": "Change the welcome", "status": "done"}]})],
+                   # The plan first, the change second: Nimmi runs the change first, so the step is done.
+                   [ToolCall("p2", "update_plan", {"steps": [{"title": "Change the welcome", "status": "done"}]}),
+                    ToolCall("c1", "update_assistant_design", {"assistant_id": bot, "welcome_message": "Hi there"})],
+                   [Text("The welcome now says Hi there.")])
+    brain(intake.Intake("do", ("design",), True))
+    evs = ask(user, "change the welcome to Hi there")
+    plans = [p["steps"][0]["status"] for p in customs(evs, "plan")]
+    assert plans == ["pending", "done"]  # ticked off with nothing done: refused; after the change: done
+    refused = script.calls[1]["history"][-1]["content"]
+    assert "not marked done, because none of your tools has done anything yet" in refused
+    second = [m for m in script.calls[2]["history"] if m["role"] == "tool"][-2:]
+    assert [m["tool_call_id"] for m in second] == ["p2", "c1"]  # results stay in the order the model asked
+
+    # Seen on a real run: a step's work in one round, ticked off in the next on its own. That's allowed.
+    script = model([ToolCall("q1", "update_plan", {"steps": [{"title": "Colour", "status": "doing"}, {"title": "Hours", "status": "pending"}]}),
+                    ToolCall("d1", "update_assistant_design", {"assistant_id": bot, "brand_colour": "#0f766e"})],
+                   [ToolCall("q2", "update_plan", {"steps": [{"title": "Colour", "status": "done"}, {"title": "Hours", "status": "doing"}]}),
+                    ToolCall("k1", "add_knowledge_text", {"assistant_id": bot, "text": "Open 9 to 5."})],
+                   [ToolCall("q3", "update_plan", {"steps": [{"title": "Colour", "status": "done"}, {"title": "Hours", "status": "done"}]})],
+                   [Text("Both done.")])
+    brain(intake.Intake("do", ("design", "knowledge"), True))
+    evs = ask(user, "colour teal, and we're open 9 to 5")
+    assert [s["status"] for s in customs(evs, "plan")[-1]["steps"]] == ["done", "done"]
+    assert "not_done" not in script.calls[3]["history"][-1]["content"]
+
+
+def test_a_busy_ai_inside_a_tool_is_said_as_busy(client, make_user, model, monkeypatch):
+    user = make_user()
+    bot = user.bot("Academy")
+    client.patch(f"/api/bots/{bot}", json={"knowledge_base": "Kd Academy teaches Python in Chennai, on weekends, online too."},
+                 headers=user.h())
+
+    async def busy(system, text, role="main", patience=None):
+        raise providers.ModelError("Every AI model is at its rate limit or quota", busy=True)
+    monkeypatch.setattr(providers, "ask_json", busy)
+    model([ToolCall("d1", "draft_flow", {"assistant_id": bot})], [Text("It's busy; try again soon.")])
+    result = next(e for e in ask(user, "make a flow") if e["type"] == "TOOL_CALL_RESULT")
+    assert not result["ok"] and '"kind":"busy"' in result["content"] and "The AI service is busy right now" in result["content"]
+
+
+def test_a_run_that_has_just_ended_sends_its_own_last_event_before_anyone_closes_it(client, make_user, model, run):
+    """The run is saved before its last event (so whoever sees the end reads it as it ended); a follower in another
+    process that sees it ended doesn't write a last event of its own in that moment, only for a run long gone quiet."""
+    user = make_user()
+    model([Text("ok")])
+    thread_id = ask(user, "first")[0]["threadId"]
+
+    async def ended(seconds_ago):
+        from backend.models import AgentRun
+        from database import async_session
+        async with async_session() as db:
+            row = AgentRun(thread_id=thread_id, user_id=user.id, owner_id=user.id, role="owner", state="done",
+                           finished_at=events.now() - timedelta(seconds=seconds_ago))
+            db.add(row)
+            await db.commit()
+            return row.id
+    assert run(events._end_dead_run, run(ended, 0.5)) is None  # its own RUN_FINISHED is on its way
+    closed = run(events._end_dead_run, run(ended, 60))
+    assert closed["type"] == "RUN_FINISHED" and closed["outcome"] == "success"
+
+
+def test_a_used_up_allowance_is_said_as_it_is_not_as_a_minute(client, make_user, model):
+    user = make_user()
+    model(providers.ModelError("Every AI model is at its rate limit or quota", busy=True, wait=1800))
+    evs = ask(user, "hi")
+    assert [e["message"] for e in evs if e["type"] == "RUN_ERROR"] == [
+        "The AI service has used up its allowance for now (the limits of its current plan). Please try again in about 30 minutes."]
+    assert providers.when_free(providers.ModelError("x", busy=True, wait=20)) == "in a minute"
+    assert providers.when_free(providers.ModelError("x", busy=True, wait=3600)) == "in about an hour or later"

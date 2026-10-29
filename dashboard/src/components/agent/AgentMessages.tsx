@@ -2,14 +2,14 @@
 
 import { useState } from "react";
 import {
-    Check, CircleAlert, Copy, Eye, Loader2, PlugZap, RotateCcw, Sparkles, Square, ThumbsDown, ThumbsUp, Undo2, Volume2,
-    WandSparkles,
+    Check, Circle, CircleAlert, CircleMinus, Clock, Copy, Eye, ListChecks, Loader2, PlugZap, RotateCcw, Sparkles, Square,
+    ThumbsDown, ThumbsUp, Undo2, Volume2, WandSparkles,
 } from "lucide-react";
 import { cn } from "@/components/ui";
 import { suggestionsFor } from "@/lib/agent/screens";
 import AgentText from "./AgentText";
 import AgentCard from "./AgentCards";
-import { useAgent, type Item } from "./AgentProvider";
+import { useAgent, type Item, type PlanStep } from "./AgentProvider";
 
 /** The conversation: the person's messages, and Nimmi's turns (her steps, cards and words) beside her avatar. */
 
@@ -73,16 +73,21 @@ export function NimmiTurn({ items, latest, speaker, working }: { items: Item[]; 
             <img src="/agent/nimmi.svg" alt="" className="mt-0.5 h-6 w-6 shrink-0 rounded-full border border-line" />
             <div className="min-w-0 flex-1 space-y-2">
                 <p className="text-[12px] font-semibold text-stone-700 leading-6">Nimmi</p>
-                {items.map((item) => <Part key={item.id} item={item} />)}
-                {answer && !(latest && working) && <Actions answer={answer} latest={latest} speaker={speaker} />}
+                {/* The plan heads the turn, whenever in the work it was made. */}
+                {[...items.filter((i) => i.type === "plan"), ...items.filter((i) => i.type !== "plan")].map((item) =>
+                    <Part key={item.id} item={item} live={latest && working} />)}
+                {answer && !(latest && working) && <Actions answer={answer} items={items} latest={latest} speaker={speaker} />}
             </div>
         </div>
     );
 }
 
-function Actions({ answer, latest, speaker }: { answer: Extract<Item, { type: "text" }>; latest: boolean; speaker: Speaker }) {
+function Actions({ answer, items, latest, speaker }: { answer: Extract<Item, { type: "text" }>; items: Item[]; latest: boolean; speaker: Speaker }) {
     const agent = useAgent()!;
     const [copied, setCopied] = useState(false);
+    // Several changes in one answer: undo them all at once.
+    const changes = items.filter((i) => i.type === "step" && i.undoable && !i.undone) as Extract<Item, { type: "step" }>[];
+    const run = answer.runId ?? changes[0]?.runId;
     const copy = () => navigator.clipboard.writeText(answer.text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
     const reading = speaker.playing === answer.id;
     const button = "h-7 w-7 rounded-md flex items-center justify-center text-stone-400 hover:text-ink hover:bg-stone-100";
@@ -112,13 +117,57 @@ function Actions({ answer, latest, speaker }: { answer: Extract<Item, { type: "t
                     <RotateCcw size={14} />
                 </button>
             )}
+            {changes.length >= 2 && run && (
+                <button type="button" onClick={() => agent.undoRun(run)} disabled={changes.some((c) => c.busy)}
+                        className="ml-1 inline-flex h-7 items-center gap-1 rounded-md px-2 text-[12px] font-medium text-plum hover:bg-plum-tint disabled:opacity-50">
+                    <Undo2 size={13} aria-hidden /> Undo all {changes.length}
+                </button>
+            )}
             {answer.rated && <span className="ml-1 text-[11px] text-stone-400">Thanks for the feedback</span>}
         </div>
     );
 }
 
-function Part({ item }: { item: Item }) {
+const PLAN_ICON: Record<PlanStep["status"], { icon: typeof Check; className: string; words: string }> = {
+    pending: { icon: Circle, className: "text-stone-300", words: "To do" },
+    doing: { icon: Loader2, className: "text-plum animate-spin", words: "Working on it" },
+    done: { icon: Check, className: "text-emerald-600", words: "Done" },
+    failed: { icon: CircleAlert, className: "text-amber-600", words: "Didn't work" },
+    skipped: { icon: CircleMinus, className: "text-stone-400", words: "Skipped" },
+    waiting: { icon: Clock, className: "text-sky-600", words: "Waiting for you" },
+};
+
+/** A task's checklist: what Nimmi will do, kept current as it works. */
+function PlanCard({ steps, live }: { steps: PlanStep[]; live: boolean }) {
+    const done = steps.filter((s) => s.status === "done").length;
+    return (
+        <div className="rounded-lg border border-line bg-white px-3 py-2.5" aria-label="Plan">
+            <p className="flex items-center gap-1.5 text-[12px] font-semibold text-stone-700">
+                <ListChecks size={14} className="text-plum" aria-hidden /> Plan
+                <span className="ml-auto font-normal tabular-nums text-stone-400">{done} of {steps.length} done</span>
+            </p>
+            <ol className="mt-1.5 space-y-1">
+                {steps.map((s, i) => {
+                    // A step still "doing" once the answer has ended didn't finish: no spinner then.
+                    const shown = s.status === "doing" && !live ? PLAN_ICON.pending : PLAN_ICON[s.status] ?? PLAN_ICON.pending;
+                    return (
+                        <li key={i} className="flex gap-2 text-[12.5px] leading-snug">
+                            <shown.icon size={14} className={cn("mt-[2px] shrink-0", shown.className)} aria-label={shown.words} />
+                            <span className="min-w-0">
+                                <span className={cn(s.status === "done" ? "text-stone-500" : s.status === "skipped" ? "text-stone-400 line-through" : "text-ink")}>{s.title}</span>
+                                {s.note && <span className="block text-[11.5px] text-stone-500">{s.note}</span>}
+                            </span>
+                        </li>
+                    );
+                })}
+            </ol>
+        </div>
+    );
+}
+
+function Part({ item, live }: { item: Item; live: boolean }) {
     const agent = useAgent()!;
+    if (item.type === "plan") return <PlanCard steps={item.steps} live={live} />;
     if (item.type === "step") {
         return (
             <p className="flex items-center gap-2 text-[12px] text-stone-500">

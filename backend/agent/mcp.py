@@ -77,7 +77,7 @@ async def _ctx_for_key(request: Request) -> tuple[AuthContext, AgentKey]:
 def _tools_for(ctx: AuthContext) -> list[dict]:
     out = []
     for t in sorted(registry.available(ctx.role, None), key=lambda t: t.name):  # a steady order (cacheable)
-        if t.name in PANEL_ONLY:
+        if t.name in PANEL_ONLY or t.internal:
             continue
         spec = {"name": t.name, "title": t.label, "description": t.description,
                 "inputSchema": t.parameters if t.parameters.get("properties") else {"type": "object", "properties": {}},
@@ -105,7 +105,7 @@ def _result(id_: Any, result: dict, modern: bool) -> dict:
 async def _call(ctx: AuthContext, key: AgentKey, params: dict) -> dict:
     name = params.get("name")
     t = registry.TOOLS.get(name)
-    if t is None or name in PANEL_ONLY or ctx.role not in t.roles:
+    if t is None or name in PANEL_ONLY or t.internal or ctx.role not in t.roles:
         return {"content": [{"type": "text", "text": f"There is no tool named {name}."}], "isError": True}
     tc = registry.ToolContext(ctx=ctx, run_id=f"mcp:{key.id}", thread_id=None, screen={"id": "mcp"})
     outcome = await registry.run(tc, name, params.get("arguments") or {})

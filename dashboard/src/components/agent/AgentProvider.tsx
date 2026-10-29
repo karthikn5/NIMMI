@@ -16,10 +16,12 @@ import type { Card } from "./AgentCards";
  * It also does what the agent asks of the screen: open a page, point at something.
  */
 
+export type PlanStep = { title: string; status: "pending" | "doing" | "done" | "failed" | "skipped" | "waiting"; note?: string };
 export type Item =
     | { type: "user"; id: string; text: string }
     | { type: "text"; id: string; text: string; runId?: string; rated?: "up" | "down" }
-    | { type: "step"; id: string; label: string; ok?: boolean; running?: boolean; actionId?: string; undoable?: boolean; undone?: boolean; busy?: boolean }
+    | { type: "plan"; id: string; runId?: string; steps: PlanStep[] }
+    | { type: "step"; id: string; label: string; runId?: string; ok?: boolean; running?: boolean; actionId?: string; undoable?: boolean; undone?: boolean; busy?: boolean }
     | { type: "confirm"; id: string; actionId: string; title: string; summary: string; state: string; message?: string; busy?: boolean }
     | { type: "note"; id: string; text: string }
     | { type: "card"; id: string; card: Card; active: boolean; busy?: boolean }
@@ -40,6 +42,7 @@ type AgentState = {
     ready: boolean | null;
     items: Item[];
     running: boolean;
+    waitingNote: string | null;
     threadId: string | null;
     send: (text: string) => void;
     stop: () => void;
@@ -52,6 +55,7 @@ type AgentState = {
     setPage: (info: PageInfo | null, hooks?: PageHooks) => void;
     decide: (actionId: string, choice: "confirm" | "cancel") => void;
     undo: (actionId: string) => void;
+    undoRun: (runId: string) => void;
     jobStep: (jobId: string, step: string, payload: Record<string, unknown>) => void;
     rate: (itemId: string, rating: "up" | "down") => void;
     retry: () => void;
@@ -121,6 +125,7 @@ export default function AgentProvider({ children }: { children: ReactNode }) {
     const [ready, setReady] = useState<boolean | null>(null);
     const [items, setItems] = useState<Item[]>([]);
     const [running, setRunning] = useState(false);
+    const [waitingNote, setWaitingNote] = useState<string | null>(null); // the AI service is at its limit: Nimmi waits
     const [threadId, setThreadId] = useState<string | null>(null);
     const [threads, setThreads] = useState<ThreadSummary[] | null>(null);
     const page = useRef<{ path: string; info: PageInfo; hooks?: PageHooks } | null>(null);
@@ -168,6 +173,7 @@ export default function AgentProvider({ children }: { children: ReactNode }) {
     /** Apply one event; true when the run has ended. */
     const apply = useCallback((e: AgentEvent): boolean => {
         lastSeq.current = Math.max(lastSeq.current, e.seq || 0);
+        if (!(e.type === "CUSTOM" && e.name === "status")) setWaitingNote(null); // anything else: it carries on
         switch (e.type) {
             case "RUN_STARTED":
                 runId.current = String(e.runId);
@@ -182,10 +188,12 @@ export default function AgentProvider({ children }: { children: ReactNode }) {
             case "TEXT_MESSAGE_CONTENT":
                 setItems((all) => all.map((i) => i.id === e.messageId && i.type === "text" ? { ...i, text: i.text + String(e.delta) } : i));
                 break;
-            case "TOOL_CALL_START":
+            case "TOOL_CALL_START": {
+                const run = runId.current ?? undefined;
                 setItems((all) => all.some((i) => i.id === e.toolCallId) ? all
-                    : [...all, { type: "step", id: String(e.toolCallId), label: String(e.label || e.toolCallName), running: true }]);
+                    : [...all, { type: "step", id: String(e.toolCallId), label: String(e.label || e.toolCallName), runId: run, running: true }]);
                 break;
+            }
             case "TOOL_CALL_RESULT":
                 setItems((all) => all.map((i) => i.id === e.toolCallId && i.type === "step"
                     ? { ...i, running: false, ok: !!e.ok, ...(e.actionId ? { actionId: String(e.actionId), undoable: !!e.undoable } : {}) } : i));
@@ -198,6 +206,13 @@ export default function AgentProvider({ children }: { children: ReactNode }) {
                 if (e.name === "card" && value.jobId) {
                     const card = value as unknown as Card;
                     setItems((all) => [...all, { type: "card", id: `card-${card.jobId}-${card.kind}`, card, active: card.kind !== "result" }]);
+                }
+                if (e.name === "status" && typeof value.text === "string") setWaitingNote(value.text);
+                if (e.name === "plan" && Array.isArray((e.value as { steps?: unknown })?.steps)) {
+                    // A task's checklist: shown once, then kept current in place.
+                    const plan: Item = { type: "plan", id: `plan-${runId.current}`, runId: runId.current ?? undefined,
+                                         steps: (e.value as { steps: PlanStep[] }).steps };
+                    setItems((all) => all.some((i) => i.id === plan.id) ? all.map((i) => i.id === plan.id ? plan : i) : [...all, plan]);
                 }
                 if (e.name === "confirm" && value.actionId) {
                     setItems((all) => all.some((i) => i.id === `confirm-${value.actionId}`) ? all : [...all, {
@@ -259,6 +274,7 @@ export default function AgentProvider({ children }: { children: ReactNode }) {
         }
         if (gen === generation.current) {
             setRunning(false);
+            setWaitingNote(null);
             runId.current = null;
         }
     }, [addError, apply]);
@@ -372,6 +388,23 @@ export default function AgentProvider({ children }: { children: ReactNode }) {
             .catch((err: Error) => { set({ busy: false }); addError(err.message); });
     }, [addError, changed, note]);
 
+    /** Undo everything one answer changed, newest first; what was changed again since is kept, and said. */
+    const undoRun = useCallback((run: string) => {
+        const mine = (i: Item) => i.type === "step" && i.runId === run && i.undoable && !i.undone;
+        setItems((all) => all.map((i) => mine(i) ? { ...i, busy: true } as Item : i));
+        apiJson<{ undone: { actionId: string; summary: string }[]; kept: { actionId: string; summary: string; reason: string }[]; refresh: AgentChange[] }>(
+            `/api/agent/runs/${run}/undo`, { method: "POST" })
+            .then((r) => {
+                const gone = new Set(r.undone.map((u) => u.actionId));
+                setItems((all) => all.map((i) => i.type === "step" && i.runId === run
+                    ? { ...i, busy: false, ...(i.actionId && gone.has(i.actionId) ? { undoable: false, undone: true } : {}) } : i));
+                r.refresh.forEach(changed);
+                const kept = r.kept.map((k) => ` Kept: ${k.summary} (${k.reason})`).join("");
+                note(r.undone.length ? `Undone: ${r.undone.length} change${r.undone.length === 1 ? "" : "s"}.${kept}` : `Nothing was undone.${kept}`);
+            })
+            .catch((err: Error) => { setItems((all) => all.map((i) => mine(i) ? { ...i, busy: false } as Item : i)); addError(err.message); });
+    }, [addError, changed, note]);
+
     const stop = useCallback(() => {
         if (runId.current) void apiFetch(`/api/agent/runs/${runId.current}/stop`, { method: "POST" }).catch(() => {});
     }, []);
@@ -419,11 +452,11 @@ export default function AgentProvider({ children }: { children: ReactNode }) {
     }, [toggle]);
 
     const value = useMemo<AgentState>(() => ({
-        open, toggle, close, docked, canDock, setDocked, width, setWidth, ready, items, running, threadId, send, stop,
-        newChat, threads, loadThreads, openThread: (id: string) => void load(id), deleteThread, screen, setPage, decide, undo, jobStep,
-        rate, retry,
-    }), [open, toggle, close, docked, canDock, setDocked, width, setWidth, ready, items, running, threadId, send, stop,
-         newChat, threads, loadThreads, load, deleteThread, screen, setPage, decide, undo, jobStep, rate, retry]);
+        open, toggle, close, docked, canDock, setDocked, width, setWidth, ready, items, running, waitingNote, threadId, send,
+        stop, newChat, threads, loadThreads, openThread: (id: string) => void load(id), deleteThread, screen, setPage, decide,
+        undo, undoRun, jobStep, rate, retry,
+    }), [open, toggle, close, docked, canDock, setDocked, width, setWidth, ready, items, running, waitingNote, threadId, send,
+         stop, newChat, threads, loadThreads, load, deleteThread, screen, setPage, decide, undo, undoRun, jobStep, rate, retry]);
 
     const dockedNow = open && docked && canDock;
     // The same elements in every mode, so the page itself is never re-created when the panel moves.

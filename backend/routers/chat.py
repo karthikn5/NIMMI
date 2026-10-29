@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from typing import List, Optional
 
@@ -28,8 +29,24 @@ import brain
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chat"])
 
-HUMAN_KEYWORDS = ["talk to human", "agent", "human", "speak to someone", "representative",
-                  "talk to a person", "speak to a person", "real person", "talk to someone", "customer care"]
+# Asking for a person, as on WhatsApp (whatsapp/replies.py): whole phrases. Inside a sentence one word isn't enough:
+# "your voice agent", "I'm a travel agent", "does it sound human?" and "can it replace our customer care?" are
+# questions. Sent on its own ("human", "agent please", "customer care"), it is a request.
+_WHO = (r"(?:a |an |the |your |some |a real |a live )?"
+        r"(?:human(?: being)?|person|people|someone|somebody|agent|human agent|representative|executive|team|staff)")
+_ASKS_FOR_PERSON = re.compile(
+    rf"(?<!\w)(?:(?:talk|speak|chat)(?: to| with)|connect me(?: to| with)|transfer me to|put me through to) {_WHO}(?!\w)"
+    r"|(?<!\w)(?:human agent|live agent|real person|real human)(?!\w)|ஆள் வேண்டும்|பேச வேண்டும்|बात करनी है", re.IGNORECASE)
+_PERSON_ALONE = re.compile(
+    rf"^\W*(?:(?:i )?(?:want|need) )?{_WHO}(?: please| pls| plz| now)?\W*$"
+    r"|^\W*(?:customer care|customer service|support(?: team)?|மனிதன்|इंसान)\W*$", re.IGNORECASE)
+
+
+def asks_for_person(message: str) -> bool:
+    text = " ".join(str(message or "").split())
+    return bool(_ASKS_FOR_PERSON.search(text) or _PERSON_ALONE.match(text))
+
+
 EXPIRED_TEXT = "Subscription Expired: This bot is currently inactive. Please renew your subscription to continue chatting."
 
 
@@ -157,7 +174,7 @@ async def _pre_ai(chat: ChatMessage, bot: Bot, db: AsyncSession):
     if conv and conv.handoff_status == "human":
         return conv, ["A human agent is currently handling this chat."], {"handoff_status": "human"}
 
-    asked = any(k in chat.message.lower() for k in HUMAN_KEYWORDS)
+    asked = asks_for_person(chat.message)
     upset = not asked and await assist.should_escalate(bot.user_id, chat.message)
     if asked or upset:
         if not conv:

@@ -61,3 +61,24 @@ def test_asking_for_a_person_hands_over(client, make_user):
                                                "history": [], "is_demo": True}, headers=u.h())
     assert r.status_code == 200, r.text
     assert r.json().get("handoff_status") == "pending"
+
+
+def test_only_a_request_for_a_person_hands_over(client, make_user, monkeypatch):
+    """"agent" anywhere used to hand over, so NIMMI (selling an AI voice agent) passed most questions to the team."""
+    from routers import chat
+    for asked in ("Can I talk to a person please?", "I want to speak to someone", "connect me to an agent", "talk to agent",
+                  "Can I chat with your team?", "real person please", "human", "Agent please!", "I need a human",
+                  "customer care", "बात करनी है", "ஆள் வேண்டும்"):
+        assert chat.asks_for_person(asked), asked
+    for question in ("Which languages can your voice agent speak?", "I'm a travel agent, can I use this?", "Does it sound human?",
+                     "Can it replace our customer care team?", "How does it talk to customers?", "AI agent pricing",
+                     "Do you offer personal support?", "What does the human handover cost?"):
+        assert not chat.asks_for_person(question), question
+    u = make_user()
+    bot = u.bot()
+    monkeypatch.setattr(chat, "generate_ai_response", lambda *a, **k: "English, Hindi, Tamil and eight more.")
+    monkeypatch.setattr(chat, "generate_ai_response_stream", lambda *a, **k: iter(["English, Hindi, Tamil and eight more."]))
+    r = client.post("/api/chat/message", json={"bot_id": bot, "message": "Which languages can your voice agent speak?",
+                                               "visitor_session_id": "s-agent", "history": [], "is_demo": True}, headers=u.h())
+    assert r.status_code == 200, r.text
+    assert r.json().get("handoff_status") != "pending"

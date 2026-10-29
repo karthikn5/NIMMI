@@ -23,6 +23,13 @@ FAST_MODEL = os.getenv("FAST_MODEL", "gemini-flash-lite-latest")  # small jobs: 
 # Gemini models a business can pick in the builder; anything else (old saved values) means automatic.
 PICKABLE = {"gemini-2.5-flash", "gemini-flash-lite-latest"}
 TIMEOUT = httpx.Timeout(connect=6.0, read=30.0, write=15.0, pool=6.0)
+# provider "groq": GPT-OSS on Groq (Oct 2026: answers in ~0.7 s, against 20-50 s through Gemini on Nimmi's key).
+# Its free tier limits tokens a minute per model (a chat with its knowledge is a few thousand), so a refused model
+# hands the answer to the next one, and when all of them say no, the usual Gemini models answer.
+GROQ_URL = "https://api.groq.com/openai/v1"
+GROQ_CHAT_MODELS = [m.strip() for m in os.getenv("GROQ_CHAT_MODELS", "openai/gpt-oss-20b,openai/gpt-oss-120b").split(",")
+                    if m.strip()]
+GROQ_CHAT_MODEL = GROQ_CHAT_MODELS[0]  # 20B first: the voice agents' backup, not their main model
 SAFETY = [{"category": c, "threshold": "BLOCK_ONLY_HIGH"} for c in (
     "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT")]
 SORRY = "Sorry, I'm having trouble answering right now. Please try again in a moment."
@@ -155,10 +162,37 @@ def _order(first: Optional[str]) -> list[str]:
     return [first] + [m for m in CHAT_MODELS if m != first]
 
 
+def _groq(api_key: Optional[str]):
+    import openai
+    return openai.OpenAI(api_key=api_key or os.getenv("GROQ_API_KEY"), base_url=GROQ_URL, max_retries=0, timeout=12.0)
+
+
+def _groq_args(model: str, system: str, messages: list[dict], temperature: float, max_tokens: int) -> dict:
+    return {"model": model, "messages": _openai_messages(system, messages), "temperature": temperature,
+            "max_tokens": max_tokens, "extra_body": {"reasoning_effort": "low"}}
+
+
+def _groq_order(first: Optional[str]) -> list[str]:
+    return [first] + [m for m in GROQ_CHAT_MODELS if m != first] if first else list(GROQ_CHAT_MODELS)
+
+
 def chat(system: str, messages: list[dict], *, provider: str = "google", model: Optional[str] = None,
          api_key: Optional[str] = None, temperature: float = 0.3, max_tokens: int = 1024, json_mode: bool = False,
          fast: bool = False) -> str:
     """One complete answer. Raises AIError when no model could answer."""
+    if provider == "groq":
+        client = _groq(api_key)
+        for groq_model in _groq_order(model):
+            try:
+                r = client.chat.completions.create(**_groq_args(groq_model, system, messages, temperature, max_tokens),
+                                                   **({"response_format": {"type": "json_object"}} if json_mode else {}))
+                text = r.choices[0].message.content or ""
+                if text.strip():
+                    return text
+            except Exception as e:
+                logger.warning(f"Groq {groq_model} didn't answer: {str(e)[:160]}")
+        return _gemini(system, messages, api_key=None, models=CHAT_MODELS, temperature=temperature, max_tokens=max_tokens,
+                       json_mode=json_mode)
     if provider == "openai":
         import openai
         try:
@@ -180,6 +214,28 @@ def chat_stream(system: str, messages: list[dict], *, provider: str = "google", 
     `timeout` (Gemini) replaces the default limits, e.g. tighter ones for a live phone call. `only`: that Gemini
     model and no other (a voice agent's own choice; the call has its own backups). `config`: added to Gemini's
     generationConfig (e.g. a thinking setting)."""
+    if provider == "groq":
+        client = _groq(api_key)
+        for groq_model in _groq_order(model):
+            sent = False
+            try:
+                stream = client.chat.completions.create(**_groq_args(groq_model, system, messages, temperature, max_tokens),
+                                                        stream=True)
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content if chunk.choices else None
+                    if delta:
+                        sent = True
+                        yield delta
+                if sent:
+                    return
+            except Exception as e:
+                if sent:  # part of the answer already went out: stop cleanly rather than start over
+                    logger.warning(f"Groq stream interrupted: {str(e)[:160]}")
+                    return
+                logger.warning(f"Groq {groq_model} didn't answer: {str(e)[:160]}")
+        yield from _gemini_stream(system, messages, api_key=None, models=CHAT_MODELS, temperature=temperature,
+                                  max_tokens=max_tokens, timeout=timeout, extra=config)
+        return
     if provider == "openai":
         import openai
         try:

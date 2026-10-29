@@ -49,6 +49,7 @@ from voice import scheduler as voice_scheduler  # noqa: E402
 from voice.numbers_api import router as numbers_router  # noqa: E402
 from voice.connections_api import router as phone_accounts_router  # noqa: E402
 from voice.campaigns_api import router as campaigns_router  # noqa: E402
+from voice.schedule_api import router as schedule_router  # noqa: E402
 from voice.router import router as voice_router  # noqa: E402
 from whatsapp.api import router as whatsapp_router  # noqa: E402
 from whatsapp.webhook import router as whatsapp_webhook_router  # noqa: E402
@@ -109,7 +110,8 @@ realtime.register(SocketManager(app=app, mount_location="/socket.io", cors_allow
 os.makedirs(os.path.join(_HERE, "static", "uploads"), exist_ok=True)
 app.mount("/static", StaticFiles(directory=os.path.join(_HERE, "static")), name="static")
 
-for router in (auth_router, bots_router, chat_router, handoffs_router, numbers_router, phone_accounts_router, campaigns_router, voice_router,
+for router in (auth_router, bots_router, chat_router, handoffs_router, numbers_router, phone_accounts_router, campaigns_router,
+               schedule_router, voice_router,
                integrations_router, email_center_router, analytics_router, team_router, whatsapp_router, whatsapp_webhook_router, workspace_router,
                sites_router, plans_router):
     app.include_router(router)

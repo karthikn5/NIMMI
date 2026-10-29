@@ -395,6 +395,11 @@ export interface ContactSummary {
     calls: number;
     last_call_at: string | null;
     notes: string;
+    lead_status: LeadStatus | null;    // rated after each call (Voice > Schedule), or set by the team
+    lead_reason: string;
+    lead_set_by_team: boolean;
+    follow_ups: number;
+    follow_ups_off: boolean;
 }
 
 export interface ContactDetail extends ContactSummary {
@@ -404,3 +409,130 @@ export interface ContactDetail extends ContactSummary {
     remember_from: string | null;
     history: { id: string; started_at: string | null; direction: CallDirection; outcome: CallOutcome; summary: string; remembered: boolean }[];
 }
+
+/* ---------- Schedule: call-backs, follow-ups and meetings (backend voice/schedule.py) ---------- */
+
+export type LeadStatus = "hot" | "warm" | "cold" | "new" | "not_interested" | "customer";
+export type FollowedUp = "hot" | "warm" | "cold" | "new";
+export type MeetingKind = "online" | "in_person" | "phone";
+export type MeetingStatus = "requested" | "proposed" | "confirmed" | "cancelled" | "expired" | "done" | "no_show";
+export type ScheduleKind = "callback" | "follow_up" | "meeting" | "no_show" | "person";
+export type ScheduleStatus = "queued" | "review" | "calling" | "todo" | "done" | "failed" | "cancelled";
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+
+export interface ScheduleSettings {
+    timezone: string;
+    from_number_id: string | null;     // null: the number they called
+    callbacks: { enabled: boolean; hours: [string, string]; attempts: number; retry_minutes: number };
+    follow_ups: {
+        enabled: boolean;
+        review: boolean;               // each one waits for the team's OK
+        hours: [string, string];
+        days: Weekday[];
+        rules: Record<FollowedUp, { count: number; every: number }>;
+        stop_after_days: number;
+        max_total: number;
+        attempts: number;
+    };
+    meetings: {
+        enabled: boolean;
+        approval: boolean;
+        kinds: MeetingKind[];
+        minutes: number;
+        days: Weekday[];
+        hours: [string, string];
+        notice_hours: number;
+        ahead_days: number;
+        at_once: number;
+        offer_when: string;
+        link: string;
+        address: string;
+        confirm_call: boolean;
+        link_minutes: number;
+        day_before: boolean;
+        no_show_call: boolean;
+        whatsapp_template: string;
+        template_language: string;
+    };
+}
+
+export interface ScheduleSettingsView {
+    settings: ScheduleSettings;
+    numbers: { id: string; number: string; own: boolean }[];
+    whatsapp: boolean;
+}
+
+export interface ScheduleItem {
+    id: string;
+    kind: ScheduleKind;
+    bot_id: string;
+    bot_name: string;
+    from: "website" | "team" | "assistant";
+    name: string;
+    number: string;
+    status: ScheduleStatus;
+    due_at: string | null;
+    local: string | null;              // YYYY-MM-DDTHH:MM in the assistant's time zone
+    timezone: string;
+    purpose: string;
+    attempts: number;
+    last_error: string | null;
+    call_id: string | null;            // the call it led to
+    source_call_id: string | null;     // the call it was arranged on
+    meeting_id: string | null;
+    step: number | null;
+    consent: string;
+    created_at: string | null;
+    result: { outcome: CallOutcome; summary: string } | null;
+}
+
+export interface MeetingSummary {
+    id: string;
+    bot_id: string;
+    bot_name: string;
+    name: string;
+    number: string;
+    kind: MeetingKind;
+    topic: string;
+    starts_at: string;
+    local: string;
+    minutes: number;
+    status: MeetingStatus;
+    link: string;                      // its own link or address
+    place: string;                     // what they'll get: its link, or the default one; the address
+    host_id: string | null;
+    timezone: string;
+    sent: Record<string, { at: string; via: string[] }>;
+    created_at: string | null;
+}
+
+export interface MeetingDetail extends MeetingSummary {
+    email: string;
+    notes: string;
+    history: { at: string; what: string; by: string | null }[];
+    source_call_id: string | null;
+    source_call: { id: string; summary: string; started_at: string | null } | null;
+    messages: { kind: string; status: string; note: string | null; at: string | null }[];
+    calls: { id: string; kind: string; status: ScheduleStatus; due_at: string | null; about: string | null; last_error: string | null; call_id: string | null }[];
+    channels: { whatsapp: "window" | "template" | null; email: boolean };
+    setup: { confirm_call: boolean; link_minutes: number; default_link: string; address: string; template: boolean };
+}
+
+export interface ScheduleAttention { approve: number; review: number; people: number; mark: number; total: number }
+
+export interface ScheduleOverview {
+    attention: ScheduleAttention;
+    stats: {
+        callbacks: { booked: number; reached: number; missed: number };
+        follow_ups: { made: number; answered: number };
+        meetings: { requested: number; confirmed: number; attended: number; missed: number };
+        leads: Partial<Record<LeadStatus, number>>;
+    };
+    calls: ScheduleItem[];
+    meetings: MeetingSummary[];
+    people: ScheduleItem[];
+    missed: ScheduleItem[];
+    to_mark: MeetingSummary[];
+}
+
+export interface ScheduleHost { id: string; name: string; email: string }

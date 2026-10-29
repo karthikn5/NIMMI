@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { ChevronRight, PhoneIncoming, PhoneOutgoing, Search } from "lucide-react";
-import { Button, Card, Dialog, EmptyState, Input, Select, Sheet, Skeleton, Status, Textarea, useToast } from "@/components/ui";
+import { Button, Card, Dialog, EmptyState, Input, Select, Sheet, Skeleton, Status, Switch, Textarea, useToast } from "@/components/ui";
+import { NewCallDialog } from "@/components/voice/schedule/Calls";
 import { apiSave, useApi } from "@/lib/useApi";
 import { OUTCOMES, formatNumber, formatWhen } from "@/lib/voice/api";
-import type { ContactDetail, ContactSummary, VoiceAgentSummary } from "@/lib/voice/types";
+import { ITEM_STATUS, KINDS, LEADS, LEAD_ORDER, MEETING_KINDS, MEETING_STATUS, formatSlot, scheduleChanged } from "@/lib/voice/schedule";
+import type { ContactDetail, ContactSummary, LeadStatus, MeetingSummary, ScheduleItem, VoiceAgentSummary } from "@/lib/voice/types";
 
 /** Everyone the assistants have spoken to on the phone, by number: what they remember on the next call. */
 export default function ContactsPage() {
@@ -14,8 +17,10 @@ export default function ContactsPage() {
     const [typed, setTyped] = useState("");
     const [q, setQ] = useState("");
     const [openId, setOpenId] = useState<string | null>(null);
+    const [lead, setLead] = useState<"" | LeadStatus | "none">("");
     useEffect(() => { const t = setTimeout(() => setQ(typed.trim()), 300); return () => clearTimeout(t); }, [typed]);
     const contacts = useApi<ContactSummary[]>(`/api/voice/contacts?bot_id=${encodeURIComponent(bot)}&q=${encodeURIComponent(q)}`);
+    const shown = (contacts.data ?? []).filter((c) => !lead || (lead === "none" ? !c.lead_status : c.lead_status === lead));
 
     return (
         <>
@@ -27,7 +32,12 @@ export default function ContactsPage() {
                         them by name and remembers what earlier calls were about.
                     </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
+                    <Select aria-label="Lead" className="w-auto" value={lead} onChange={(e) => setLead(e.target.value as typeof lead)}>
+                        <option value="">All leads</option>
+                        {LEAD_ORDER.map((l) => <option key={l} value={l}>{LEADS[l].label}</option>)}
+                        <option value="none">Not rated</option>
+                    </Select>
                     {(agents.data?.length ?? 0) > 1 && (
                         <Select aria-label="Assistant" className="w-auto" value={bot} onChange={(e) => setBot(e.target.value)}>
                             <option value="">All assistants</option>
@@ -47,10 +57,10 @@ export default function ContactsPage() {
                     <div className="p-5 space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12" />)}</div>
                 ) : contacts.error ? (
                     <p className="p-5 text-sm text-signal">Couldn&apos;t load contacts. {contacts.error}</p>
-                ) : !contacts.data?.length ? (
+                ) : !shown.length ? (
                     <EmptyState
-                        title={q ? "No one matches that" : "No contacts yet"}
-                        body={q ? "Try part of their name or number." : "After each phone call, the caller appears here with what they told the assistant."}
+                        title={q || lead ? "No one matches that" : "No contacts yet"}
+                        body={q || lead ? "Try part of their name or number, or another lead rating." : "After each phone call, the caller appears here with what they told the assistant."}
                     />
                 ) : (
                     <table className="w-full text-sm">
@@ -59,13 +69,14 @@ export default function ContactsPage() {
                                 <th className="font-normal px-5 py-3">Name</th>
                                 <th className="font-normal px-3 py-3">Number</th>
                                 <th className="font-normal px-3 py-3">Assistant</th>
+                                <th className="font-normal px-3 py-3">Lead</th>
                                 <th className="font-normal px-3 py-3 text-right">Calls</th>
                                 <th className="font-normal px-3 py-3">Last call</th>
                                 <th className="w-10" />
                             </tr>
                         </thead>
                         <tbody>
-                            {contacts.data.map((c) => (
+                            {shown.map((c) => (
                                 <tr key={c.id} className="group border-t border-line first:border-t-0 md:first:border-t hover:bg-stone-50 transition-colors relative">
                                     <td className="px-5 py-3.5">
                                         <button type="button" onClick={() => setOpenId(c.id)}
@@ -73,11 +84,14 @@ export default function ContactsPage() {
                                             {c.name || <span className="text-stone-500 font-normal">Name not given</span>}
                                         </button>
                                         <p className="md:hidden text-[13px] text-stone-500 mt-1 tabular-nums">
-                                            {[c.number, `${c.calls} call${c.calls === 1 ? "" : "s"}`].join(" · ")}
+                                            {[c.number, `${c.calls} call${c.calls === 1 ? "" : "s"}`, c.lead_status && LEADS[c.lead_status].label].filter(Boolean).join(" · ")}
                                         </p>
                                     </td>
                                     <td className="hidden md:table-cell px-3 py-3.5 tabular-nums text-stone-700">{c.number}</td>
                                     <td className="hidden md:table-cell px-3 py-3.5 text-stone-700">{c.bot_name}</td>
+                                    <td className="hidden md:table-cell px-3 py-3.5">
+                                        {c.lead_status ? <Status tone={LEADS[c.lead_status].tone}>{LEADS[c.lead_status].label}</Status> : <span className="text-stone-400">–</span>}
+                                    </td>
                                     <td className="hidden md:table-cell px-3 py-3.5 text-right tabular-nums">{formatNumber(c.calls)}</td>
                                     <td className="hidden md:table-cell px-3 py-3.5 text-stone-700">{c.last_call_at ? formatWhen(c.last_call_at) : ""}</td>
                                     <td className="px-3 py-3.5 text-right"><ChevronRight size={16} className="inline text-stone-300 group-hover:text-stone-500" aria-hidden /></td>
@@ -130,6 +144,7 @@ function ContactSheet({ id, onClose, onChanged }: { id: string | null; onClose: 
                 <div className="p-6 space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10" />)}</div>
             ) : (
                 <div className="px-6 py-5 space-y-6">
+                    <LeadSection contact={c} onChanged={() => { contact.reload(); onChanged(); }} />
                     <section className="space-y-3">
                         <div className="grid sm:grid-cols-2 gap-3">
                             <div>
@@ -211,5 +226,74 @@ function ContactSheet({ id, onClose, onChanged }: { id: string | null; onClose: 
                 <p className="text-[13px] text-stone-600">This can&apos;t be undone.</p>
             </Dialog>
         </Sheet>
+    );
+}
+
+/** Their lead rating (the assistant's after each call, or the team's), follow-ups, and what's coming up for them. */
+function LeadSection({ contact: c, onChanged }: { contact: ContactDetail; onChanged: () => void }) {
+    const toast = useToast();
+    const next = useApi<{ calls: ScheduleItem[]; meeting: MeetingSummary | null }>(`/api/voice/schedule/contacts/${c.id}/next`);
+    const [busy, setBusy] = useState(false);
+    const [scheduling, setScheduling] = useState(false);
+
+    const update = async (body: { lead_status?: LeadStatus; follow_ups_off?: boolean }, done: string) => {
+        setBusy(true);
+        const res = await apiSave(`/api/voice/schedule/contacts/${c.id}`, "PATCH", body);
+        setBusy(false);
+        if (!res.ok) return toast(res.message);
+        toast(done);
+        next.reload();
+        onChanged();
+        scheduleChanged();
+    };
+    const coming = next.data;
+
+    return (
+        <section className="space-y-3">
+            <div className="flex flex-wrap items-end gap-3">
+                <div>
+                    <label htmlFor="c-lead" className="text-[13px] text-stone-600">Lead</label>
+                    <Select id="c-lead" className="mt-1 w-auto" value={c.lead_status ?? ""} disabled={busy}
+                            onChange={(e) => e.target.value && update({ lead_status: e.target.value as LeadStatus }, "Saved")}>
+                        {!c.lead_status && <option value="">Not rated yet</option>}
+                        {LEAD_ORDER.map((l) => <option key={l} value={l}>{LEADS[l].label}: {LEADS[l].about.toLowerCase()}</option>)}
+                    </Select>
+                </div>
+                <label className="flex items-center gap-2.5 text-[13px] text-stone-700 h-9">
+                    <Switch checked={!c.follow_ups_off} disabled={busy} label="Follow-ups for this person"
+                            onChange={(v) => update({ follow_ups_off: !v }, v ? "Follow-ups on for them" : "No more follow-ups for them")} />
+                    Follow-ups
+                </label>
+                <Button size="sm" className="ml-auto" onClick={() => setScheduling(true)}>Schedule a call</Button>
+            </div>
+            {c.lead_status && (
+                <p className="text-xs text-stone-500">
+                    {c.lead_set_by_team ? "Set by your team." : `Rated by the assistant${c.lead_reason ? `: ${c.lead_reason}` : "."}`}
+                    {c.follow_ups > 0 && ` ${c.follow_ups} follow-up call${c.follow_ups === 1 ? "" : "s"} so far.`}
+                </p>
+            )}
+            {coming && (coming.calls.length > 0 || coming.meeting) && (
+                <ul className="border border-line rounded-md divide-y divide-line text-[13px]">
+                    {coming.meeting && (
+                        <li className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                            <Link href={`/dashboard/voice/schedule?tab=meetings&meeting=${coming.meeting.id}`} className="text-plum hover:underline underline-offset-4">
+                                {MEETING_KINDS[coming.meeting.kind]} meeting, {formatSlot(coming.meeting.local, coming.meeting.timezone)}
+                            </Link>
+                            <Status tone={MEETING_STATUS[coming.meeting.status].tone}>{MEETING_STATUS[coming.meeting.status].label}</Status>
+                        </li>
+                    )}
+                    {coming.calls.map((i) => (
+                        <li key={i.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                            <Link href={`/dashboard/voice/schedule?tab=calls&item=${i.id}`} className="text-plum hover:underline underline-offset-4 min-w-0 truncate">
+                                {KINDS[i.kind].label}{i.status === "todo" ? "" : `, ${formatSlot(i.local, i.timezone)}`}
+                            </Link>
+                            <Status tone={ITEM_STATUS[i.status].tone}>{ITEM_STATUS[i.status].label}</Status>
+                        </li>
+                    ))}
+                </ul>
+            )}
+            <NewCallDialog open={scheduling} botId={c.bot_id} contact={{ id: c.id, label: c.name || c.number }}
+                           onClose={() => setScheduling(false)} onMade={() => { setScheduling(false); next.reload(); }} />
+        </section>
     );
 }

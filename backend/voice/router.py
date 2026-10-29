@@ -23,13 +23,13 @@ from auth import (AuthContext, client_ip, decode_scoped_token, get_ctx, get_owne
 from security import is_production, local_dev
 from database import async_session, get_db
 from backend.models import (Bot, CallbackJob, CallbackSettings, CallLog, Campaign, ComplianceSettings, Contact, Conversation,
-                            DncEntry, PhoneNumber, VoiceAgent, VoiceScript)
+                            DncEntry, Meeting, PhoneNumber, VoiceAgent, VoiceScript)
 from notify.email import send_email
 from notify.events import fire_and_forget
 from phone import callable_destination, display, extract_contact, mask, to_e164
 import assist
 from voice import (accounts, ai_models, ambience, catalog, exotel, functions, llm, memory, metering, recording, sarvam,
-                   scheduler, scripts, twilio)
+                   schedule, scheduler, scripts, twilio)
 from voice.pipeline import CallSession, CallSetup, prepare_opening
 from voice.transports import BrowserTransport, ExotelTransport, TwilioTransport
 import plans
@@ -443,6 +443,8 @@ def _contact_json(c: Contact, bot_names: dict, full: bool = False) -> dict:
         "id": c.id, "bot_id": c.bot_id, "bot_name": bot_names.get(c.bot_id, "Deleted assistant"),
         "number": display(c.e164) if full else mask(c.e164), "name": c.name or "", "calls": c.calls or 0,
         "last_call_at": c.last_call_at.isoformat() if c.last_call_at else None, "notes": c.notes or "",
+        "lead_status": c.lead_status, "lead_reason": c.lead_reason or "", "lead_set_by_team": bool(c.lead_set_by),
+        "follow_ups": c.follow_ups or 0, "follow_ups_off": bool(c.follow_ups_off),
     }
     if full:
         data.update({"email": c.email or "", "details": c.details or {},
@@ -582,7 +584,7 @@ async def browser_call(ws: WebSocket, token: str = ""):
     agent, script = _for_call(agent, script_row, None, direction, {})
     setup = CallSetup(owner_id=owner_id, bot=bot, agent=agent, direction=direction, channel="browser",
                       record=bool(compliance.record_calls), opt_out_phrases=compliance.opt_out_phrases or [],
-                      script=scripts.style(script))
+                      script=scripts.style(script), tools=await schedule.tools_for(owner_id, bot.bot_id, None, None, test=True))
     await CallSession(setup, BrowserTransport(ws)).run()
     try:
         await ws.close()
@@ -634,6 +636,40 @@ def _for_call(agent: VoiceAgent, script_row: Optional[VoiceScript], caller: Opti
     return call_agent, script
 
 
+def _job_variables(job: CallbackJob) -> dict:
+    """A call's {{placeholders}}: a campaign's columns (a Schedule call's own notes aren't facts about the person)."""
+    variables = {} if job.kind in schedule.KINDS else dict(job.variables or {})
+    if job.name:
+        variables.setdefault("name", job.name)
+    return variables
+
+
+async def prepare_job_opening(job: CallbackJob) -> None:
+    """An outgoing call's opening, made while the phone rings, exactly as the call will say it (its direction's agent
+    and script, the person's name, a Schedule call's own opening), so it plays the moment they answer."""
+    try:
+        scheduled = job.kind in schedule.CALL_KINDS
+        bot, agent, script_row, caller_memory, compliance, inputs = await asyncio.gather(
+            _first(select(Bot).where(Bot.bot_id == job.bot_id)),
+            _first(select(VoiceAgent).where(VoiceAgent.bot_id == job.bot_id)),
+            _first(select(VoiceScript).where(VoiceScript.bot_id == job.bot_id, VoiceScript.direction == "outbound")),
+            memory.context_for(job.bot_id, job.e164),
+            _compliance_for(job.user_id),
+            schedule.plan_inputs(job) if scheduled else _nothing())
+        if not (bot and agent):
+            return
+        if agent.remember_callers is False:
+            caller_memory = None
+        variables = _job_variables(job)
+        call_agent, _ = _for_call(agent, script_row, caller_memory, "outbound", variables)
+        if scheduled:
+            schedule.apply_plan(call_agent, schedule.plan_for(job, *inputs, call_agent, caller_memory,
+                                                              call_agent.company_name or bot.bot_name))
+        prepare_opening(call_agent, variables, bool(compliance.record_calls))
+    except Exception as e:
+        logger.warning(f"Preparing call {job.id}'s opening ahead failed (the call will make it): {e}")
+
+
 async def _prepare_known_opening(bot_id: str, caller: Optional[str]) -> None:
     """Someone the assistant knows is calling in. Their opening ("Hello Karthik, ...") can't be made ahead like the
     usual one, so it's made while the phone rings, before the call connects."""
@@ -667,12 +703,10 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
             job = (await db.execute(select(CallbackJob).where(CallbackJob.provider_call_id == call_sid))).scalars().first()
         if job and owner and job.user_id != owner:
             job = None
-        variables = {}
+        variables, number_id = {}, None
         if job:
             owner_id, bot_id, caller, direction, consent = job.user_id, job.bot_id, job.e164, "outbound", job.consent_source
-            variables = dict(job.variables or {})
-            if job.name:
-                variables.setdefault("name", job.name)
+            variables, number_id = _job_variables(job), job.from_number_id
         else:
             called = to_e164(to_raw)
             number = (await db.execute(select(PhoneNumber).where(
@@ -684,11 +718,13 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
                 await transport.hangup("done")
                 return
             owner_id, bot_id, caller, direction, consent = number.user_id, number.bot_id, to_e164(from_raw), "inbound", None
+            number_id = number.id
 
     # Everything else the call needs, fetched side by side on separate connections: the caller is
     # waiting in silence, and each lookup is a round trip to the database.
     campaign_id = job.campaign_id if job else None
-    bot, agent, campaign, compliance, settings, script_row, caller_memory = await asyncio.gather(
+    scheduled = job is not None and job.kind in schedule.CALL_KINDS  # a call-back, follow-up or meeting call
+    bot, agent, campaign, compliance, settings, script_row, caller_memory, tools, inputs = await asyncio.gather(
         _first(select(Bot).where(Bot.bot_id == bot_id)),
         _first(select(VoiceAgent).where(VoiceAgent.bot_id == bot_id)),
         _first(select(Campaign).where(Campaign.id == campaign_id)) if campaign_id else _nothing(),
@@ -696,8 +732,12 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
         assist.workspace(owner_id),
         _first(select(VoiceScript).where(VoiceScript.bot_id == bot_id, VoiceScript.direction == direction)),
         memory.context_for(bot_id, caller),
+        schedule.tools_for(owner_id, bot_id, caller, number_id, name=job.name if job else None),
+        schedule.plan_inputs(job) if scheduled else _nothing(),
     )
     purpose = campaign.purpose if campaign else None
+    if campaign and not number_id:
+        number_id = campaign.from_number_id
     if bot and not agent and job and (job.consent_source or "").startswith(TEST_CALL):
         agent = _agent_defaults(bot, owner_id)  # test calls work before voice is switched on
     is_test = bool(job and (job.consent_source or "").startswith(TEST_CALL))
@@ -709,6 +749,12 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
     if not bot or not agent or not (agent.enabled or is_test):
         await transport.hangup("done")
         return
+    if scheduled:  # what it's for, its own opening, and the language they spoke last time
+        plan = schedule.plan_for(job, *inputs, agent, caller_memory, agent.company_name or bot.bot_name)
+        schedule.apply_plan(agent, plan)
+        purpose = plan.purpose
+    if tools is not None and caller_memory and caller_memory.get("name"):
+        tools.name = caller_memory["name"]
 
     hours = assist.hours_config(settings)
     setup = CallSetup(owner_id=owner_id, bot=bot, agent=agent, direction=direction, channel="phone", caller_e164=caller,
@@ -716,7 +762,7 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
                       record=bool(compliance.record_calls), opt_out_phrases=compliance.opt_out_phrases or [],
                       variables=variables, purpose=purpose, campaign_id=job.campaign_id if job else None,
                       voicemail=voicemail, after_hours=None if assist.is_open(hours) else assist.next_open(hours),
-                      script=scripts.style(script), caller=caller_memory)
+                      script=scripts.style(script), caller=caller_memory, number_id=number_id, tools=tools)
     await CallSession(setup, transport).run()
 
 
@@ -745,14 +791,15 @@ async def _log_unanswered(db: AsyncSession, sid: Optional[str], job_id: Optional
     if (job.consent_source or "").startswith(TEST_CALL):
         job.status, job.last_error = "failed", f"{provider}: {status}"
     else:
-        scheduler.schedule_retry(job, await scheduler.max_attempts_for(db, job), f"{provider}: {status}")
+        await scheduler.retry_later(db, job, f"{provider}: {status}")
     await db.commit()
     _email_if_gave_up(job)
 
 
 def _email_if_gave_up(job: CallbackJob) -> None:
-    """No more attempts left: the "couldn't reach them" email, if they gave an email and it's on."""
-    if job.status == "failed" and not (job.consent_source or "").startswith(TEST_CALL):
+    """No more attempts left: the "couldn't reach them" email, if they gave an email and it's on (calls they asked for:
+    not follow-ups or meeting calls)."""
+    if job.status == "failed" and not (job.consent_source or "").startswith(TEST_CALL) and job.kind in (None, "callback"):
         from notify import events
         events.fire_and_forget(events.call_missed(job.user_id, job.id, job.e164, {**(job.variables or {}), **({"name": job.name} if job.name else {})}, job.bot_id))
 
@@ -884,7 +931,7 @@ async def twilio_outbound(secret: str, request: Request, job: str = "", db: Asyn
                        outcome="voicemail", consent_source=cb.consent_source, provider_call_id=str(form.get("CallSid") or ""),
                        campaign_id=cb.campaign_id, summary=f"Reached voicemail. Hung up without a message. Attempt {cb.attempts}.",
                        ended_at=datetime.utcnow()))
-        scheduler.schedule_retry(cb, await scheduler.max_attempts_for(db, cb), "Reached voicemail")
+        await scheduler.retry_later(db, cb, "Reached voicemail")
         await db.commit()
         _email_if_gave_up(cb)
     return _xml(twilio.hangup_twiml())
@@ -1391,6 +1438,7 @@ async def erase_caller(data: EraseRequest, ctx: AuthContext = Depends(require_ow
             logger.warning(f"Erase: recording delete failed for {call.id}: {e}")
         await db.delete(call)
     await db.execute(sa_delete(CallbackJob).where(CallbackJob.user_id == ctx.owner_id, CallbackJob.e164 == e164))
+    await db.execute(sa_delete(Meeting).where(Meeting.user_id == ctx.owner_id, Meeting.e164 == e164))
     await db.execute(sa_delete(Contact).where(Contact.user_id == ctx.owner_id, Contact.e164 == e164))
 
     # Chat leads that captured the same number.

@@ -187,6 +187,13 @@ class Contact(Base):
     last_chat_at = Column(DateTime(timezone=True), nullable=True)
     remember_from = Column(DateTime(timezone=True), nullable=True)  # "forget" sets it: earlier calls aren't recalled
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # As a lead (Voice > Schedule, voice/schedule.py): rated by the assistant after each call, or set by the team.
+    lead_status = Column(String, nullable=True)        # hot, warm, cold, new, not_interested, customer; None = not rated
+    lead_reason = Column(String(300), nullable=True)
+    lead_set_by = Column(String(36), nullable=True)    # the team member who set it; None = the assistant
+    lead_at = Column(DateTime(timezone=True), nullable=True)
+    follow_ups = Column(Integer, nullable=True)        # follow-up calls placed to them, in all
+    follow_ups_off = Column(Boolean, nullable=True)    # the team stopped follow-ups for them
 
 
 class PhoneNumber(Base):
@@ -303,6 +310,9 @@ class CallLog(Base):
     successful = Column(Boolean, nullable=True)   # did the call reach the agent's goal
     sentiment = Column(String, nullable=True)     # positive, neutral, negative
     campaign_id = Column(String(36), nullable=True, index=True)
+    number_id = Column(String(36), nullable=True)  # our number on the call (the one they called, or we called from)
+    lead = Column(String, nullable=True)          # how interested they sounded (voice/schedule.py LEAD_STATUSES)
+    next_step = Column(JSON, nullable=True)       # the follow-up the analysis suggested: {brief, on, reason, person}
 
 
 class Campaign(Base):
@@ -343,6 +353,51 @@ class CallbackJob(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     campaign_id = Column(String(36), nullable=True, index=True)
     variables = Column(JSON, nullable=True)  # per-contact values for {{placeholders}}, from the campaign list
+    # Voice > Schedule (voice/schedule.py). None = a website callback request, a campaign or a test call.
+    kind = Column(String, nullable=True)           # callback, follow_up, meeting, no_show, person (for the team to make)
+    purpose = Column(Text, nullable=True)          # what the call is about (a follow-up's brief, written after the last call)
+    meeting_id = Column(String(36), nullable=True, index=True)
+    source_call_id = Column(String(36), nullable=True)  # the call it was arranged on
+    from_number_id = Column(String(36), nullable=True)  # call from this number (the one they called)
+    created_by = Column(String(36), nullable=True)      # the team member who arranged it; None = the assistant
+
+
+class ScheduleSettings(Base):
+    """How an assistant follows up with people (Voice > Schedule): call-backs they ask for, follow-ups by lead status,
+    and meetings. Kept as JSON; anything missing falls back to voice/schedule.py DEFAULTS. One row per assistant."""
+    __tablename__ = "schedule_settings"
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    settings = Column(JSON, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Meeting(Base):
+    """A meeting someone asked for on a call (Voice > Schedule > Meetings): the team approves it (or it's confirmed at
+    once), the person gets a call to confirm it, and the link a few minutes before it starts (voice/meetings.py)."""
+    __tablename__ = "meetings"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
+    e164 = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    kind = Column(String, default="online")         # online, in_person, phone
+    topic = Column(Text, nullable=True)             # what they want to talk about
+    starts_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    minutes = Column(Integer, default=30)
+    # requested (waiting for the team), proposed (the team offered another time), confirmed, cancelled, done, no_show
+    status = Column(String, default="requested", index=True)
+    link = Column(String(500), nullable=True)       # its own link or address; else the assistant's default
+    host_id = Column(String(36), nullable=True)     # the team member taking it
+    notes = Column(Text, nullable=True)             # the team's
+    source_call_id = Column(String(36), nullable=True)
+    decided_by = Column(String(36), nullable=True)
+    decided_at = Column(DateTime(timezone=True), nullable=True)
+    sent = Column(JSON, nullable=True)              # what went out, once each: {"confirmed": iso, "day_before": iso, "link": iso}
+    history = Column(JSON, nullable=True)           # [{at, what, by}]
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class VoiceWallet(Base):

@@ -4,6 +4,7 @@ Transactional email. Uses Resend when RESEND_API_KEY is set, otherwise SMTP
 returns False so local development keeps working.
 """
 import asyncio
+import base64
 import html
 import logging
 import os
@@ -60,7 +61,8 @@ def _from(from_name: Optional[str]) -> str:
 
 async def send_email(to: str, subject: str, text: str, html_body: Optional[str] = None,
                      reply_to: Optional[str] = None, from_name: Optional[str] = None,
-                     unsubscribe_url: Optional[str] = None) -> bool:
+                     unsubscribe_url: Optional[str] = None, attachments: Optional[list[dict]] = None) -> bool:
+    """`attachments`: [{"filename", "content" (text or bytes), "content_type"}], e.g. a calendar invite."""
     # One-click unsubscribe (RFC 8058): Gmail and Yahoo expect it on emails to customers.
     extra = {"List-Unsubscribe": f"<{unsubscribe_url}>", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"} if unsubscribe_url else {}
     _last_error.set(None)
@@ -71,6 +73,9 @@ async def send_email(to: str, subject: str, text: str, html_body: Optional[str] 
                 payload["reply_to"] = [reply_to]
             if extra:
                 payload["headers"] = extra
+            if attachments:
+                payload["attachments"] = [{"filename": a["filename"], "content_type": a["content_type"],
+                                           "content": base64.b64encode(_bytes(a["content"])).decode()} for a in attachments]
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(
                     "https://api.resend.com/emails",
@@ -97,6 +102,9 @@ async def send_email(to: str, subject: str, text: str, html_body: Optional[str] 
             msg[k] = v
         msg.set_content(text)
         msg.add_alternative(html_body or _plain_html(text), subtype="html")
+        for a in attachments or []:
+            maintype, _, subtype = a["content_type"].partition("/")
+            msg.add_attachment(_bytes(a["content"]), maintype=maintype, subtype=subtype.split(";")[0], filename=a["filename"])
 
         def _send():
             with smtplib.SMTP(host, int(os.getenv("SMTP_PORT", "587")), timeout=20) as s:
@@ -115,6 +123,10 @@ async def send_email(to: str, subject: str, text: str, html_body: Optional[str] 
     logger.warning(f"Email not configured; would have sent '{subject}' to {to}")
     _last_error.set("Email sending isn't set up on the server")
     return False
+
+
+def _bytes(content) -> bytes:
+    return content if isinstance(content, bytes) else str(content).encode()
 
 
 def _plain_html(text: str) -> str:

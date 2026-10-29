@@ -8,6 +8,9 @@ import AppHeader from "@/components/AppHeader";
 import { ToastProvider, cn } from "@/components/ui";
 import { currentUserId } from "@/lib/api";
 import { PaidOnly, useLimits } from "@/lib/plan";
+import { useApi } from "@/lib/useApi";
+import { SCHEDULE_CHANGED } from "@/lib/voice/schedule";
+import type { ScheduleAttention } from "@/lib/voice/types";
 
 type Tab = { href: string; label: string; exact?: boolean; menu?: { href: string; label: string; hint: string }[] };
 
@@ -22,6 +25,7 @@ const tabs: Tab[] = [
     { href: "/dashboard/voice/knowledge", label: "Knowledge" },
     { href: "/dashboard/voice/contacts", label: "Contacts" },
     { href: "/dashboard/voice/calls", label: "Calls" },
+    { href: "/dashboard/voice/schedule", label: "Schedule" },
     { href: "/dashboard/voice/campaigns", label: "Campaigns" },
     { href: "/dashboard/voice/data", label: "Collected data" },
     { href: "/dashboard/voice/numbers", label: "Numbers" },
@@ -33,11 +37,19 @@ export default function VoiceLayout({ children }: { children: ReactNode }) {
     const router = useRouter();
     const [ready, setReady] = useState(false);
     const limits = useLimits();
+    // What waits for the team in Schedule (meetings to approve, follow-ups to check...), checked on each page change.
+    const attention = useApi<ScheduleAttention>(ready ? "/api/voice/schedule/attention" : null);
+    const reloadAttention = attention.reload;
 
     useEffect(() => {
         if (!currentUserId()) router.push("/auth/signup");
         else setReady(true);
     }, [router]);
+    useEffect(() => { reloadAttention(); }, [pathname, reloadAttention]);
+    useEffect(() => {
+        window.addEventListener(SCHEDULE_CHANGED, reloadAttention);
+        return () => window.removeEventListener(SCHEDULE_CHANGED, reloadAttention);
+    }, [reloadAttention]);
 
     return (
         <ToastProvider>
@@ -65,6 +77,12 @@ export default function VoiceLayout({ children }: { children: ReactNode }) {
                                         )}
                                     >
                                         {t.label}
+                                        {t.href === "/dashboard/voice/schedule" && (attention.data?.total ?? 0) > 0 && (
+                                            <span aria-label={`, ${attention.data!.total} waiting for you`}
+                                                  className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-plum text-white text-[11px] font-medium tabular-nums align-[1px]">
+                                                {attention.data!.total}
+                                            </span>
+                                        )}
                                     </Link>
                                 );
                             })}

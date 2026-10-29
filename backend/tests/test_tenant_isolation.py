@@ -13,19 +13,20 @@ from sqlalchemy.future import select
 
 import main
 from database import async_session
-from backend.models import (Bot, CallbackJob, CallLog, Campaign, Conversation, DncEntry, EmailBroadcast, EmailJob,
-                            KnowledgeGap, Message, PhoneNumber, SavedReply, TeamMember, TelephonyAccount)
+from backend.models import (Bot, CallbackJob, CallLog, Campaign, Contact, Conversation, DncEntry, EmailBroadcast, EmailJob,
+                            KnowledgeGap, Meeting, Message, PhoneNumber, SavedReply, ScheduleSettings, TeamMember,
+                            TelephonyAccount)
 
 MARK = "MARKER-A-" + uuid.uuid4().hex[:6]
 
 OWNED = [Bot, Conversation, Message, CallLog, Campaign, CallbackJob, PhoneNumber, TelephonyAccount, EmailJob,
-         EmailBroadcast, TeamMember, DncEntry, KnowledgeGap, SavedReply]
+         EmailBroadcast, TeamMember, DncEntry, KnowledgeGap, SavedReply, Contact, Meeting, ScheduleSettings]
 
 
 async def _seed(owner: str, bot_id: str) -> dict:
     ids = {k: str(uuid.uuid4()) for k in ("conversation_id", "call_id", "campaign_id", "number_id", "account_id",
                                           "job_id", "email_job_id", "broadcast_id", "member_id", "entry_id",
-                                          "gap_id", "reply_id")}
+                                          "gap_id", "reply_id", "contact_id", "meeting_id")}
     async with async_session() as db:
         bot = (await db.execute(select(Bot).where(Bot.bot_id == bot_id))).scalars().first()
         bot.bot_name, bot.knowledge_base, bot.system_prompt = f"{MARK} bot", f"{MARK} secret knowledge", f"{MARK} prompt"
@@ -52,6 +53,11 @@ async def _seed(owner: str, bot_id: str) -> dict:
             DncEntry(id=ids["entry_id"], user_id=owner, e164="+919800000097", reason=MARK),
             KnowledgeGap(id=ids["gap_id"], bot_id=bot_id, question=MARK, normalized=MARK.lower(), status="open"),
             SavedReply(id=ids["reply_id"], user_id=owner, title=MARK[:40], body=MARK),
+            Contact(id=ids["contact_id"], user_id=owner, bot_id=bot_id, e164="+919800000096", name=MARK, calls=1,
+                    lead_status="warm", lead_reason=MARK),
+            Meeting(id=ids["meeting_id"], user_id=owner, bot_id=bot_id, e164="+919800000096", name=MARK, topic=MARK,
+                    email="a-customer@example.com", starts_at=datetime.utcnow() + timedelta(days=2), status="requested"),
+            ScheduleSettings(bot_id=bot_id, user_id=owner, settings={"meetings": {"offer_when": MARK}}),
         ])
         await db.flush()
         db.add(Message(conversation_id=ids["conversation_id"], role="user", content=MARK))
@@ -145,7 +151,8 @@ def _routes() -> list[tuple[str, APIRoute]]:
     return found
 
 
-ACTIONS = {"/api/voice/campaigns/{campaign_id}/{action}": "resume", "/api/questions/{gap_id}/{action}": "dismiss"}
+ACTIONS = {"/api/voice/campaigns/{campaign_id}/{action}": "resume", "/api/questions/{gap_id}/{action}": "dismiss",
+           "/api/voice/schedule/items/{job_id}/{action}": "cancel"}
 
 
 def test_no_endpoint_shows_or_changes_another_workspaces_data(client, make_user, run, monkeypatch):

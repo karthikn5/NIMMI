@@ -21,6 +21,7 @@ only on the owner's machines): @.claude/private-notes.md
 - "agent" / "voice agent" = an assistant's phone voice settings; "Call me" = the test call button on the
   agent page; "the call is cut" = the call drops; "credits" (before Oct 2026: "min left" / "minutes") = the voice wallet;
   "model" / "AI model" = the agent's AI model (Voice > Agents).
+- "schedule" = Voice > Schedule: call-backs callers ask for, follow-ups by lead status, meetings the owner approves.
 - "deployment(s)" = the Vercel-like static website hosting feature; "live chat" = human handoff chat
   (dashboard Live chat page + the widget's "Talk to a person"); "watermark" = the "Powered by Nimmi" line.
 - "free tier rules" = free plan: 1 assistant + 1 website + 10 voice credits (calls are pay as you go with credit packs);
@@ -200,6 +201,41 @@ only on the owner's machines): @.claude/private-notes.md
 - Simulated calls without a phone: `dev-scripts/voice/lang_call.py`, `noisy_call.py` (a TV in the caller's room);
   `replay_caller.py` replays a real recording's caller side through Sarvam; `memory_calls.py`: one number calls twice
   (the second call is greeted by name). Git-ignored local harnesses; see `dev-scripts/README.md`.
+
+## Schedule (Voice > Schedule: call-backs, follow-ups, meetings)
+
+- `voice/schedule.py` (settings per assistant in `schedule_settings`, all off by default; calling hours; the call's
+  functions; planning after each call), `voice/meetings.py` (free times, booking, the team's decisions, reminders),
+  `voice/schedule_api.py` (`/api/voice/schedule/*`). Dashboard: `/dashboard/voice/schedule` (Coming up, Meetings, Calls,
+  Settings), lead rating in Contacts, a Schedule card on the agent page, a count on the Voice menu.
+- Everything dialled is a `CallbackJob` with a `kind`: callback, follow_up, meeting (confirm / proposed time / declined,
+  in `variables.about`), no_show; `person` is a to-do for the team (status `todo`, never dialled); follow-ups waiting for
+  the team's OK are status `review`. `dial_check` runs before each dial (do-not-call first, the kind's hours and days, still
+  makes sense), calls go out from the number they called (`CallLog.number_id`), 2 lines per assistant
+  (`VOICE_SCHEDULE_LINES`), call-backs first. Call-backs and meeting calls already promised are made even if their switch
+  is turned off later; turning follow-ups off cancels the waiting ones.
+- During a call (`CallTools`, passed to `llm.reply_sentences` as `schedule_tools`): `schedule_callback` (one text field
+  `when`, "in 10 minutes" / "YYYY-MM-DD HH:MM": a number field got whole turns rejected by Groq's argument check),
+  `cancel_callback`, `check_meeting_times`, `book_meeting` (moves their upcoming one; agreeing to a time the team proposed
+  confirms it), `cancel_meeting`. Names reserved in `functions.RESERVED`. A browser test books nothing.
+- After every phone call (`schedule.after_call`, after `memory.remember_call`): the analysis (`llm.summarize`) gives
+  `lead` (hot/warm/cold/new/not_interested), what the next call should do, a day they named, an agreed call-back or meeting
+  time; saved on `CallLog.lead` / `next_step`. The contact is rated (never over a customer the team marked); a call-back or
+  meeting the agent agreed to but didn't book is made now (Oct 2026: GPT-OSS 120B said "you're booked" without booking);
+  "a person should call me" becomes a to-do; then one follow-up is planned by the rules (count, every N days, at about the
+  hour they last picked up), replacing the last plan. None while a call-back, to-do or meeting waits, after a transfer,
+  past `max_total`, with Remember callers off, or more than `stop_after_days` (7) after their last conversation (TRAI 2025:
+  consent for an enquiry lasts 7 days). A test call's follow-up waits in `review`.
+- Meetings: requested -> the team approves (link or default link, host) -> confirmation call + written confirmation
+  (WhatsApp inside the 24-hour window, else the approved template `Hi {{1}}, about your meeting with {{2}}: {{3}}. {{4}}`;
+  email with an .ics invite) -> day-before reminder and the joining details `link_minutes` before (`meetings.process_due`,
+  each tick; each message once via NotificationLog, keyed by meeting and start time). The team can propose another time
+  (the agent calls to agree it), decline (with a call to find another time, or in writing), move, mark attended / missed
+  (missed: a call to rebook). Unanswered requests expire at their time; unmarked meetings close as attended after 3 days.
+- Real-model checks (Oct 2026): call-backs booked right on GPT-OSS 120B and Gemini 3.6 Flash (Tamil too); meetings
+  reliable on Gemini 3.6 Flash, about 1 in 3 on GPT-OSS 120B (the after-call recovery covers the rest).
+- Tests: `tests/test_voice_schedule.py`. Real models: `dev-scripts/voice/schedule_probe.py` (books under a test number and
+  removes it); sample data for the dashboard: `schedule_seed.py` (`--clean`); UI: `dev-scripts/ui-checks/schedule_ui.mjs`.
 
 ## WhatsApp
 

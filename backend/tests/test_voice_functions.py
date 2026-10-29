@@ -160,6 +160,31 @@ def test_the_model_runs_a_function_then_answers_with_its_result(run, monkeypatch
     assert log == history[1:]
 
 
+def test_half_a_sentence_before_a_function_isnt_spoken(run, monkeypatch):
+    """GPT-OSS 120B began "Your order ... is currently," then ran the function (a test call, Oct 2026)."""
+    prompts = []
+
+    def model(bot, prompt, history, text, ai_model, answered, tools):
+        prompts.append(prompt)
+        if tools:
+            yield "Your order A one two three four is currently,"
+            yield llm.ToolCall("call_1", "check_order", {"order_id": "A1234"})
+        else:
+            yield "It shipped on Monday."
+    monkeypatch.setattr(llm, "stream_reply", model)
+    monkeypatch.setattr(llm, "MAX_FUNCTION_ROUNDS", 1)
+
+    async def fake_run(fn, args, values):
+        return "shipped on Monday"
+    monkeypatch.setattr(functions, "run", fake_run)
+    agent = _agent(functions=functions.clean([ORDER]))
+
+    async def reply():
+        return [s async for s in llm.reply_sentences(llm.Bot(bot_name="Shop"), agent, [], "Order A1234?", "inbound", None, knowledge="")]
+    assert run(reply) == [("Let me check that.", None), ("It shipped on Monday.", None)]
+    assert llm.FUNCTION_RULES in prompts[0] and "A1234, not A one two three four" in llm.FUNCTION_RULES
+
+
 def test_functions_stop_after_three_rounds(run, monkeypatch):
     asked = []
 

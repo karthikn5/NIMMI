@@ -7,6 +7,7 @@ import BrowserTest from "@/components/voice/BrowserTest";
 import { AmbiencePicker, PronunciationEditor } from "@/components/voice/AgentEditors";
 import { AgentDetailsLine, LanguageMenu, ModelMenu, VoiceMenu } from "@/components/voice/AgentToolbar";
 import { FunctionsEditor } from "@/components/voice/FunctionsEditor";
+import { ScheduleCard } from "@/components/voice/schedule/AgentCard";
 import { WithPlaceholders } from "@/components/voice/CampaignBits";
 import PhoneTest from "@/components/voice/PhoneTest";
 import {
@@ -332,6 +333,8 @@ function AgentSettings() {
                             )}
                         </Card>
                     )}
+                    <ScheduleCard botId={botId} modelCanRun={models.data?.models.find((m) => m.id === draft.ai_model)?.functions ?? true}
+                                  modelName={models.data?.models.find((m) => m.id === draft.ai_model)?.name} />
                 </div>
             </div>
 

@@ -31,6 +31,9 @@ KINDS = ("custom", "check_slots", "book")
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 PARAM_TYPES = ("string", "number", "boolean", "enum")
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,47}$")
+# Built in: ending and handing over calls, and the Schedule functions (voice/schedule.py CallTools).
+RESERVED = ("end_call", "transfer_call", "schedule_callback", "cancel_callback", "check_meeting_times", "book_meeting",
+            "cancel_meeting")
 MAX_FUNCTIONS, MAX_PARAMS, MAX_HEADERS = 15, 12, 10
 RESULT_CHARS = 3000  # what the model reads back from a function
 MASK = "••••"
@@ -90,7 +93,7 @@ def clean(new: list[dict], old: Optional[list[dict]] = None) -> list[dict]:
         name = str(raw.get("name") or "").strip().lower()
         if not NAME_RE.match(name):
             raise FunctionError(f'"{name or "(no name)"}": use lowercase letters, numbers and underscores, starting with a letter')
-        if name in names or name in ("end_call", "transfer_call"):
+        if name in names or name in RESERVED:
             raise FunctionError(f'Two functions are called "{name}"' if name in names else f'"{name}" is taken')
         names.add(name)
         description = str(raw.get("description") or "").strip()[:500]

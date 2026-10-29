@@ -30,7 +30,7 @@ from backend.models import Bot, CallbackJob, CallLog, DncEntry, VoiceAgent
 import assist
 from notify.events import call_completed, fire_and_forget
 from phone import extract_contact
-from voice import ai_models, ambience, llm, memory, metering, recording, sarvam, scheduler
+from voice import ai_models, ambience, llm, memory, metering, recording, sarvam, schedule, scheduler
 from voice.levels import CallerLevels
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,8 @@ class CallSetup:
     after_hours: Optional[str] = None              # team offline: "tomorrow at 9:00 AM" (no transfers)
     script: Optional[dict] = None                  # personality and instructions for this kind of call (Knowledge)
     caller: Optional[dict] = None                  # what the assistant remembers about them (voice/memory.py)
+    number_id: Optional[str] = None                # our number on the call (call-backs go out from it)
+    tools: Optional[schedule.CallTools] = None     # call-backs and meetings it can book (Voice > Schedule)
 
 
 SttFactory = Callable[[str, int, bool], object]
@@ -470,6 +472,8 @@ class CallSession:
         # One sentence at a time is turned into speech: they share one connection, and an interrupted
         # sentence must be cleared off it before the next one (a goodbye, a reminder) starts.
         self.voice = asyncio.Lock()
+        if setup.tools is not None:
+            setup.tools.call_id = lambda: self.call_id  # what's booked on the call points back to it
 
     # ── helpers ────────────────────────────────────────────────
     def _elapsed(self) -> int:
@@ -829,7 +833,7 @@ class CallSession:
                                                  script=self.s.script, caller=self.s.caller,
                                                  phone_known=bool(self.s.caller_e164), answered=self.answered,
                                                  function_values=self._function_values(), function_log=ran,
-                                                 **extra)) as replies:
+                                                 schedule_tools=self.s.tools, **extra)) as replies:
                     async for sentence, control in replies:
                         if sentence:
                             if not said:
@@ -1239,7 +1243,7 @@ class CallSession:
             log = CallLog(user_id=self.s.owner_id, bot_id=self.s.bot.bot_id, direction=self.s.direction,
                           channel=self.s.channel, caller_e164=self.s.caller_e164, language=self.s.agent.language,
                           consent_source=self.s.consent_source, provider_call_id=self.s.provider_call_id,
-                          campaign_id=self.s.campaign_id, outcome="in_progress")
+                          campaign_id=self.s.campaign_id, number_id=self.s.number_id, outcome="in_progress")
             db.add(log)
             await db.commit()
             self.call_id = log.id
@@ -1368,7 +1372,7 @@ class CallSession:
                     f"{self.caller_peak}/32767, recogniser events {self.stt_events}, {self.background_ignored} sounds "
                     f"from around the caller ignored, {self.flushes} turns finished early")
         outcome, summary, fields = "answered", "", {}
-        successful, sentiment = None, None
+        successful, sentiment, lead, next_step = None, None, None, None
         if self.s.voicemail:
             outcome, summary = "voicemail", "Reached voicemail and left a message."
         elif self.failure and not self.caller_spoke:
@@ -1376,9 +1380,16 @@ class CallSession:
         elif self.opted_out:
             outcome, summary = "opted_out", "Caller asked not to be contacted again. Added to the do-not-call list."
         else:
-            result = await self.summarizer(self.s.bot, self.transcript, self.s.agent) if self.caller_spoke else {}
+            zone = {"zone_name": str(self.s.tools.tz)} if self.s.tools is not None and self.summarizer is llm.summarize else {}
+            result = await self.summarizer(self.s.bot, self.transcript, self.s.agent, **zone) if self.caller_spoke else {}
             summary, fields = result.get("summary", ""), result.get("fields", {})
-            successful, sentiment = result.get("successful"), result.get("sentiment")
+            successful, sentiment, lead = result.get("successful"), result.get("sentiment"), result.get("lead")
+            # What the next call should do (voice/schedule.py plans it after the call).
+            next_step = {k: v for k, v in (("brief", result.get("follow_up")), ("on", result.get("follow_up_on")),
+                                           ("call_back_at", result.get("call_back_at")), ("reason", result.get("lead_reason")),
+                                           ("person", result.get("wants_callback")), ("meeting_at", result.get("meeting_at")),
+                                           ("meeting_kind", result.get("meeting_kind")),
+                                           ("meeting_about", result.get("meeting_about"))) if v} or None
             contact = extract_contact(fields)
             if self.transferred:
                 outcome = "transferred"
@@ -1412,6 +1423,7 @@ class CallSession:
             log.captured = fields
             log.successful = successful
             log.sentiment = sentiment
+            log.lead, log.next_step = lead, next_step
             log.transcript = self.transcript
             log.language = self.lang  # where the conversation ended up
             log.recording_path = rec_path
@@ -1430,5 +1442,12 @@ class CallSession:
 
         await self.t.event({"type": "ended", "call_id": self.call_id, "outcome": outcome, "summary": summary})
         fire_and_forget(call_completed(self.call_id))
-        if self.s.channel == "phone" and self.s.agent.remember_callers is not False:
-            fire_and_forget(memory.remember_call(self.call_id))  # who they are, for their next call
+        if self.s.channel == "phone":
+            fire_and_forget(self._remember_and_plan())
+
+    async def _remember_and_plan(self) -> None:
+        """After a phone call: who they are, for their next call; then their lead rating and what happens next
+        (a follow-up, a call-back), which build on it."""
+        if self.s.agent.remember_callers is not False:
+            await memory.remember_call(self.call_id)
+        await schedule.after_call(self.call_id)

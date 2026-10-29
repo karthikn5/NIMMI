@@ -116,7 +116,8 @@ async def context_for(bot_id: str, e164: Optional[str]) -> Optional[dict]:
     if not (name or history or details or notes or chats):
         return None
     return {"name": name, "first_name": first_name(name), "has_email": bool(email), "details": details,
-            "notes": notes[:1000], "calls": history, "chats": chats}
+            "notes": notes[:1000], "calls": history, "chats": chats,
+            "language": calls[0].language if calls else None}  # where their last call ended up
 
 
 async def _whatsapp_chats(bot_id: str, e164: str, since: Optional[datetime]) -> list[dict]:

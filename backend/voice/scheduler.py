@@ -1,21 +1,25 @@
 """
 Background jobs, started with the app:
-  - dial consented callbacks when due, inside the workspace's calling hours (IST)
+  - dial consented callbacks and campaign calls when due, inside the workspace's calling hours (IST)
+  - dial Voice > Schedule calls (call-backs people asked for, follow-ups, meeting calls) inside each assistant's
+    calling hours and days (voice/schedule.py), and send meeting reminders (voice/meetings.py)
   - delete recordings and transcripts past each workspace's retention period
 """
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
-from sqlalchemy import and_, func, or_, update
+from sqlalchemy import and_, case, func, or_, update
 from sqlalchemy.future import select
 
 from database import async_session
-from backend.models import (Campaign, CallbackJob, CallbackSettings, CallLog, ComplianceSettings, DncEntry,
+from backend.models import (Campaign, CallbackJob, CallbackSettings, CallLog, ComplianceSettings, Contact, DncEntry,
                             PhoneNumber, VoiceAgent)
 import balance
 from phone import callable_destination
-from voice import accounts, ai_models, exotel, metering, recording, twilio
+from voice import accounts, ai_models, exotel, metering, recording, schedule, twilio
 from voice.catalog import NUMBER_GRACE_DAYS
 
 logger = logging.getLogger(__name__)
@@ -23,6 +27,7 @@ logger = logging.getLogger(__name__)
 IST = timezone(timedelta(hours=5, minutes=30))
 DELAYS = {"immediate": 0, "1m": 60, "5m": 300, "15m": 900}
 RETRY_GAP = timedelta(hours=1)
+SCHEDULE_LINES = int(os.getenv("VOICE_SCHEDULE_LINES", "2"))  # Schedule calls one assistant places at the same time
 
 # Exotel call SIDs whose assistant asked to transfer -> number to dial (read by the Passthru step).
 pending_transfers: dict[str, str] = {}
@@ -57,11 +62,14 @@ async def dispatch_due_callbacks() -> None:
             select(CallbackJob).outerjoin(Campaign, Campaign.id == CallbackJob.campaign_id).where(
                 CallbackJob.status == "queued", CallbackJob.next_attempt_at <= now,
                 or_(CallbackJob.campaign_id.is_(None), Campaign.status == "running"),
-            ).order_by(CallbackJob.next_attempt_at).limit(20)
+            ).order_by(case((CallbackJob.kind == "callback", 0), else_=1),  # someone waiting for a call-back first
+                       CallbackJob.next_attempt_at).limit(20)
         )).scalars().all()
         campaigns: dict[str, Campaign] = {}
         in_flight: dict[str, int] = {}
+        lines: dict[str, int] = {}  # Schedule calls under way, per assistant
         for job in jobs:
+            window = None
             if job.campaign_id:
                 campaign = campaigns.get(job.campaign_id) or (await db.execute(
                     select(Campaign).where(Campaign.id == job.campaign_id))).scalars().first()
@@ -75,6 +83,21 @@ async def dispatch_due_callbacks() -> None:
                 if in_flight[campaign.id] >= max(1, campaign.concurrency or 1):
                     continue  # wait for a line to free up
                 window, from_id, max_attempts = (campaign.window_start, campaign.window_end), campaign.from_number_id, campaign.max_attempts
+            elif job.kind in schedule.CALL_KINDS:
+                check = await schedule.dial_check(db, job)  # its calling hours and days, and whether it still makes sense
+                if check.stop:
+                    job.status, job.last_error = check.stop
+                    continue
+                if check.wait_until:
+                    job.next_attempt_at = check.wait_until
+                    continue
+                if job.bot_id not in lines:
+                    lines[job.bot_id] = (await db.execute(select(func.count()).select_from(CallbackJob).where(
+                        CallbackJob.bot_id == job.bot_id, CallbackJob.kind.in_(schedule.CALL_KINDS),
+                        CallbackJob.status == "calling"))).scalar() or 0
+                if lines[job.bot_id] >= SCHEDULE_LINES:
+                    continue  # wait for a line to free up
+                from_id, max_attempts = check.from_number_id, check.attempts
             else:
                 settings = (await db.execute(select(CallbackSettings).where(CallbackSettings.user_id == job.user_id))).scalars().first()
                 if not settings or not settings.enabled:
@@ -90,7 +113,7 @@ async def dispatch_due_callbacks() -> None:
             if not callable_destination(job.e164):  # last guard before anything is dialled
                 job.status, job.last_error = "cancelled", "We don't place calls to that country"
                 continue
-            if not in_window(now, *window):
+            if window and not in_window(now, *window):
                 job.next_attempt_at = next_window_start(now, window[0])
                 continue
             wallet = await metering.get_wallet(db, job.user_id)
@@ -108,33 +131,38 @@ async def dispatch_due_callbacks() -> None:
             detect = number.provider == "twilio" and bool(agent) and (agent.voicemail_action or "off") != "off"
 
             # Claim the call atomically, so it's dialled once even if several server processes run this loop.
+            scheduled = job.kind in schedule.CALL_KINDS
             claimed = await db.execute(
                 update(CallbackJob).where(CallbackJob.id == job.id, CallbackJob.status == "queued")
                 .values(status="calling", attempts=CallbackJob.attempts + 1,
-                        next_attempt_at=now)  # while calling: when we dialled (see expire_stale_calls)
+                        next_attempt_at=now,  # while calling: when we dialled (see expire_stale_calls)
+                        **({"from_number_id": number.id} if scheduled else {}))  # the call knows its number
                 .execution_options(synchronize_session=False)
             )
+            if claimed.rowcount == 1 and job.kind == "follow_up":
+                await db.execute(update(Contact).where(Contact.bot_id == job.bot_id, Contact.e164 == job.e164)
+                                 .values(follow_ups=func.coalesce(Contact.follow_ups, 0) + 1)
+                                 .execution_options(synchronize_session=False))
             await db.commit()
             if claimed.rowcount != 1:
                 continue  # another process took it
             await db.refresh(job)
             if job.campaign_id:
                 in_flight[job.campaign_id] += 1
+            if scheduled:
+                lines[job.bot_id] += 1
             if agent:  # make the opening while the phone rings, so it's spoken the moment they answer
-                from voice.pipeline import prepare_opening
-                variables = dict(job.variables or {})
-                if job.name:
-                    variables.setdefault("name", job.name)
-                compliance = (await db.execute(select(ComplianceSettings).where(
-                    ComplianceSettings.user_id == job.user_id))).scalars().first()
-                prepare_opening(agent, variables, bool(compliance.record_calls) if compliance else True)
+                from notify.events import fire_and_forget
+                from voice.router import prepare_job_opening
+                fire_and_forget(prepare_job_opening(CallbackJob(**{c.name: getattr(job, c.name)
+                                                                   for c in CallbackJob.__table__.columns})))
             try:
                 job.last_error = None
                 # Through Nimmi's account, or the customer's own Twilio/Exotel account for their numbers.
                 job.provider_call_id = await accounts.dial(db, number, job.e164, job.id, detect_voicemail=detect)
             except Exception as e:
                 logger.warning(f"Callback {job.id} failed to dial: {e}")
-                schedule_retry(job, max_attempts, str(e)[:300])
+                await retry_later(db, job, str(e)[:300], max_attempts)
         await db.commit()
 
 
@@ -182,14 +210,26 @@ async def expire_stale_calls() -> None:
             logger.info(f"Closed {len(stuck)} call-backs that never reported back")
 
 
-def schedule_retry(job: CallbackJob, max_attempts: int, reason: str) -> None:
+def schedule_retry(job: CallbackJob, max_attempts: int, reason: str, gap: timedelta = RETRY_GAP) -> None:
     """After a missed or failed attempt: try again later, or give up."""
     job.last_error = reason
     if job.attempts < max(1, max_attempts):
         job.status = "queued"
-        job.next_attempt_at = datetime.utcnow() + RETRY_GAP
+        job.next_attempt_at = datetime.utcnow() + gap
     else:
         job.status = "failed"
+
+
+async def retry_later(db, job: CallbackJob, reason: str, max_attempts: Optional[int] = None) -> None:
+    """After a missed or failed attempt, by what the call is: a Schedule call's tries and gap come from its assistant's
+    settings, and a follow-up nobody answered moves on to the next one in the rules."""
+    if job.kind in schedule.CALL_KINDS:
+        settings = await schedule.settings_for(job.bot_id, db)
+        schedule_retry(job, schedule.attempts_for(job, settings), reason, schedule.retry_gap(job, settings))
+        if job.status == "failed" and job.kind == "follow_up":
+            await schedule.next_follow_up(db, job, settings)
+        return
+    schedule_retry(job, max_attempts if max_attempts is not None else await max_attempts_for(db, job), reason)
 
 
 async def purge_expired_recordings() -> None:
@@ -284,6 +324,8 @@ async def _loop() -> None:
             await expire_stale_calls()
             await dispatch_due_callbacks()
             await finish_campaigns()
+            from voice import meetings
+            await meetings.process_due()  # meeting reminders and links, requests that ran out of time
             if datetime.utcnow() - last_purge > timedelta(hours=6):
                 await purge_expired_recordings()
                 if twilio.configured():

@@ -10,6 +10,7 @@ import unicodedata
 import uuid
 from contextlib import aclosing
 from dataclasses import dataclass
+from datetime import datetime
 from typing import AsyncIterator, Iterator, Optional
 
 import httpx
@@ -761,9 +762,11 @@ def _clean_for_speech(text: str) -> str:
 
 # How many times in one turn the model may run functions before it has to answer with what it has.
 MAX_FUNCTION_ROUNDS = 3
-# Added to the instructions when the agent has functions: models otherwise ran them with made-up values before asking
-# (Gemini sent "order_id" as the order number) and filled gaps in a result with guesses (a test call, Oct 2026).
+# Added to the instructions when the agent has functions. Seen on test calls (Oct 2026): models ran them with made-up
+# values before asking (Gemini sent "order_id" as the order number), passed numbers the way they were spoken
+# (GPT-OSS 20B sent "A one two three four"), and filled gaps in a result with guesses.
 FUNCTION_RULES = ("\n- Functions: use one only when you have every detail it needs from the caller; never make values up. "
+                  "Write numbers, codes and IDs in its arguments the way they're typed (A1234, not A one two three four). "
                   "Tell the caller only what its result says. If the result doesn't answer their question, say you couldn't find that.")
 
 
@@ -800,13 +803,14 @@ async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user
                           knowledge: Optional[str] = None, reply_language: Optional[str] = None,
                           script: Optional[dict] = None, caller: Optional[dict] = None, phone_known: bool = False,
                           answered: Optional[list] = None, function_values: Optional[dict] = None,
-                          function_log: Optional[list] = None) -> AsyncIterator[tuple[str, Optional[str]]]:
+                          function_log: Optional[list] = None, schedule_tools=None) -> AsyncIterator[tuple[str, Optional[str]]]:
     """
     Yields (sentence, control) pairs as the model streams. `control` is None, or
     TRANSFER / END_CALL once the model signals it (with any final sentence). `answered`: see stream_reply.
     `knowledge` is the call's knowledge, worked out once per call by CallSession.
     The agent's functions (agent.functions) run when the model asks for them: their requests and results go into
-    `function_log` (for the call's history), with `function_values` for their {{placeholders}}.
+    `function_log` (for the call's history), with `function_values` for their {{placeholders}}. `schedule_tools`: the Schedule
+    functions for this call (voice/schedule.py CallTools: call-backs and meetings), alongside the agent's own.
     """
     if knowledge is None:
         knowledge = await call_knowledge(bot)
@@ -814,6 +818,10 @@ async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user
                            script=script, caller=caller, phone_known=phone_known)
     language = reply_language or agent.language or "en-IN"  # the caller's language once they switched
     specs = agent_functions.tool_specs(getattr(agent, "functions", None))
+    if schedule_tools is not None:
+        built_in = schedule_tools.specs()
+        specs = [s for s in specs if s["name"] not in {b["name"] for b in built_in}] + built_in
+        prompt += schedule_tools.rules()
     if specs:
         prompt += FUNCTION_RULES
     turn, pending, said = list(history), user_text, []
@@ -849,9 +857,10 @@ async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user
             if tail or control:
                 yield tail, control
             return
-        if tail:
+        if tail and tail[-1] in ".!?।":
             said.append(tail)
             yield tail, None
+        # (An unfinished sentence before a function, "Your order is currently,", is dropped: the answer comes after it.)
         # The model wants functions run: say the owner's "while it runs" line if nothing was said yet, run them
         # together, then let the model answer with their results.
         wanted = [(c, agent_functions.by_name(getattr(agent, "functions", None), c.name)) for c in calls]
@@ -859,8 +868,12 @@ async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user
         if holding and not said:
             said.append(holding)
             yield holding, None
-        results = await asyncio.gather(*(
-            agent_functions.run(fn, c.arguments, function_values or {}) if fn else _no_such_function(c.name) for c, fn in wanted))
+
+        def run(call: ToolCall, fn: Optional[dict]):
+            if schedule_tools is not None and schedule_tools.has(call.name):
+                return schedule_tools.run(call.name, call.arguments)
+            return agent_functions.run(fn, call.arguments, function_values or {}) if fn else _no_such_function(call.name)
+        results = await asyncio.gather(*(run(c, fn) for c, fn in wanted))
         ask = {"role": "assistant", "content": " ".join(said), "tool_calls": [
             {"id": c.id, "name": c.name, "arguments": c.arguments} for c in calls],
             "raw": next((c.raw for c in calls if c.raw), None)}
@@ -884,9 +897,23 @@ Return only JSON with these keys:
 "fields": FIELDS_SPEC,
 "successful": true or false, SUCCESS_SPEC,
 "sentiment": "positive", "neutral" or "negative": how the caller felt by the end of the call,
-"wants_callback": true if the caller asked to be called back by a person.
+"wants_callback": true only if the caller asked for a staff member (a person, not this assistant) to call them back,
+"lead": how interested they are in what the business offers: "hot" (ready to buy, book or visit soon), "warm"
+(interested, still deciding), "cold" (only asking, little interest), "not_interested" (said no), or "new" (too little
+was said to tell),
+"lead_reason": why, in a few words,
+"follow_up": if a later call would help them decide, what that call should do, in one sentence built on what they
+said (for example "Ask whether they discussed the Gold plan with their partner, and mention the offer ends Friday"),
+else "",
+"follow_up_on": the day they asked to be contacted again, as YYYY-MM-DD, if they named one, else null,
+"call_back_at": if the assistant agreed to call them back at a set time, that time as YYYY-MM-DD HH:MM, else null,
+"meeting_at": if the caller agreed on this call to meet the team at a set time, that time as YYYY-MM-DD HH:MM, else null,
+"meeting_kind": "online", "in_person" or "phone", if they said which kind of meeting, else null,
+"meeting_about": what they want to discuss at that meeting, in a few words, else "".
+The call ended NOW_TEXT.
 Only use what was actually said. Never guess.
 """
+LEADS = ("hot", "warm", "cold", "not_interested", "new")
 
 FREEFORM_FIELDS = ('an object of details the caller gave (for example Name, Phone, Email, Course, Appointment), '
                    'using short title-case keys and only values actually said')
@@ -973,16 +1000,23 @@ def _lines(transcript: list[dict]) -> str:
                      for t in transcript if t.get("speaker") in ("agent", "caller"))
 
 
-async def summarize(bot: Bot, transcript: list[dict], agent: Optional[VoiceAgent] = None) -> dict:
-    """Post-call analysis: summary, the agent's fields (typed), whether the goal was met, and sentiment."""
-    empty = {"summary": "", "fields": {}, "successful": None, "sentiment": None, "wants_callback": False}
+async def summarize(bot: Bot, transcript: list[dict], agent: Optional[VoiceAgent] = None,
+                    zone_name: str = "Asia/Kolkata") -> dict:
+    """Post-call analysis: summary, the agent's fields (typed), whether the goal was met, sentiment, and how interested
+    they are with what a follow-up should do (voice/schedule.py). `zone_name`: the business's time zone, for dates."""
+    empty = {"summary": "", "fields": {}, "successful": None, "sentiment": None, "wants_callback": False, "lead": None,
+             "lead_reason": "", "follow_up": "", "follow_up_on": None, "call_back_at": None, "meeting_at": None,
+             "meeting_kind": None, "meeting_about": ""}
     lines = _lines(transcript)
     if not lines.strip():
         return empty
     goal = (agent.call_goal if agent else None) or ""
     success_spec = (f"whether the call achieved this goal: {goal}" if goal else
                     "whether the caller's need was handled or a clear next step was agreed")
-    prompt = SUMMARY_PROMPT.replace("FIELDS_SPEC", _fields_spec(agent)).replace("SUCCESS_SPEC", success_spec)
+    from voice.schedule import zone_of
+    ended = datetime.now(zone_of(zone_name))
+    prompt = (SUMMARY_PROMPT.replace("FIELDS_SPEC", _fields_spec(agent)).replace("SUCCESS_SPEC", success_spec)
+              .replace("NOW_TEXT", f"on {ended:%A} {ended.day} {ended:%B %Y} at {ended:%H:%M} ({zone_name})"))
     try:
         raw = await _complete(bot, prompt, lines)
         match = re.search(r"\{.*\}", raw or "", re.S)
@@ -1000,11 +1034,24 @@ async def summarize(bot: Bot, transcript: list[dict], agent: Optional[VoiceAgent
             fields = {str(k)[:40]: str(v)[:200] for k, v in got.items() if v not in (None, "", [])}
         sentiment = str(data.get("sentiment") or "").lower()
         successful = data.get("successful")
+        lead = str(data.get("lead") or "").strip().lower().replace(" ", "_")
+        on = str(data.get("follow_up_on") or "").strip()
+        call_back = str(data.get("call_back_at") or "").strip().replace("T", " ")
+        meeting_at = str(data.get("meeting_at") or "").strip().replace("T", " ")
+        meeting_kind = str(data.get("meeting_kind") or "").strip().lower().replace(" ", "_").replace("-", "_")
         return {
             "summary": str(data.get("summary") or "")[:600], "fields": fields,
             "successful": successful if isinstance(successful, bool) else None,
             "sentiment": sentiment if sentiment in ("positive", "neutral", "negative") else None,
-            "wants_callback": bool(data.get("wants_callback")),
+            "wants_callback": data.get("wants_callback") is True,
+            "lead": lead if lead in LEADS else None,
+            "lead_reason": str(data.get("lead_reason") or "").strip()[:200],
+            "follow_up": str(data.get("follow_up") or "").strip()[:400],
+            "follow_up_on": on[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", on) else None,
+            "call_back_at": call_back[:16] if re.match(r"^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}", call_back) else None,
+            "meeting_at": meeting_at[:16] if re.match(r"^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}", meeting_at) else None,
+            "meeting_kind": meeting_kind if meeting_kind in ("online", "in_person", "phone") else None,
+            "meeting_about": str(data.get("meeting_about") or "").strip()[:300],
         }
     except Exception as e:
         logger.warning(f"Call summary failed: {e}")

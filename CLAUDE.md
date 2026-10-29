@@ -289,8 +289,9 @@ only on the owner's machines): @.claude/private-notes.md
   the keyword map (`dev-scripts/seo/keywords.py`) gives each keyword its page; `dev-scripts/seo/crawl.py` checks every
   page's title, description, canonical, H1, JSON-LD and share image (dashboard on :3000).
 - NIMMI, Nimmi's own assistant, is on every public page through `components/site/SiteAssistant.tsx`: the customers'
-  "Add to website" script, loaded `lazyOnload`, id from `NEXT_PUBLIC_SITE_ASSISTANT_ID` (unset = no assistant), never on
-  dashboard, auth, widget or demo pages. Its setup (knowledge, flow, lead capture, look, voice scripts, Schedule) is
+  "Add to website" script, loaded `lazyOnload`, never on dashboard, auth, widget or demo pages. NIMMI has the same id
+  (130cc13a-...) in the live and local databases (copied by `dev-scripts/site/nimmi_to_live.py`); `NEXT_PUBLIC_SITE_ASSISTANT_ID`
+  picks another, empty turns it off. Its setup (knowledge, flow, lead capture, look, voice scripts, Schedule) is
   `dev-scripts/site/setup_nimmi.py`, written from the pricing table and FAQs: change both together.
 
 ## Testing conventions

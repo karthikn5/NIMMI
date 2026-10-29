@@ -70,6 +70,7 @@ function Builder({ params }: { params: Promise<{ id: string }> }) {
 
     const [saveState, setSaveState] = useState<SaveState>("saved");
     const lastSaved = useRef("");
+    const privateLoaded = useRef(false); // false: the public view, without instructions, knowledge or reply rules
     const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
     const [chatOpen, setChatOpen] = useState<"open" | "closed">("open");
     const [mobilePreview, setMobilePreview] = useState(false);
@@ -85,6 +86,7 @@ function Builder({ params }: { params: Promise<{ id: string }> }) {
             const res = await apiFetch(`/api/bots/${id}/config`);
             if (!res.ok) throw new Error();
             const data = await res.json();
+            privateLoaded.current = "system_prompt" in data;
             const v = normalizeVisual(data.visual_config);
             const b = normalizeBehaviour(data.behaviour);
             const nodes = data.flow_data?.nodes?.length ? data.flow_data.nodes
@@ -154,6 +156,10 @@ function Builder({ params }: { params: Promise<{ id: string }> }) {
         };
         // Reply rules start applying only once someone changes them.
         if (behaviourJson !== savedBehaviour.current) body.behaviour = behaviour;
+        // Never save blanks over what this page wasn't sent.
+        if (!privateLoaded.current) {
+            for (const key of ["system_prompt", "knowledge_base", "ai_provider", "ai_model", "ai_api_key", "behaviour"]) delete body[key];
+        }
         try {
             const res = await apiFetch(`/api/bots/${id.trim()}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
             if (!res.ok) throw new Error();

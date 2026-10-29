@@ -201,7 +201,9 @@ async def get_bot_config(bot_id: str, ctx: Optional[AuthContext] = Depends(get_o
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
     sub = await active_subscription(clean, db)
-    is_member = ctx is not None and ctx.owner_id == bot.user_id
+    # Whoever can save the assistant sees what they'd save: with LOCAL_DEV any signed-in account can (get_owned_bot),
+    # and a builder sent the public view would save empty instructions and knowledge over the real ones.
+    is_member = ctx is not None and (ctx.owner_id == bot.user_id or local_dev())
     callbacks = (await db.execute(select(CallbackSettings.enabled).where(CallbackSettings.user_id == bot.user_id))).scalar_one_or_none()
     voice_on = (await db.execute(select(VoiceAgent.enabled).where(VoiceAgent.bot_id == bot.bot_id))).scalar_one_or_none()
 

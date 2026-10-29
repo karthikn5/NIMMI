@@ -60,3 +60,16 @@ def test_unhelpful_rating_goes_to_questions(client, make_user, monkeypatch):
     assert client.post("/api/chat/feedback", json={**body, "visitor_session_id": "never-chatted"}).status_code == 404
     items = client.get("/api/questions", headers=u.h()).json()["items"]
     assert [q["question"] for q in items] == ["Is there visitor parking?"]
+
+
+def test_config_shows_the_builder_what_it_would_save(client, make_user, monkeypatch):
+    """The builder saves instructions and knowledge back with every change. Sent only the public view (a LOCAL_DEV
+    account editing another account's assistant), it saved them as blanks. Whoever can save them is sent them."""
+    from routers import bots as bots_router
+    owner, other = make_user(), make_user()
+    bot = owner.bot()
+    client.patch(f"/api/bots/{bot}", json={"system_prompt": "Be brief.", "knowledge_base": "Open 9 to 6."}, headers=owner.h())
+    assert "system_prompt" not in client.get(f"/api/bots/{bot}/config", headers=other.h()).json()  # live: the owner's only
+    monkeypatch.setattr(bots_router, "local_dev", lambda: True)  # locally, any account may edit any assistant
+    seen = client.get(f"/api/bots/{bot}/config", headers=other.h()).json()
+    assert (seen["system_prompt"], seen["knowledge_base"]) == ("Be brief.", "Open 9 to 6.")

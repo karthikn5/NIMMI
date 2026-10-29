@@ -7,11 +7,11 @@ import { apiBase } from "@/lib/api";
 
 /**
  * Nimmi's own assistant (NIMMI) on the public site, added the way customers add theirs: the "Add to website" script,
- * backend/static/nimmi-widget.js. Its id is NEXT_PUBLIC_SITE_ASSISTANT_ID (unset: no assistant), so the same code
- * serves a local assistant and the live one. Loaded once the page has finished loading, and never on the dashboard,
- * sign-in, chat or demo pages (hidden again after a move to one of them without a reload).
+ * backend/static/nimmi-widget.js. It's NIMMI, which has the same id in the live and local databases;
+ * NEXT_PUBLIC_SITE_ASSISTANT_ID picks another (empty: none). Loaded once the page has finished loading, and never on
+ * the dashboard, sign-in, chat or demo pages (hidden again after a move to one of them without a reload).
  */
-const ASSISTANT_ID = process.env.NEXT_PUBLIC_SITE_ASSISTANT_ID || "";
+const ASSISTANT_ID = process.env.NEXT_PUBLIC_SITE_ASSISTANT_ID ?? "130cc13a-9611-4694-aa20-0c8343137784";
 const NOT_ON = /^\/(dashboard|auth|widget|demo)(\/|$)/;
 
 export default function SiteAssistant() {

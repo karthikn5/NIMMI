@@ -127,7 +127,7 @@ export default function BrowserTest({ config, dirty, direction = "inbound" }: { 
             clearPlayback();
         } else if (data.type === "error") {
             setMessage(data.code === "no_minutes"
-                ? "You're out of voice minutes. Buy minutes from the Voice overview to keep testing."
+                ? "You're out of voice credits. Buy credits on the Voice overview to keep testing."
                 : data.message || "The voice engine had a problem.");
         } else if (data.type === "ended") {
             setResult({ outcome: data.outcome || "answered", summary: data.summary || "", callId: data.call_id || "" });
@@ -256,7 +256,7 @@ export default function BrowserTest({ config, dirty, direction = "inbound" }: { 
             <div className="px-5 pt-5">
                 <h2 className="text-[15px] font-semibold">Try it</h2>
                 <p className="text-[13px] text-stone-500 mt-0.5">
-                    Talk to {config.bot_name} through your microphone. Test calls use your saved settings and count toward your minutes.
+                    Talk to {config.bot_name} through your microphone. Test calls use your saved settings and credits.
                 </p>
                 {dirty && <p className="text-[13px] text-amber-700 mt-2">Save your changes to hear them in a test call.</p>}
             </div>

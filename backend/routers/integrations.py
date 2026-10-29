@@ -11,20 +11,19 @@ from sqlalchemy.future import select
 
 from auth import AuthContext, require_manager
 from database import get_db
-from backend.models import Bot, IntegrationSettings, NotificationLog, User
+from backend.models import IntegrationSettings, NotificationLog, User
 from phone import to_e164
 from netsafe import UnsafeUrl, assert_public_url
 from notify import automations, channels, email
 from notify.events import recipients
+from whatsapp.numbers import workspace_number
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
 
-import os
 import plans
 
-def _json(s: IntegrationSettings, owner_email: str) -> dict:
-    backend_url = (os.getenv("PUBLIC_BACKEND_URL") or os.getenv("BACKEND_URL", "http://localhost:8000")).rstrip("/")
+def _json(s: IntegrationSettings, owner_email: str, whatsapp_number: bool = False) -> dict:
     return {
         "email_alerts": bool(s.email_alerts), "alert_email": s.alert_email or "", "default_email": owner_email,
         "whatsapp_enabled": bool(s.whatsapp_enabled), "whatsapp_template": s.whatsapp_template or "",
@@ -33,21 +32,14 @@ def _json(s: IntegrationSettings, owner_email: str) -> dict:
         "leadsquared_enabled": bool(s.leadsquared_enabled), "leadsquared_host": s.leadsquared_host or "",
         "leadsquared_access_key": s.leadsquared_access_key or "",
         "leadsquared_has_secret": bool(s.leadsquared_secret_key),
-        # Two-Way WhatsApp AI Chat
-        "whatsapp_chat_enabled": bool(s.whatsapp_chat_enabled),
-        "whatsapp_bot_id": s.whatsapp_bot_id or "",
-        "whatsapp_phone_number_id": s.whatsapp_phone_number_id or "",
-        "whatsapp_has_token": bool(s.whatsapp_access_token),
-        "whatsapp_verify_token": s.whatsapp_verify_token or "",
-        "whatsapp_business_account_id": s.whatsapp_business_account_id or "",
-        "whatsapp_webhook_url": f"{backend_url}/api/integrations/whatsapp/webhook",
         # Email automation
         "alert_calls": s.alert_calls is not False, "alert_handoffs": bool(s.alert_handoffs),
         "sender_name": s.sender_name or "", "reply_to": s.reply_to or "",
         "automations": automations.automations(s), "placeholders": automations.PLACEHOLDERS,
         "server": {
             "email": email.is_configured(),
-            "whatsapp": channels.whatsapp_configured(s.whatsapp_access_token, s.whatsapp_phone_number_id),
+            # WhatsApp itself is set up in the WhatsApp section (whatsapp/api.py).
+            "whatsapp": whatsapp_number or channels.whatsapp_configured(),
         },
     }
 
@@ -61,7 +53,7 @@ async def _load(owner_id: str, db: AsyncSession) -> tuple[IntegrationSettings, s
 @router.get("")
 async def get_settings(ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
     s, owner = await _load(ctx.owner_id, db)
-    return _json(s, owner)
+    return _json(s, owner, bool(await workspace_number(db, ctx.owner_id)))
 
 
 class StepIn(BaseModel):
@@ -93,13 +85,6 @@ class IntegrationUpdate(BaseModel):
     leadsquared_host: str = ""
     leadsquared_access_key: str = ""
     leadsquared_secret_key: Optional[str] = None  # blank keeps the saved one
-    # Two-Way WhatsApp AI Chatbot
-    whatsapp_chat_enabled: bool = False
-    whatsapp_bot_id: Optional[str] = None
-    whatsapp_phone_number_id: Optional[str] = None
-    whatsapp_access_token: Optional[str] = None
-    whatsapp_verify_token: Optional[str] = None
-    whatsapp_business_account_id: Optional[str] = None
     # Email automation
     alert_calls: bool = True
     alert_handoffs: bool = False
@@ -161,35 +146,9 @@ async def update_settings(data: IntegrationUpdate, ctx: AuthContext = Depends(re
     if data.leadsquared_secret_key:
         s.leadsquared_secret_key = data.leadsquared_secret_key.strip()
 
-    # WhatsApp 2-Way AI Chatbot. Only re-check values that changed, so saving another tab
-    # (e.g. Email) never fails on WhatsApp settings saved earlier.
-    bot_id = (data.whatsapp_bot_id or "").strip()
-    if bot_id and bot_id != (s.whatsapp_bot_id or ""):
-        owned = (await db.execute(select(Bot.bot_id).where(Bot.bot_id == bot_id, Bot.user_id == ctx.owner_id))).first()
-        if not owned:
-            raise HTTPException(status_code=400, detail="Choose one of your own assistants for WhatsApp")
-    pid = (data.whatsapp_phone_number_id or "").strip()
-    if pid and pid != (s.whatsapp_phone_number_id or ""):
-        taken = (await db.execute(select(IntegrationSettings.user_id).where(
-            IntegrationSettings.whatsapp_phone_number_id == pid, IntegrationSettings.user_id != ctx.owner_id))).first()
-        if taken:
-            raise HTTPException(status_code=409, detail="That WhatsApp number is already connected to another workspace")
-    if data.whatsapp_chat_enabled and not (pid and (data.whatsapp_access_token or s.whatsapp_access_token)):
-        raise HTTPException(status_code=400, detail="WhatsApp chat needs the phone number ID and an access token")
-    s.whatsapp_chat_enabled = bool(data.whatsapp_chat_enabled)
-    s.whatsapp_bot_id = data.whatsapp_bot_id.strip() if data.whatsapp_bot_id else None
-    s.whatsapp_phone_number_id = data.whatsapp_phone_number_id.strip() if data.whatsapp_phone_number_id else None
-    if data.whatsapp_access_token:
-        s.whatsapp_access_token = data.whatsapp_access_token.strip()
-    if data.whatsapp_verify_token:
-        s.whatsapp_verify_token = data.whatsapp_verify_token.strip()
-    elif not s.whatsapp_verify_token and data.whatsapp_chat_enabled:
-        s.whatsapp_verify_token = f"nimmi_wa_{secrets.token_hex(10)}"
-    s.whatsapp_business_account_id = data.whatsapp_business_account_id.strip() if data.whatsapp_business_account_id else None
-
     db.add(s)
     await db.commit()
-    return _json(s, owner)
+    return _json(s, owner, bool(await workspace_number(db, ctx.owner_id)))
 
 
 class TestRequest(BaseModel):
@@ -249,12 +208,10 @@ async def send_test(req: TestRequest, ctx: AuthContext = Depends(require_manager
             if not target:
                 raise channels.ChannelError("Enter the phone number to send the test message to")
             text = (req.message or "Hello from Nimmi AI. Your WhatsApp integration is connected.")[:1000]
-            await channels.send_whatsapp_text(
-                to_e164=target,
-                text=text,
-                phone_number_id=s.whatsapp_phone_number_id,
-                token=s.whatsapp_access_token,
-            )
+            number = await workspace_number(db, ctx.owner_id)
+            await channels.send_whatsapp_text(to_e164=target, text=text,
+                                              phone_number_id=number.phone_number_id if number else None,
+                                              token=number.access_token if number else None)
         else:
             raise HTTPException(status_code=400, detail="Unknown channel")
     except channels.ChannelError as e:

@@ -143,6 +143,8 @@ class VoiceAgent(Base):
     voicemail_action = Column(String, nullable=True)    # off, hangup, leave_message (Twilio only)
     voicemail_message = Column(Text, nullable=True)
     transfer_mode = Column(String, nullable=True)       # cold, warm (warm: staff hear a summary first)
+    ai_model = Column(String, nullable=True)            # voice/ai_models.py id; None = the default model
+    functions = Column(JSON, nullable=True)             # voice/functions.py: what it can do during a call (secrets sealed)
     # The columns above are the outgoing agent's. The incoming agent's own phone settings, once someone edits them
     # (voice/scripts.py PER_DIRECTION); until then it's the same as the outgoing one.
     inbound = Column(JSON, nullable=True)
@@ -181,6 +183,8 @@ class Contact(Base):
     calls = Column(Integer, default=0)
     first_call_at = Column(DateTime(timezone=True), nullable=True)
     last_call_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    chats = Column(Integer, nullable=True)                         # WhatsApp chats with them (whatsapp/memory.py)
+    last_chat_at = Column(DateTime(timezone=True), nullable=True)
     remember_from = Column(DateTime(timezone=True), nullable=True)  # "forget" sets it: earlier calls aren't recalled
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -285,6 +289,9 @@ class CallLog(Base):
     ended_at = Column(DateTime(timezone=True), nullable=True)
     duration_sec = Column(Integer, default=0)
     billed_minutes = Column(Integer, default=0)
+    credits_used = Column(Float, nullable=True)  # what the call cost (voice/metering.py); None before credits
+    ai_model = Column(String, nullable=True)  # the agent's AI model then (voice/ai_models.py)
+    reply_ms = Column(Integer, nullable=True)  # median time from the caller stopping to the agent's first sound
     outcome = Column(String, default="answered")
     language = Column(String, default="en-IN")
     summary = Column(Text, nullable=True)
@@ -339,13 +346,17 @@ class CallbackJob(Base):
 
 
 class VoiceWallet(Base):
-    """Voice minutes: plan minutes reset each cycle; top-up minutes carry over."""
+    """Voice credits: plan credits reset each cycle; bought (and free) credits carry over.
+    The *_minutes columns are from before credits; voice/metering.py moves them over 1:1 (None = not yet)."""
     __tablename__ = "voice_wallets"
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     plan_minutes = Column(Integer, default=0)
     plan_minutes_used = Column(Integer, default=0)
     topup_minutes = Column(Integer, default=0)
     cycle_end = Column(DateTime(timezone=True), nullable=True)
+    plan_credits = Column(Float, nullable=True)
+    plan_credits_used = Column(Float, nullable=True)
+    credits = Column(Float, nullable=True)
 
 
 class VoiceTopup(Base):
@@ -353,7 +364,7 @@ class VoiceTopup(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     pack_id = Column(String, nullable=False)
-    minutes = Column(Integer, nullable=False)
+    minutes = Column(Integer, nullable=False)  # credits bought (packs bought before credits: minutes, the same number)
     amount = Column(Integer, nullable=False)  # INR, excl. GST
     razorpay_order_id = Column(String, unique=True, nullable=False)
     razorpay_payment_id = Column(String, unique=True, nullable=True)
@@ -549,3 +560,100 @@ class SiteDeploy(Base):
     # Set here, to the microsecond: deploys started in the same second still sort in order.
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     finished_at = Column(DateTime(timezone=True), nullable=True)
+
+
+# ─── WhatsApp (see whatsapp/) ─────────────────────────────────────
+class WhatsAppNumber(Base):
+    """A WhatsApp Business number connected to a workspace, and the assistant that answers it (WhatsApp > Settings).
+    "manual" numbers use the business's own Meta app, so its token and app secret are kept here (Meta signs each
+    webhook with that secret); "signup" numbers came through Embedded Signup and use Nimmi's app (WHATSAPP_APP_SECRET)."""
+    __tablename__ = "whatsapp_numbers"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="SET NULL"), nullable=True)
+    phone_number_id = Column(String, nullable=False, unique=True)
+    waba_id = Column(String, nullable=True)
+    display_number = Column(String, nullable=True)
+    verified_name = Column(String, nullable=True)
+    access_token = Column(EncryptedText, nullable=True)
+    app_secret = Column(EncryptedText, nullable=True)
+    verify_token = Column(String, nullable=True, index=True)
+    connection = Column(String, default="manual")  # manual, signup
+    ai_enabled = Column(Boolean, default=True)
+    settings = Column(JSON, nullable=True)  # how the assistant behaves on WhatsApp (whatsapp/settings.py)
+    quality_rating = Column(String, nullable=True)
+    messaging_limit = Column(String, nullable=True)
+    status = Column(String, default="connected")  # connected, error, disconnected
+    status_detail = Column(String(500), nullable=True)
+    last_inbound_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class WhatsAppChat(Base):
+    """One customer's chat with one connected number. What was said is kept in the usual Conversation and Message
+    rows (so Live chat, leads, questions and analytics work as for website chat); this keeps the WhatsApp side: who the
+    customer is, the 24-hour window, the team's handling and when the assistant should answer."""
+    __tablename__ = "whatsapp_chats"
+    __table_args__ = (UniqueConstraint("number_id", "wa_user", name="uq_whatsapp_chat_user"),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    number_id = Column(String(36), ForeignKey("whatsapp_numbers.id", ondelete="CASCADE"), index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="SET NULL"), nullable=True)
+    conversation_id = Column(String(36), ForeignKey("conversations.conversation_id", ondelete="SET NULL"), nullable=True, index=True)
+    # Meta's user id for them (BSUID, e.g. "IN.1349..."), or "+<number>" from before Meta sent one.
+    wa_user = Column(String, nullable=False)
+    wa_id = Column(String, nullable=True, index=True)  # their phone number in digits, when Meta shares it
+    profile_name = Column(String, nullable=True)
+    last_inbound_at = Column(DateTime(timezone=True), nullable=True)  # starts WhatsApp's 24-hour reply window
+    last_message_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    unread = Column(Integer, default=0)
+    status = Column(String, default="open")  # open, closed
+    assigned_to = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    ai_paused_until = Column(DateTime(timezone=True), nullable=True)  # a person is handling it
+    reply_due_at = Column(DateTime(timezone=True), nullable=True, index=True)  # the assistant answers then
+    reply_claimed_at = Column(DateTime(timezone=True), nullable=True)  # a server process is answering
+    summary = Column(Text, nullable=True)  # what the chat was about (for later chats and phone calls)
+    summary_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class WhatsAppMessage(Base):
+    """A message in a WhatsApp chat: Meta's id (one row per id, so a message Meta delivers twice is handled once), its
+    kind and file, who sent it, and whether it was delivered and read. Its text is the Message row's content."""
+    __tablename__ = "whatsapp_messages"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    chat_id = Column(String(36), ForeignKey("whatsapp_chats.id", ondelete="CASCADE"), index=True)
+    message_id = Column(String(36), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True, index=True)
+    wamid = Column(String, nullable=True, unique=True)
+    direction = Column(String, nullable=False)  # in, out
+    kind = Column(String, default="text")  # text, image, audio, voice, video, document, sticker, location, contacts, choice, reaction, template, unsupported
+    sent_by = Column(String, nullable=True)  # customer, ai, team, phone (the business's WhatsApp app)
+    author_id = Column(String(36), nullable=True)
+    media = Column(JSON, nullable=True)  # {"id", "mime", "filename", "size", "stored", "file_id", "caption"}
+    context_wamid = Column(String, nullable=True)  # the message it replies to
+    status = Column(String, nullable=True)  # received, sent, delivered, read, failed
+    error = Column(String(500), nullable=True)
+    handled = Column(Boolean, default=False)  # incoming: answered by the assistant or left to the team
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class WhatsAppFile(Base):
+    """A file the business keeps for WhatsApp (WhatsApp > Files): a pamphlet, price list, menu, photo or video. The
+    assistant sends it when the conversation calls for it ("when to send"); the team can send it from the Inbox."""
+    __tablename__ = "whatsapp_files"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="SET NULL"), nullable=True)  # None: every assistant
+    name = Column(String(120), nullable=False)
+    when_to_send = Column(Text, nullable=True)
+    caption = Column(String(1024), nullable=True)
+    kind = Column(String, nullable=False)  # image, document, video, audio
+    mime = Column(String, nullable=False)
+    filename = Column(String(240), nullable=False)
+    size = Column(Integer, nullable=False)
+    stored = Column(String, nullable=False)  # storage path (whatsapp/storage.py)
+    meta_media = Column(JSON, nullable=True)  # {phone_number_id: {"id": media id at Meta, "at": iso time}}
+    sends = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

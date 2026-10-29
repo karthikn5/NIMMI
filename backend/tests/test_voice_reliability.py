@@ -41,7 +41,7 @@ async def _hang_up(session):
 # ─── filler sounds ────────────────────────────────────────────────
 def _answer(monkeypatch, pieces, language):
     """What a call says when the model writes `pieces`."""
-    def model(bot, prompt, history, text):
+    def model(bot, prompt, history, text, *_):
         yield from pieces
     monkeypatch.setattr(llm, "stream_reply", model)
     agent = llm.VoiceAgent(language="en-IN", assistant_name="Nimmi", company_name="Kdbot", greeting="")
@@ -437,14 +437,15 @@ def test_a_groq_model_that_doesnt_start_answering_hands_over_to_the_next(monkeyp
     client = type("Client", (), {"chat": type("Chat", (), {"completions": Completions})()})()
     monkeypatch.setattr(llm, "_groq", lambda: client)
     started = time.monotonic()
-    assert "".join(llm.stream_reply(llm.Bot(bot_name="Desk"), "p", [], "hi")) == "From the free one."
+    backups_only = "gpt-5.4-mini"  # the agent's own model isn't set up here, so the backups answer
+    assert "".join(llm.stream_reply(llm.Bot(bot_name="Desk"), "p", [], "hi", backups_only)) == "From the free one."
     assert time.monotonic() - started < 0.6  # not the second the busy one would have taken
     assert "busy" in llm._rate_limited  # it rests a while
     assert timeouts and all(t is not None for t in timeouts)  # never the SDK's 15 s
 
 
 def test_when_every_model_fails_the_apology_is_in_the_callers_language(monkeypatch):
-    def broken(bot, prompt, history, text):
+    def broken(bot, prompt, history, text, *_):
         raise RuntimeError("every model is down")
         yield  # pragma: no cover
     monkeypatch.setattr(llm, "stream_reply", broken)
@@ -489,7 +490,7 @@ from tests.test_voice_quality import DroppedRecognizer, _logged  # noqa: E402
 
 def _controls(monkeypatch, raw):
     """What a call gets when the model writes `raw` (in small pieces, as it streams)."""
-    def model(bot, prompt, history, text):
+    def model(bot, prompt, history, text, *_):
         for i in range(0, len(raw), 7):
             yield raw[i:i + 7]
     monkeypatch.setattr(llm, "stream_reply", model)
@@ -553,7 +554,7 @@ def test_the_call_stays_up_after_the_agent_asks_for_the_number(run, make_user, m
     written = iter(["கார்த்திக் அவர்களின் 10 இலக்க மொபைல் எண் என்ன?[END_CALL]",
                     "நன்றி, Karthik. நல்ல நாளாக அமையட்டும்.[END_CALL]"])
 
-    def model(bot, prompt, history, text):
+    def model(bot, prompt, history, text, *_):
         yield next(written)
 
     async def no_knowledge(bot):

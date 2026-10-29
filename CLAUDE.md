@@ -19,10 +19,12 @@ only on the owner's machines): @.claude/private-notes.md
 ### The owner's words
 - "live" = production (nimmiai.in, api.nimmiai.in); "local" = this machine (localhost:3000 / :8001).
 - "agent" / "voice agent" = an assistant's phone voice settings; "Call me" = the test call button on the
-  agent page; "the call is cut" = the call drops; "min left" / "minutes" = the voice wallet.
+  agent page; "the call is cut" = the call drops; "credits" (before Oct 2026: "min left" / "minutes") = the voice wallet;
+  "model" / "AI model" = the agent's AI model (Voice > Agents).
 - "deployment(s)" = the Vercel-like static website hosting feature; "live chat" = human handoff chat
   (dashboard Live chat page + the widget's "Talk to a person"); "watermark" = the "Powered by Nimmi" line.
-- "free tier rules" = free plan: 1 assistant + 1 website; voice, integrations, custom domains need a paid plan.
+- "free tier rules" = free plan: 1 assistant + 1 website + 10 voice credits (calls are pay as you go with credit packs);
+  integrations and custom domains need a paid plan.
 - "builder" = assistant builder (Design / Knowledge / Behaviour / Flow / Leads); "Add to website" = export modal.
 - Test assistant: bot `d55deb11-a8d0-45cb-945a-f61c9c11291f` ("Kdbot" locally, "GBot" on live).
 
@@ -30,8 +32,9 @@ only on the owner's machines): @.claude/private-notes.md
 
 - `backend/` FastAPI app (Python 3.12). Entry `main.py`.
   - `routers/`: auth_routes, bots (builder, knowledge, install, WordPress plugin), chat (public widget
-    API), handoffs (live chat, agent side), workspace, team, analytics, integrations, whatsapp, email_center, sites.
-  - `voice/`: phone assistant (see Voice). `sites/`: static site hosting. `notify/`: email + events.
+    API), handoffs (live chat, agent side), workspace, team, analytics, integrations, email_center, sites.
+  - `voice/`: phone assistant (see Voice). `whatsapp/`: WhatsApp (see WhatsApp). `sites/`: static site hosting.
+    `notify/`: email + events.
     `plugins/wordpress/`: WordPress plugin source. `ops/`: runbooks (SITES_SETUP.md, backups).
   - Core modules: `models.py` (SQLAlchemy models), `database.py` (engine, pool), `auth.py` (JWT, workspaces,
     roles owner/admin/agent, rate limits), `plans.py` (free/paid limits), `secretbox.py` (encrypted
@@ -39,9 +42,9 @@ only on the owner's machines): @.claude/private-notes.md
     `knowledge_sources.py`, `brain.py` (summaries, learned details), `assist.py` (business hours, lead score,
     unanswered questions), `realtime.py` (Socket.IO), `payments.py` / `subscriptions.py` (Razorpay), `phone.py`.
   - Many old one-off scripts at `backend/*.py` (check_*, fix_*, test_bot_*): not part of the app.
-  - `tests/`: pytest suite (~177 tests, ~100 s).
+  - `tests/`: pytest suite (~242 tests, ~115 s).
   - `static/nimmi-widget.js`: the embed script customers paste; it opens an iframe of the dashboard's `/widget/[botId]`.
-- `dashboard/` Next.js 15 (React 19, Tailwind), App Router in `src/app`: `/dashboard/*` (builder, voice,
+- `dashboard/` Next.js 15 (React 19, Tailwind), App Router in `src/app`: `/dashboard/*` (builder, voice, whatsapp,
   live-chat, deployments, integrations, analytics, questions, team, billing, profile), `/widget/[botId]`
   (the chat widget itself), `/demo/[id]`, `/auth/*`, `/blog`, `/solutions/[industry]`.
   Shared UI kit in `src/components/ui.tsx`; API helpers `src/lib/api.ts`, live chat socket `src/lib/liveChat.ts`.
@@ -79,9 +82,9 @@ only on the owner's machines): @.claude/private-notes.md
 
 ## Product rules
 
-- Plans (`plans.py`): free = 1 assistant + 1 website, no custom domain; voice, integrations, custom domains
-  need paid. A workspace is paid while any of its assistants has an active subscription (or one the owner
-  paid for). `ENFORCE_PLAN_LIMITS` is off in tests.
+- Plans (`plans.py`): free = 1 assistant + 1 website, no custom domain, voice calls paid with credits (10 free);
+  integrations and custom domains need paid. A workspace is paid while any of its assistants has an active
+  subscription (or one the owner paid for). `ENFORCE_PLAN_LIMITS` is off in tests.
 - Workspaces: owner plus team members (admin/agent); requests act on `ctx.owner_id`; the `X-Workspace` header picks one.
 - Encrypted secrets (customer AI keys, phone account tokens): `secretbox` MultiFernet over ENCRYPTION_KEY
   (+ JWT_SECRET, + `ENCRYPTION_OLD_KEYS` decrypt-only); columns store `enc:v1:...`.
@@ -104,6 +107,28 @@ only on the owner's machines): @.claude/private-notes.md
 - Speech: Sarvam (`sarvam.py`): streaming STT `saaras:v3` (language `unknown` when following the caller,
   codemix mode), streaming TTS `bulbul:v3` with REST fallback. Tested Oct 2026: saaras:v4 no faster and
   spells Tamil phone numbers as words; bulbul:v4-flash no faster. Keep v3 unless re-measured.
+- AI model per agent (`voice/ai_models.py`, Voice > Agents toolbar dropdown, per direction like the other
+  `PER_DIRECTION` settings): 37 models like Retell's list (Groq GPT-OSS/Qwen, Sarvam 105B, OpenAI GPT-4.1..GPT-6.x,
+  Claude Haiku/Sonnet/Opus, Gemini 3.x/4), grouped "fast" / "smart"; a model shows only when its service key is set
+  (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...). Default `VOICE_DEFAULT_MODEL` = GPT-OSS 120B (Qwen 3.8 27B is a Groq
+  preview, 5x the price). The chosen model answers first, asked not to think (`extra`: reasoning_effort none/minimal,
+  Claude thinking disabled/between_tools, Gemini thinkingLevel minimal); when it's busy, slow to start (3 s fast,
+  6 s smart) or fails, the Groq rotation below answers, and `answered` records who did. Speeds:
+  `dev-scripts/voice/model_latency.py`, `gemini_thinking_probe.py` (Oct 2026: Sarvam 0.28 s, Qwen 0.39 s, GPT-OSS 0.7 s,
+  Gemini 3.x Flash 1.1-1.5 s with thinking "minimal"; Gemini 3.5 Flash-Lite rejects thinkingBudget 0; Gemini 2.5
+  Flash-Lite is closed to new users). Sarvam 105B kept answering in Hindi after a caller moved to English and Tamil.
+- Functions (`voice/functions.py`, agent page > Functions, per direction like the other `PER_DIRECTION` settings): custom
+  HTTP functions (netsafe client: public internet only; GET/DELETE add the arguments to the address's own query, the
+  others send them as JSON; `{{caller_number}}`, `{{name}}`, campaign columns in the address and headers) and Cal.com
+  check_slots / book (API v2; cal-api-version 2024-09-04 for slots, 2026-02-25 for bookings). Header values and Cal.com
+  keys are sealed (secretbox), shown masked, and kept when the mask comes back. Models call them natively: Groq/OpenAI
+  `tools`, Claude `tool_use`, Gemini `functionDeclarations` with the reply's parts (thought signatures) kept in `raw` and
+  sent back unchanged; another model's calls carry Gemini's documented `skip_thought_signature_validator`. Up to
+  `MAX_FUNCTION_ROUNDS` (3) a turn, then the model must answer. `FUNCTION_RULES` go in the prompt: on test calls (Oct
+  2026) Gemini ran a function with the placeholder "order_id" before asking, and models filled gaps in a result with
+  guesses. The call history keeps each request and result (before the spoken answer); the transcript gets "Function
+  <name>: <result>" lines. Sarvam can't run functions: its turns that need one go to the backups. Test button:
+  `POST /api/voice/agents/{bot}/functions/test`; real-model probe: `dev-scripts/voice/function_probe.py`.
 - Replies (`llm.py`): Groq first (rotation `qwen/qwen3.8-27b` -> `openai/gpt-oss-20b` -> `openai/gpt-oss-120b`,
   SDK retries OFF so a rate limit fails over instantly), Gemini REST last. The free Groq tier
   (8k tokens/min/model) is the main cause of slow or stuck turns; the paid tier fixes it. Kdbot's prompt is
@@ -156,7 +181,15 @@ only on the owner's machines): @.claude/private-notes.md
   known-caller opening; on Twilio it's made while the phone rings (`_prepare_known_opening`). Email and number are
   never put in the prompt. "Forget" sets `remember_from`; Compliance > Erase deletes the contact. The assistant's
   "Remember callers" switch (`remember_callers`, None = on) stops both reading and saving; contacts already saved stay.
-- Minutes: `voice_wallets` (plan minutes + top-up minutes, `metering.py`); every connected call bills at least a minute.
+- Credits (`metering.py`, `ai_models.py`): a call minute = `VOICE_BASE_CREDITS` (1: voice, speech recognition,
+  phone line) + the model's credits = its list cost on a busy minute (16,800 tokens in, 336 out) x 1.5 at the cheapest
+  credit price, capped at 95% of Retell's price for the same model unless that leaves under 15% (GPT-OSS 120B 1.08,
+  GPT-5.4 mini 1.40, Claude Sonnet 5.5 2.05). Billed in 30-second steps, rounded up to 0.01, at the base plus the average
+  of the models that answered; a call needs one step's credits to start and ends with the time-limit goodbye when they
+  run out. New workspaces get `VOICE_FREE_CREDITS` (10); packs 100/500/1000 for Rs 549/2,499/4,499 (`VOICE_PACKS_JSON`);
+  plan credits per plan name in `VOICE_PLAN_CREDITS_JSON`; `VOICE_MODEL_CREDITS_JSON` overrides a model's rate.
+  `voice_wallets` keeps the old minute columns; a wallet's minutes move to credits 1:1 the first time it's read.
+  Public rate card: `GET /api/voice/rates` (the website's pricing); the agent header: `/api/voice/agents/{bot}/details`.
 - Outbound: `scheduler.py` dials call-backs and campaigns; answering-machine detection only when the agent's
   voicemail action isn't "off" (it adds 2-4 s before the call connects).
 - Logs to read: "opening started X s after the call connected", "reply timing: ...", "Voice reply from <model>",
@@ -167,6 +200,34 @@ only on the owner's machines): @.claude/private-notes.md
 - Simulated calls without a phone: `dev-scripts/voice/lang_call.py`, `noisy_call.py` (a TV in the caller's room);
   `replay_caller.py` replays a real recording's caller side through Sarvam; `memory_calls.py`: one number calls twice
   (the second call is greeted by name). Git-ignored local harnesses; see `dev-scripts/README.md`.
+
+## WhatsApp
+
+- Meta's WhatsApp Cloud API (Graph v26.0, `whatsapp/graph.py`); each workspace connects numbers in the dashboard's
+  WhatsApp > Settings (`WhatsAppNumber`; the old Integrations fields are moved over at startup). Plan agreed Oct 2026:
+  Nimmi becomes a Meta Tech Provider (one-click Embedded Signup v4, coexistence with the WhatsApp Business app);
+  until then numbers are connected manually from the business's own Meta app (token + app secret).
+- Webhook (`whatsapp/webhook.py`, same URL as before: `/api/integrations/whatsapp/webhook`): each number's part is
+  trusted only if signed with that number's app secret (manual) or Nimmi's `WHATSAPP_APP_SECRET`; what Meta sends is
+  kept before answering 200 (`inbound.py`), each Meta message id once (unique `wamid`), so Meta's retries are safe.
+- Customers are keyed by Meta's user id (BSUID, in webhooks since Apr 2026; usernames hide the number) with the phone
+  number when shared (`chats.py`); the text lives in the usual Conversation/Message (session `wa:<number or id>`), so
+  Live chat, leads, questions and analytics work as for website chat.
+- Replies (`replies.py`): due `wait_seconds` after the last message (a burst gets one answer), claimed in the database
+  so one of the 4 processes answers (timer in the receiving process; the scheduler's sweep catches lost timers; claims
+  allow 250 ms for a timer waking early). Read + "typing…", voice notes written out (Sarvam, Gemini fallback), photos
+  and PDFs read (`understand.py`, `ai.look`), then 1-3 short messages with pauses, files from WhatsApp > Files
+  (`[FILE n]`), buttons (`[BUTTONS: a | b]`), `[QUOTE n]`, `[HANDOFF]`. Rules learned on real runs: the reply follows
+  the script of the customer's latest message (Tanglish stays in English letters); a sent file shows in the AI's
+  history as `[FILE n]` (it copied '(sent the file "...")' as text); "Hi Priya," never goes out on its own; no handover
+  just because the business doesn't offer something. A message arriving while it writes: it answers everything once.
+- The team (Inbox, or the phone app via coexistence echoes) pauses the assistant on that chat (`pause_hours`);
+  "Hand back" resumes. Team messages need the 24-hour window. Memory is shared with calls (`whatsapp/memory.py`:
+  contact per assistant + number; quiet chats get a summary the voice agent hears).
+- Meta facts (Oct 2026): replies inside 24 h are free for the first 1,000 per number per month, then about Rs 0.115
+  each (India); marketing templates about Rs 0.86; general-purpose AI bots banned since Jan 2026 (business AI allowed).
+- Tests: `tests/test_whatsapp.py` (FakeMeta). Local run without a number: `dev-scripts/whatsapp/fake_meta.py` +
+  `sim_chat.py` (backend started with `WHATSAPP_GRAPH_URL=http://127.0.0.1:8790`); UI: `dev-scripts/ui-checks/whatsapp_ui.mjs`.
 
 ## Testing conventions
 

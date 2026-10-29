@@ -2,6 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import type { CSSProperties } from "react";
 import { ArrowRight, ArrowUpRight, Instagram, Mail, Plus } from "lucide-react";
+import CallRates from "./CallRates";
 import PricingTable from "./PricingTable";
 import { Container, Eyebrow, Heading, Lead, PrimaryLink, Section, SecondaryLink } from "./primitives";
 
@@ -92,7 +93,7 @@ export function Industries() {
     );
 }
 
-const PACKS = [["100 minutes", "₹549", "₹5.49"], ["500 minutes", "₹2,499", "₹5.00"], ["1,000 minutes", "₹4,499", "₹4.50"]];
+const PACKS = [["100 credits", "₹549", "₹5.49"], ["500 credits", "₹2,499", "₹5.00"], ["1,000 credits", "₹4,499", "₹4.50"]];
 
 export function Pricing() {
     return (
@@ -100,19 +101,21 @@ export function Pricing() {
             <Container>
                 <Eyebrow>Pricing</Eyebrow>
                 <Heading>Simple plans that grow with you.</Heading>
-                <Lead>Start free with one assistant and one published website. Voice calls, integrations and custom domains come with a paid plan. Prices are per assistant.</Lead>
+                <Lead>Start free with one assistant, one published website and 10 call credits. Phone calls are pay as you go; integrations and custom domains come with a paid plan. Prices are per assistant.</Lead>
 
                 <PricingTable />
 
                 <div className="grid md:grid-cols-3 gap-px bg-line border border-line rounded-lg overflow-hidden mt-6">
                     <div className="bg-white p-6">
-                        <h3 className="text-[15px] font-semibold">Extra voice minutes</h3>
-                        <p className="text-[13px] text-stone-500 mt-1">For any plan. They don&apos;t expire.</p>
+                        <h3 className="text-[15px] font-semibold">Call credits</h3>
+                        <p className="text-[13px] text-stone-500 mt-1">
+                            Pay as you go, on any plan. A call minute is 1 credit plus the AI model&apos;s rate below. Credits don&apos;t expire.
+                        </p>
                         <ul className="mt-3 divide-y divide-line">
                             {PACKS.map(([m, p, per]) => (
                                 <li key={m} className="flex justify-between gap-3 py-2 text-[14px]">
                                     <span>{m}</span>
-                                    <span className="tabular-nums"><span className="font-medium">{p}</span> <span className="text-stone-500 text-[12px]">({per}/min)</span></span>
+                                    <span className="tabular-nums"><span className="font-medium">{p}</span> <span className="text-stone-500 text-[12px]">({per} each)</span></span>
                                 </li>
                             ))}
                         </ul>
@@ -134,6 +137,14 @@ export function Pricing() {
                         </a>
                     </div>
                 </div>
+
+                <div className="mt-10">
+                    <h3 className="font-display text-[19px] font-medium">Call rates by AI model</h3>
+                    <p className="text-[14px] text-stone-600 mt-1 max-w-[62ch]">
+                        Choose the AI model for each agent. Quicker models cost less; the smarter ones handle detailed questions.
+                    </p>
+                    <CallRates />
+                </div>
             </Container>
         </Section>
     );
@@ -145,7 +156,7 @@ export const FAQS = [
     { q: "Can it answer calls on my existing number?", a: "Yes. You can forward your number to a Nimmi number, or get a new one. Indian numbers come through Exotel and need your Certificate of Incorporation and GST certificate; numbers in other countries are available instantly." },
     { q: "What happens when a customer wants a real person?", a: "On chat and WhatsApp, the conversation moves to your team's Live chat. On calls, it transfers to your number, with a short brief you hear first. Outside business hours, it takes a message instead." },
     { q: "Is it allowed to call my leads automatically?", a: "Only people who asked to be called or agreed to it. The assistant says it's automated and that the call may be recorded, honours requests to stop, and keeps a do-not-call list, in line with TRAI rules." },
-    { q: "Can I try it before paying?", a: "Yes. The free plan includes one assistant to build and test, and one website published on a free address. Voice calls, integrations and custom domains come with a paid plan, and you pay when you put an assistant live." },
+    { q: "Can I try it before paying?", a: "Yes. The free plan includes one assistant to build and test, one website published on a free address, and 10 call credits to try phone calls. After that, calls are pay as you go with credit packs. Integrations and custom domains come with a paid plan, and you pay when you put an assistant live." },
     { q: "What counts as an AI reply?", a: "Each answer your assistant writes in website chat or WhatsApp. Replies your team sends from Live chat don't count. If you reach your plan's limit, we'll let you know before anything stops, and you can move up a plan." },
 ];
 

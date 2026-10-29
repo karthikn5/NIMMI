@@ -85,6 +85,11 @@ export function formatNumber(n: number) {
     return new Intl.NumberFormat("en-IN").format(n);
 }
 
+/** Credits a minute, always to two places (1.10, not 1.1), so a list of rates lines up. */
+export function formatRate(n: number) {
+    return new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+}
+
 export function formatWhen(iso: string) {
     const d = parseUtc(iso);
     const diffMin = Math.round((Date.now() - d.getTime()) / 60_000);

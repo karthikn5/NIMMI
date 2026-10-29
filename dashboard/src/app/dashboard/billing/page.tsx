@@ -10,6 +10,8 @@ import { Button, Card, EmptyState, SectionHeader, Select, Skeleton, Status, Swit
 import { apiJson, currentUserId } from "@/lib/api";
 import { payAndVerify } from "@/lib/razorpay";
 import { formatNumber } from "@/lib/voice/api";
+import { RatesTable } from "@/components/voice/RatesTable";
+import type { VoiceModels } from "@/lib/voice/types";
 
 const PLANS = [
     {
@@ -49,7 +51,8 @@ function Billing() {
     const [bots, setBots] = useState<Bot[] | null>(null);
     const [subs, setSubs] = useState<Sub[]>([]);
     const [history, setHistory] = useState<Payment[] | null>(null);
-    const [minutes, setMinutes] = useState<number | null>(null);
+    const [credits, setCredits] = useState<number | null>(null);
+    const [rates, setRates] = useState<VoiceModels | null>(null);
     const [botId, setBotId] = useState("");
     const [paying, setPaying] = useState<string | null>(null);
     const [profile, setProfile] = useState<{ name: string; email: string } | null>(null);
@@ -75,8 +78,9 @@ function Billing() {
             setBots((x) => x ?? []);
             setHistory((x) => x ?? []);
         }
-        apiJson<{ minutes_included: number; minutes_used: number; minutes_topup: number }>("/api/voice/overview")
-            .then((o) => setMinutes(Math.max(o.minutes_included - o.minutes_used, 0) + o.minutes_topup))
+        apiJson<VoiceModels>("/api/voice/models").then(setRates).catch(() => { /* the rates show on the agent page too */ });
+        apiJson<{ credits_left: number }>("/api/voice/overview")
+            .then((o) => setCredits(o.credits_left))
             .catch(() => {});
     }, [toast]);
 
@@ -218,19 +222,28 @@ function Billing() {
                     </section>
 
                     <section>
-                        <SectionHeader title="Voice minutes" />
+                        <SectionHeader title="Voice credits" />
                         <Card className="p-5">
                             <p className="tabular-nums">
-                                <span className="text-[28px] leading-none font-semibold tracking-tight">{minutes === null ? "–" : formatNumber(minutes)}</span>
-                                <span className="text-sm text-stone-500"> min left</span>
+                                <span className="text-[28px] leading-none font-semibold tracking-tight">{credits === null ? "–" : formatNumber(credits)}</span>
+                                <span className="text-sm text-stone-500"> credits left</span>
                             </p>
-                            <p className="text-[13px] text-stone-500 mt-2">Used by phone calls and test calls. Top-up minutes don&apos;t expire.</p>
+                            <p className="text-[13px] text-stone-500 mt-2">
+                                Pay as you go for phone calls and test calls. A call minute is 1 credit for the voice and phone line,
+                                plus the agent&apos;s AI model (see Call rates). Credits don&apos;t expire.
+                            </p>
                             <Link href="/dashboard/voice" className="inline-flex items-center gap-1 mt-4 text-[13px] text-plum hover:underline underline-offset-4">
-                                Buy minutes <ArrowRight size={13} />
+                                Buy credits <ArrowRight size={13} />
                             </Link>
                         </Card>
                     </section>
                 </div>
+
+                <section id="rates" className="mt-10 scroll-mt-6">
+                    <SectionHeader title="Call rates"
+                                   description="What a call minute costs on each AI model. Choose the model on each agent's page, under Voice > Agents." />
+                    {rates ? <RatesTable card={rates} /> : <Skeleton className="h-72" />}
+                </section>
 
                 {wallet.data && (
                     <section className="mt-10">

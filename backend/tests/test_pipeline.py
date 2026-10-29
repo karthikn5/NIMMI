@@ -199,7 +199,7 @@ def test_barge_in_clears_queued_audio(run, make_user, monkeypatch):
     assert run(scenario) == 1
 
 
-def test_no_minutes_refuses_politely(run, make_user):
+def test_no_credits_refuses_politely(run, make_user):
     u = make_user()
     bot = u.bot()
 
@@ -207,7 +207,7 @@ def test_no_minutes_refuses_politely(run, make_user):
         async with async_session() as db:
             from voice.metering import get_wallet
             wallet = await get_wallet(db, u.id)
-            wallet.topup_minutes = 0
+            wallet.credits = 0.25  # less than a half-minute
             await db.commit()
         t = FakeTransport()
         session, log = await _call(await _setup(u.id, bot), t, [], replier_saying("unused"))

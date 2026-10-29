@@ -26,9 +26,9 @@ from sqlalchemy.future import select
 from auth import user_for_token
 from database import async_session
 try:
-    from backend.models import Bot, Conversation, IntegrationSettings, Message, TeamMember
+    from backend.models import Bot, Conversation, Message, TeamMember
 except ImportError:
-    from models import Bot, Conversation, IntegrationSettings, Message, TeamMember
+    from models import Bot, Conversation, Message, TeamMember
 
 logger = logging.getLogger(__name__)
 
@@ -107,22 +107,30 @@ def _flooding(sid: str) -> bool:
     return False
 
 
-async def relay_to_whatsapp(db, conv: Conversation, phone: str, text: str) -> None:
-    """Send a dashboard agent's reply to the customer's WhatsApp, from the workspace's own number."""
-    from notify import channels
+async def relay_to_whatsapp(db, conv: Conversation, text: str, message_id: Optional[str] = None,
+                            author_id: Optional[str] = None) -> None:
+    """Send a Live chat reply (already saved as `message_id`) to the customer on WhatsApp, from the number they wrote
+    to. A message WhatsApp refuses (e.g. outside its 24-hour window) is reported to the team's dashboards."""
+    from sqlalchemy import update
+    from backend.models import WhatsAppMessage, WhatsAppNumber
+    from whatsapp import chats, outbound
+    chat = await chats.for_conversation(db, conv.conversation_id)
+    number = await db.get(WhatsAppNumber, chat.number_id) if chat and chat.number_id else None
     bot = (await db.execute(select(Bot).where(Bot.bot_id == conv.bot_id))).scalars().first()
-    settings = (await db.execute(select(IntegrationSettings).where(
-        IntegrationSettings.user_id == bot.user_id))).scalars().first() if bot else None
-    if not settings or not settings.whatsapp_phone_number_id:
-        return
-    try:
-        await channels.send_whatsapp_text(phone, text, phone_number_id=settings.whatsapp_phone_number_id,
-                                          token=settings.whatsapp_access_token)
-    except Exception as e:  # e.g. outside WhatsApp's 24-hour reply window
-        logger.warning(f"WhatsApp relay to {phone[-4:]} failed: {e}")
-        if sio:
-            await sio.emit("delivery_error", {"conversation_id": str(conv.conversation_id), "error": str(e)[:300]},
-                           room=f"admin_{bot.user_id}")
+    error = None
+    if chat is None or number is None or number.status == "disconnected":
+        error = "This WhatsApp number isn't connected any more."
+    else:
+        await db.execute(update(WhatsAppMessage).where(WhatsAppMessage.chat_id == chat.id, WhatsAppMessage.direction == "in",
+                                                       WhatsAppMessage.handled.is_(False)).values(handled=True))
+        chat.unread, chat.reply_due_at = 0, None
+        await db.commit()
+        sent = await outbound.send_text(number, chat, text, sent_by="team", author_id=author_id, message_id=message_id)
+        error = sent.error
+    if error and sio and bot:
+        logger.warning(f"WhatsApp reply from Live chat not sent: {error}")
+        await sio.emit("delivery_error", {"conversation_id": str(conv.conversation_id), "error": error[:300]},
+                       room=f"admin_{bot.user_id}")
 
 
 def register(socket_manager) -> None:
@@ -193,7 +201,7 @@ def register(socket_manager) -> None:
                     await db.commit()
                     data["id"] = saved.id  # the widget also fetches replies; the id stops it showing one twice
                     if sender == "agent" and room.startswith("wa:"):
-                        await relay_to_whatsapp(db, conv, room[3:], message)
+                        await relay_to_whatsapp(db, conv, message, message_id=saved.id, author_id=_agent_sids.get(sid))
                     if sender != "agent" and conv.handoff_status == "pending":
                         bot = (await db.execute(select(Bot).where(Bot.bot_id == conv.bot_id))).scalars().first()
                         if bot:

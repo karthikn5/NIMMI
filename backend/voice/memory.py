@@ -39,7 +39,7 @@ def first_name(name: Optional[str]) -> Optional[str]:
     """'K. Karthik Raja' -> 'Karthik': how the agent greets them."""
     for word in re.split(r"[\s,]+", (name or "").strip()):
         word = word.strip(".")
-        if len(word) > 1 and not word.isdigit():
+        if len(word) > 1 and any(ch.isalpha() for ch in word):  # never "123" or a WhatsApp name of only symbols
             return word[:30]
     return None
 
@@ -112,7 +112,20 @@ async def context_for(bot_id: str, e164: Optional[str]) -> Optional[dict]:
                 "summary": (c.summary or "").strip()[:SUMMARY_CHARS]} for c in calls if (c.summary or "").strip()]
     details = dict((contact.details or {}) if contact else {})
     notes = (contact.notes or "").strip() if contact else ""
-    if not (name or history or details or notes):
+    chats = await _whatsapp_chats(bot_id, e164, contact.remember_from if contact else None)
+    if not (name or history or details or notes or chats):
         return None
     return {"name": name, "first_name": first_name(name), "has_email": bool(email), "details": details,
-            "notes": notes[:1000], "calls": history}
+            "notes": notes[:1000], "calls": history, "chats": chats}
+
+
+async def _whatsapp_chats(bot_id: str, e164: str, since: Optional[datetime]) -> list[dict]:
+    """What their WhatsApp chats with this assistant were about (summaries, written once a chat goes quiet)."""
+    from backend.models import WhatsAppChat
+    async with async_session() as db:
+        query = select(WhatsAppChat).where(WhatsAppChat.bot_id == bot_id, WhatsAppChat.wa_id == e164.lstrip("+"),
+                                           WhatsAppChat.summary.isnot(None))
+        if since is not None:
+            query = query.where(WhatsAppChat.last_message_at >= since)
+        rows = (await db.execute(query.order_by(WhatsAppChat.last_message_at.desc()).limit(2))).scalars().all()
+    return [{"when": _day(c.last_message_at), "summary": c.summary.strip()[:SUMMARY_CHARS]} for c in rows if c.summary.strip()]

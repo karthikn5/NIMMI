@@ -179,7 +179,10 @@ async def call_completed(call_id: str) -> None:
             and call.outcome == "lead_captured" and not blocked):
         async def send_whatsapp():
             # The workspace's own WhatsApp number when connected, else the server's.
-            token, pid = settings.whatsapp_access_token, settings.whatsapp_phone_number_id
+            from whatsapp.numbers import workspace_number
+            async with async_session() as db:
+                number = await workspace_number(db, call.user_id)
+            token, pid = (number.access_token, number.phone_number_id) if number else (None, None)
             if not channels.whatsapp_configured(token, pid):
                 return "whatsapp not configured"
             await channels.send_whatsapp_template(

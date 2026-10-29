@@ -9,8 +9,10 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
 import re
+import statistics
 import tempfile
 import time
 from array import array
@@ -28,7 +30,7 @@ from backend.models import Bot, CallbackJob, CallLog, DncEntry, VoiceAgent
 import assist
 from notify.events import call_completed, fire_and_forget
 from phone import extract_contact
-from voice import ambience, llm, memory, metering, recording, sarvam, scheduler
+from voice import ai_models, ambience, llm, memory, metering, recording, sarvam, scheduler
 from voice.levels import CallerLevels
 
 logger = logging.getLogger(__name__)
@@ -112,7 +114,7 @@ OPT_OUT_REPLIES = {
     "en-IN": "Understood. We won't contact you again. Thank you, goodbye.",
 }
 
-NO_MINUTES_REPLIES = {
+NO_CREDITS_REPLIES = {
     "ta-IN": "மன்னிக்கவும், தற்போது இந்த எண்ணில் அழைப்புகளை ஏற்க இயலவில்லை. பிறகு முயற்சிக்கவும்.",
     "hi-IN": "क्षमा करें, इस समय इस लाइन पर कॉल उपलब्ध नहीं हैं। कृपया बाद में प्रयास करें।",
     "te-IN": "క్షమించండి, ప్రస్తుతం ఈ లైన్ అందుబాటులో లేదు. దయచేసి తర్వాత ప్రయత్నించండి.",
@@ -155,6 +157,8 @@ STT_RETRY_WINDOW_SEC = 60.0
 # An answer that hasn't started by now isn't coming (every AI service failed or stalled): the caller is asked to
 # say it again, rather than left in silence.
 REPLY_GIVE_UP_SEC = float(os.getenv("VOICE_REPLY_GIVE_UP_SEC", "15"))
+# A call the credits run out on ends this long before, so the time-limit goodbye is paid for too.
+GOODBYE_SEC = 6.0
 # The recognizer signals speech after a few hundredths of a second of sound, so stopping on that signal let a
 # cough, a click on the line or a quick "mm" cut the agent off mid-sentence, often with nothing to answer after.
 # The agent stops for the caller once they've kept talking this long (a short sound ends sooner), or as soon as
@@ -437,6 +441,10 @@ class CallSession:
         self.opening_kept = False  # its audio was ready before the call connected
         # The language the agent speaks: the agent's own, or the caller's once they clearly speak another.
         self.lang = setup.agent.language or "en-IN"
+        self.model = ai_models.call_model(setup.agent.ai_model)  # the agent's AI model, asked first
+        self.answered: list[str] = []  # which model answered each turn (a busy or slow one hands over to a backup)
+        self.reply_gaps: list[float] = []  # seconds from the caller stopping to the agent's first sound, per answer
+        self.paid_seconds = math.inf  # how long the credits left pay for, worked out when the call starts
         self.follow_language = setup.agent.follow_caller_language is not False
         self.lang_pending: Optional[str] = None  # heard once, not clearly enough to switch yet
         self.spoken_languages = {self.lang}      # languages used on this call so far
@@ -466,6 +474,12 @@ class CallSession:
     # ── helpers ────────────────────────────────────────────────
     def _elapsed(self) -> int:
         return int(time.monotonic() - self.started)
+
+    def _function_values(self) -> dict:
+        """What the agent's functions can put in their {{placeholders}}: the call, the caller, and campaign columns."""
+        first = (self.s.caller or {}).get("first_name") or ""
+        return {**(self.s.variables or {}), "caller_number": self.s.caller_e164 or "", "call_id": self.call_id or "",
+                "direction": self.s.direction, "name": (self.s.variables or {}).get("name") or first}
 
     def _log(self, speaker: str, text: str) -> None:
         self.transcript.append({"at_sec": self._elapsed(), "speaker": speaker, "text": text})
@@ -601,8 +615,8 @@ class CallSession:
     def _opt_out_reply(self) -> str:
         return OPT_OUT_REPLIES.get(self._lang(), OPT_OUT_REPLIES["en-IN"])
 
-    def _no_minutes_reply(self) -> str:
-        return NO_MINUTES_REPLIES.get(self._lang(), NO_MINUTES_REPLIES["en-IN"])
+    def _no_credits_reply(self) -> str:
+        return NO_CREDITS_REPLIES.get(self._lang(), NO_CREDITS_REPLIES["en-IN"])
 
     def _timeout_reply(self) -> str:
         return TIMEOUT_REPLIES.get(self._lang(), TIMEOUT_REPLIES["en-IN"])
@@ -793,6 +807,7 @@ class CallSession:
         self.asking = False
         said: list[str] = []   # what the model wrote
         heard: list[str] = []  # what reached the caller: the conversation remembers this
+        ran: list[dict] = []   # functions the model ran this turn, and their results (llm.reply_sentences)
         began, written = time.monotonic(), None
         holding: dict = {}
         hold = asyncio.create_task(self._hold_on(holding)) if HOLD_AFTER_SEC > 0 else None
@@ -812,7 +827,9 @@ class CallSession:
                                                  variables=self.s.variables, purpose=self.s.purpose,
                                                  after_hours=self.s.after_hours, reply_language=self.lang,
                                                  script=self.s.script, caller=self.s.caller,
-                                                 phone_known=bool(self.s.caller_e164), **extra)) as replies:
+                                                 phone_known=bool(self.s.caller_e164), answered=self.answered,
+                                                 function_values=self._function_values(), function_log=ran,
+                                                 **extra)) as replies:
                     async for sentence, control in replies:
                         if sentence:
                             if not said:
@@ -844,6 +861,11 @@ class CallSession:
         finally:
             if hold is not None:
                 hold.cancel()
+            if ran:  # before the spoken answer, which came from their results
+                self.history.extend(ran)
+                for entry in ran:
+                    if entry["role"] == "tool":
+                        self._log("system", f"Function {entry['name']}: {entry['content'][:300]}")
             if heard:
                 self.history.append({"role": "assistant", "content": " ".join(heard)})
             if said and self.s.channel == "phone" and assist.is_unanswered(" ".join(said)):
@@ -862,6 +884,7 @@ class CallSession:
         """One line per answer: where the time between the caller stopping and the reply went."""
         stopped = self.speech_ended_at if self.speech_ended_at and self.speech_ended_at <= began else began
         if self.speech_began_at >= written:
+            self.reply_gaps.append(self.speech_began_at - stopped)
             logger.info(f"Call {self.call_id} reply timing: transcript {began - stopped:.2f}s, answer text "
                         f"{written - began:.2f}s, first audio {self.speech_began_at - written:.2f}s "
                         f"({self.speech_began_at - stopped:.2f}s after they stopped)")
@@ -1096,7 +1119,7 @@ class CallSession:
 
     async def _watchdog(self) -> None:
         agent = self.s.agent
-        limit = max(1, agent.max_call_minutes or 10) * 60
+        limit = min(max(1, agent.max_call_minutes or 10) * 60, self.paid_seconds)
         silence = max(3, agent.silence_timeout_sec or 8)
         while not self.ended.is_set():
             await asyncio.sleep(0.5)
@@ -1194,9 +1217,22 @@ class CallSession:
         if not spoke and self.opening_error:
             await self._voice_failed(f"the opening couldn't be spoken ({self.opening_error})")
 
-    async def _has_minutes(self) -> bool:
+    async def _has_credits(self) -> bool:
+        """Enough credits for the call's first half-minute. It can last as long as they pay for: the watchdog
+        ends it then, the goodbye included."""
         async with async_session() as db:
-            return metering.minutes_left(await metering.get_wallet(db, self.s.owner_id)) > 0
+            left = metering.credits_left(await metering.get_wallet(db, self.s.owner_id))
+        rate = ai_models.per_minute(self.model)
+        self.paid_seconds = metering.seconds_for(left, rate) - GOODBYE_SEC
+        return metering.enough_for_a_call(left, rate)
+
+    def _rate(self) -> float:
+        """Credits a minute: the base, plus the models that answered (when the agent's own model was busy and a backup
+        answered instead, that turn costs the backup's rate)."""
+        if not self.answered:
+            return ai_models.per_minute(self.model)
+        model_credits = sum(ai_models.ai_model(m).credits for m in self.answered) / len(self.answered)
+        return round(ai_models.BASE_CREDITS + model_credits, 2)
 
     async def _open_log(self) -> None:
         async with async_session() as db:
@@ -1218,16 +1254,16 @@ class CallSession:
             except Exception as e:
                 logger.warning(f"Background sound unavailable: {e}")
 
-    async def _out_of_minutes(self, greeting: Optional[asyncio.Task], tasks: list[asyncio.Task]) -> Optional[str]:
-        """The owner has no voice minutes left: stop the opening, say so, and end."""
+    async def _out_of_credits(self, greeting: Optional[asyncio.Task], tasks: list[asyncio.Task]) -> Optional[str]:
+        """The owner has no voice credits left: stop the opening, say so, and end."""
         stopping = [t for t in (greeting, self.opening_task) if t]
         for task in stopping:
             task.cancel()
         await asyncio.gather(*stopping, return_exceptions=True)
         await self._hush()
-        self.failure = "No voice minutes left"
-        await self.t.event({"type": "error", "code": "no_minutes", "message": "You're out of voice minutes."})
-        await self.speak(self._no_minutes_reply())
+        self.failure = "No voice credits left"
+        await self.t.event({"type": "error", "code": "no_minutes", "message": "You're out of voice credits."})
+        await self.speak(self._no_credits_reply())
         await self.end()
         for task in tasks:
             task.cancel()
@@ -1244,19 +1280,19 @@ class CallSession:
             if self.ambience:
                 tasks.append(asyncio.create_task(self._playout()))
             # Speak first, the moment the call connects, rather than leave the person who answered saying
-            # "hello?" into silence (a hello over the opening is ignored). The call log, the minutes check,
+            # "hello?" into silence (a hello over the opening is ignored). The call log, the credits check,
             # the AI and the recognizer get ready while it plays.
             self._prepare_opening()
             greeting = asyncio.create_task(self._greet())
         try:
-            _, has_minutes = await asyncio.gather(self._open_log(), self._has_minutes())
+            _, has_credits = await asyncio.gather(self._open_log(), self._has_credits())
         except BaseException:
             for task in (greeting, self.opening_task, *tasks):
                 if task:
                     task.cancel()
             raise
-        if not has_minutes:
-            return await self._out_of_minutes(greeting, tasks)
+        if not has_credits:
+            return await self._out_of_credits(greeting, tasks)
         if self.s.voicemail:
             return await self._leave_voicemail()
 
@@ -1325,7 +1361,7 @@ class CallSession:
                 return
 
     async def _finish(self) -> None:
-        exact = time.monotonic() - self.started  # bill on exact time: any connected call is at least a minute
+        exact = time.monotonic() - self.started  # billed in half-minute steps: any connected call is at least one
         duration = round(exact)
         heard_secs = self.caller_bytes / 2 / self.rate
         logger.info(f"Call {self.call_id} diagnostics: {heard_secs:.1f}s of caller audio, peak level "
@@ -1361,11 +1397,16 @@ class CallSession:
                 logger.warning(f"Saving recording failed: {e}")
 
         async with async_session() as db:
-            billed = await metering.charge(db, self.s.owner_id, exact) if not self.failure or self.caller_spoke else 0
+            billed = (await metering.charge(db, self.s.owner_id, exact, self._rate())
+                      if not self.failure or self.caller_spoke else 0)
             log = (await db.execute(select(CallLog).where(CallLog.id == self.call_id))).scalars().first()
             log.ended_at = datetime.utcnow()
             log.duration_sec = duration
-            log.billed_minutes = billed
+            log.billed_minutes = math.ceil(exact / 60) if billed else 0
+            log.credits_used = billed
+            log.ai_model = self.model.id
+            if self.reply_gaps:
+                log.reply_ms = int(statistics.median(self.reply_gaps) * 1000)
             log.outcome = outcome
             log.summary = summary
             log.captured = fields

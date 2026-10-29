@@ -62,7 +62,7 @@ def test_someone_elses_payment_cannot_be_claimed(client, make_user, monkeypatch)
     assert client.post("/api/payments/verify", json=body, headers=thief.h()).status_code == 403
 
 
-def test_minute_pack_credits_once(client, make_user, monkeypatch):
+def test_credit_pack_credits_once(client, make_user, monkeypatch):
     u = make_user()
     created = {}
 
@@ -76,15 +76,16 @@ def test_minute_pack_credits_once(client, make_user, monkeypatch):
 
     monkeypatch.setattr(payments, "get_razorpay_client", lambda: FakeClient())
     resp = client.post("/api/payments/create-minutes-order", json={"pack_id": "p_100"}, headers=u.h())
-    assert resp.status_code == 200 and resp.json()["minutes"] == 100
+    assert resp.status_code == 200 and resp.json()["credits"] == 100
 
     fake_orders(monkeypatch, {"order_v": created["order"]})
-    before = client.get("/api/voice/overview", headers=u.h()).json()["minutes_topup"]
+    before = client.get("/api/voice/overview", headers=u.h()).json()["credits_left"]
     body = {"razorpay_order_id": "order_v", "razorpay_payment_id": "pay_v", "razorpay_signature": sign("order_v", "pay_v")}
+    assert client.post("/api/payments/verify", json=body, headers=u.h()).json()["message"] == "Added 100 voice credits"
     client.post("/api/payments/verify", json=body, headers=u.h())
-    client.post("/api/payments/verify", json=body, headers=u.h())
-    after = client.get("/api/voice/overview", headers=u.h()).json()["minutes_topup"]
+    after = client.get("/api/voice/overview", headers=u.h()).json()["credits_left"]
     assert after - before == 100
+    assert client.get("/api/payments/history", headers=u.h()).json()[0]["plan_name"] == "100 voice credits"
 
 
 def test_webhook_requires_signature_and_activates(client, make_user, monkeypatch):

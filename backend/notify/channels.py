@@ -10,6 +10,7 @@ from typing import Optional
 import httpx
 
 from netsafe import UnsafeUrl, assert_public_url, safe_client
+from whatsapp import graph as whatsapp_graph
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ async def send_whatsapp_template(
     pid = phone_number_id or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
     if not (tok and pid):
         raise ChannelError("WhatsApp isn't configured on the server")
-    version = os.getenv("WHATSAPP_API_VERSION", "v21.0")
+    version = whatsapp_graph.VERSION
     url = f"https://graph.facebook.com/{version}/{pid}/messages"
     payload = {
         "messaging_product": "whatsapp",
@@ -64,7 +65,7 @@ async def send_whatsapp_text(
     pid = phone_number_id or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
     if not (tok and pid):
         raise ChannelError("WhatsApp credentials (token or phone_number_id) are not configured")
-    version = os.getenv("WHATSAPP_API_VERSION", "v21.0")
+    version = whatsapp_graph.VERSION
     url = f"https://graph.facebook.com/{version}/{pid}/messages"
     payload = {
         "messaging_product": "whatsapp",
@@ -90,7 +91,7 @@ async def mark_whatsapp_read(
     pid = phone_number_id or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
     if not (tok and pid):
         return
-    version = os.getenv("WHATSAPP_API_VERSION", "v21.0")
+    version = whatsapp_graph.VERSION
     url = f"https://graph.facebook.com/{version}/{pid}/messages"
     payload = {
         "messaging_product": "whatsapp",

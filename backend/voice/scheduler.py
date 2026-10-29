@@ -15,7 +15,7 @@ from backend.models import (Campaign, CallbackJob, CallbackSettings, CallLog, Co
                             PhoneNumber, VoiceAgent)
 import balance
 from phone import callable_destination
-from voice import accounts, exotel, metering, recording, twilio
+from voice import accounts, ai_models, exotel, metering, recording, twilio
 from voice.catalog import NUMBER_GRACE_DAYS
 
 logger = logging.getLogger(__name__)
@@ -94,8 +94,9 @@ async def dispatch_due_callbacks() -> None:
                 job.next_attempt_at = next_window_start(now, window[0])
                 continue
             wallet = await metering.get_wallet(db, job.user_id)
-            if metering.minutes_left(wallet) <= 0:
-                job.status, job.last_error = "failed", "No voice minutes left"
+            agent_model = (await db.execute(select(VoiceAgent.ai_model).where(VoiceAgent.bot_id == job.bot_id))).scalar()
+            if not metering.enough_for_a_call(metering.credits_left(wallet), ai_models.per_minute(ai_models.call_model(agent_model))):
+                job.status, job.last_error = "failed", "No voice credits left"
                 continue
             number = (await db.execute(
                 select(PhoneNumber).where(PhoneNumber.id == from_id, PhoneNumber.status == "active")
@@ -269,10 +270,16 @@ async def _loop() -> None:
     last_purge = datetime.min
     last_recycle = datetime.min
     last_sites = datetime.min
+    last_summaries = datetime.min
     while True:
         try:
             from notify import automations
             await automations.process_due()  # automatic customer emails
+            from whatsapp import memory as whatsapp_memory, replies as whatsapp_replies
+            await whatsapp_replies.sweep()  # WhatsApp answers whose timer was lost (a restart)
+            if datetime.utcnow() - last_summaries > timedelta(minutes=2):
+                await whatsapp_memory.summarise_quiet()  # what quiet WhatsApp chats were about, for calls and later chats
+                last_summaries = datetime.utcnow()
             # Always: customers' own phone accounts work even when Nimmi has none configured.
             await expire_stale_calls()
             await dispatch_due_callbacks()

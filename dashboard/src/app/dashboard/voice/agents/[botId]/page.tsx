@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, Lock, PhoneIncoming, PhoneOutgoing, Play } from "lucide-react";
+import { ArrowLeft, ArrowRight, Lock, PhoneIncoming, PhoneOutgoing } from "lucide-react";
 import BrowserTest from "@/components/voice/BrowserTest";
 import { AmbiencePicker, PronunciationEditor } from "@/components/voice/AgentEditors";
+import { AgentDetailsLine, LanguageMenu, ModelMenu, VoiceMenu } from "@/components/voice/AgentToolbar";
+import { FunctionsEditor } from "@/components/voice/FunctionsEditor";
 import { WithPlaceholders } from "@/components/voice/CampaignBits";
 import PhoneTest from "@/components/voice/PhoneTest";
 import {
@@ -14,7 +16,7 @@ import { Suspense, useRef } from "react";
 import { apiUrl } from "@/lib/api";
 import { useApi, useDraft } from "@/lib/useApi";
 import { DIRECTIONS, LANGUAGES, directionOf, getDisclosureText } from "@/lib/voice/api";
-import type { AgentDirection, Voice, VoiceAgentConfig, VoiceAgentSummary, VoiceScript } from "@/lib/voice/types";
+import type { AgentDetails, AgentDirection, Voice, VoiceAgentConfig, VoiceAgentSummary, VoiceModels, VoiceScript } from "@/lib/voice/types";
 
 export default function AgentSettingsPage() {
     return <Suspense><AgentSettings /></Suspense>;
@@ -30,6 +32,8 @@ function AgentSettings() {
     const script = useApi<VoiceScript>(`/api/voice/scripts/${botId}/${direction}`);
     const listed = useApi<VoiceAgentSummary[]>(direction === "inbound" ? "/api/voice/agents?direction=inbound" : null);
     const voices = useApi<Voice[]>("/api/voice/voices");
+    const models = useApi<VoiceModels>("/api/voice/models");
+    const details = useApi<AgentDetails>(`/api/voice/agents/${botId}/details?direction=${direction}`);
     const { draft, setDraft, dirty, saving, save, discard } = useDraft(config, `/api/voice/agents/${botId}?direction=${direction}`);
     const player = useRef<HTMLAudioElement | null>(null);
     const number = listed.data?.find((a) => a.bot_id === botId)?.phone_number ?? null;
@@ -81,20 +85,38 @@ function AgentSettings() {
                 </label>
             </div>
 
+            <Card className="px-5 py-4 mb-6">
+                <AgentDetailsLine model={models.data?.models.find((m) => m.id === draft.ai_model)}
+                                  saved={draft.ai_model === config.data?.ai_model} details={details.data} />
+                <div className="flex flex-wrap items-center gap-2 mt-3">
+                    <ModelMenu value={draft.ai_model} onChange={(v) => set("ai_model", v)} models={models.data} />
+                    <VoiceMenu value={draft.voice_id} onChange={(v) => set("voice_id", v)} voices={voices.data} onPlay={playSample} />
+                    <LanguageMenu value={draft.language} onChange={(v) => set("language", v)} />
+                </div>
+                <p className="text-xs text-stone-500 mt-2.5 leading-relaxed">
+                    {models.data?.models.find((m) => m.id === draft.ai_model)?.about}{" "}
+                    The {direction === "inbound" ? "outgoing" : "incoming"} agent has its own model, voice and language.
+                </p>
+            </Card>
+
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] items-start">
                 <div className="space-y-6 min-w-0">
                     <Card className="px-5 py-1">
+                        <SettingRow label="Functions"
+                                    hint="What the agent can do during a call: look things up in your systems, check your calendar, book appointments.">
+                            <FunctionsEditor value={draft.functions ?? []} onChange={(v) => set("functions", v)} botId={botId} direction={direction}
+                                             modelCanRun={models.data?.models.find((m) => m.id === draft.ai_model)?.functions ?? true}
+                                             modelName={models.data?.models.find((m) => m.id === draft.ai_model)?.name} />
+                        </SettingRow>
+                    </Card>
+                    <Card className="px-5 py-1">
                         <SettingRow
-                            label="Language"
-                            htmlFor="language"
+                            label="Languages"
                             hint={draft.follow_caller_language
-                                ? "Calls start in this language. The assistant switches when a caller speaks another one."
-                                : "The assistant speaks and listens in this language."}
+                                ? `Calls start in ${LANGUAGES.find((l) => l.code === draft.language)?.label ?? draft.language}. The assistant switches when a caller speaks another one.`
+                                : `The assistant speaks and listens in ${LANGUAGES.find((l) => l.code === draft.language)?.label ?? draft.language}.`}
                         >
-                            <Select id="language" value={draft.language} onChange={(e) => set("language", e.target.value as VoiceAgentConfig["language"])}>
-                                {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
-                            </Select>
-                            <label className="flex items-start gap-3 mt-4">
+                            <label className="flex items-start gap-3">
                                 <Switch checked={draft.understand_code_mixed} onChange={(v) => set("understand_code_mixed", v)} label="Understand mixed language" />
                                 <span className="text-[13px] text-stone-600 leading-snug">
                                     Understand callers who mix in English, like Tanglish or Hinglish
@@ -143,42 +165,6 @@ function AgentSettings() {
                                     <strong className="text-stone-800 font-semibold">Natural spoken style:</strong>
                                     {" "}Speaks everyday {LANGUAGES.find((l) => l.code === draft.language)?.label || draft.language} the way people talk on the phone, in short sentences, without filler sounds like &quot;hmm&quot; or &quot;ah&quot;.
                                 </div>
-                            </div>
-                        </SettingRow>
-
-                        <SettingRow label="Voice" hint="Pick the voice that suits your business. You can change it any time.">
-                            <div role="radiogroup" aria-label="Voice" className="grid sm:grid-cols-2 gap-2">
-                                {(voices.data ?? []).map((v) => {
-                                    const selected = draft.voice_id === v.id;
-                                    return (
-                                        <div
-                                            key={v.id}
-                                            className={cn(
-                                                "flex items-center gap-2 pl-3 pr-1.5 py-2 rounded-md border transition-colors",
-                                                selected ? "border-plum bg-plum-tint" : "border-line hover:border-line-strong",
-                                            )}
-                                        >
-                                            <button
-                                                type="button"
-                                                role="radio"
-                                                aria-checked={selected}
-                                                onClick={() => set("voice_id", v.id)}
-                                                className="flex-1 text-left min-w-0 focus-visible:outline-none"
-                                            >
-                                                <span className="block text-sm font-medium">{v.name}</span>
-                                                <span className="block text-xs text-stone-500">{v.gender === "female" ? "Female" : "Male"}{v.tone ? ` · ${v.tone}` : ""}</span>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => playSample(v)}
-                                                aria-label={`Play ${v.name}`}
-                                                className="p-2 rounded text-stone-500 hover:text-plum hover:bg-white focus-visible:outline-2 focus-visible:outline-plum"
-                                            >
-                                                <Play size={13} />
-                                            </button>
-                                        </div>
-                                    );
-                                })}
                             </div>
                         </SettingRow>
 
@@ -269,7 +255,7 @@ function AgentSettings() {
                                 <option value={3}>Check three times, then hang up</option>
                             </Select>
                         </SettingRow>
-                        <SettingRow label="Longest call" htmlFor="maxlen" hint="Ends calls politely at this point so a line left open doesn't use up minutes.">
+                        <SettingRow label="Longest call" htmlFor="maxlen" hint="Ends calls politely at this point so a line left open doesn't use up credits.">
                             <Select id="maxlen" className="max-w-48" value={draft.max_call_minutes} onChange={(e) => set("max_call_minutes", Number(e.target.value))}>
                                 {[5, 10, 15, 20].map((m) => <option key={m} value={m}>{m} minutes</option>)}
                             </Select>

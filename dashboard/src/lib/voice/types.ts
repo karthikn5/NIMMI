@@ -56,6 +56,34 @@ export interface VoiceAgentConfig {
     voicemail_action: "off" | "hangup" | "leave_message";
     voicemail_message: string;
     transfer_mode: "cold" | "warm";
+    ai_model: string;                  // VoiceModel id
+    functions: AgentFunction[];        // what it can do during a call (backend voice/functions.py)
+}
+
+export interface FunctionParameter {
+    name: string;
+    type: "string" | "number" | "boolean" | "enum";
+    description: string;
+    required: boolean;
+    choices: string[];
+}
+
+/** One thing the agent can do during a call. Secrets come back masked ("••••1234"); sent back unchanged, they're kept. */
+export interface AgentFunction {
+    id?: string;
+    kind: "custom" | "check_slots" | "book";
+    name: string;                      // lowercase_with_underscores
+    description: string;               // when the agent should use it
+    enabled: boolean;
+    speak_during: string;              // said while it runs, if the agent hasn't spoken yet
+    url?: string;                      // custom: {{caller_number}} and other placeholders work
+    method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+    parameters?: FunctionParameter[];
+    headers?: { name: string; value: string }[];
+    timeout_sec?: number;
+    cal_api_key?: string;              // check_slots, book
+    event_type_id?: number | string;
+    timezone?: string;
 }
 
 export type AmbienceKind =
@@ -110,6 +138,9 @@ export interface CallRecord {
     successful?: boolean | null;  // reached the agent's goal (post-call analysis)
     sentiment?: Sentiment | null;
     campaign_id?: string | null;
+    credits_used?: number | null; // null: from before credits
+    ai_model?: string | null;     // the model's name
+    reply_sec?: number | null;    // median time from the caller stopping to the agent's first sound
 }
 
 export interface CollectedRow {
@@ -259,16 +290,59 @@ export interface DncEntry {
     added_at: string;
 }
 
-export interface MinutePack {
+export interface CreditPack {
     id: string;
-    minutes: number;
+    credits: number;
     price: number; // INR, excl. GST
 }
 
+/** An AI model an agent can answer with (backend voice/ai_models.py). */
+export interface VoiceModel {
+    id: string;
+    name: string;
+    maker: string;
+    group: "fast" | "smart";
+    about: string;
+    credits_per_minute: number;       // the whole call minute: voice and phone line plus the model
+    model_credits: number;            // the model's part of it
+    first_words_sec: number | null;   // measured; null until it has been
+    available: boolean;               // false: not set up on the server yet
+    suggested: boolean;
+    preview: boolean;                 // its service may change or remove it
+    functions: boolean;               // can run the agent's functions
+    minutes_left?: number;            // what the workspace's credits pay for on it
+}
+
+export interface RateCard {
+    base_credits: number;
+    billing_step_sec: number;
+    free_credits: number;
+    groups: Record<VoiceModel["group"], string>;
+    packs: CreditPack[];
+    models: VoiceModel[];
+}
+
+export interface VoiceModels extends RateCard {
+    credits_left: number;
+    default: string;
+}
+
+/** The agent page's summary line (GET /api/voice/agents/{bot}/details). */
+export interface AgentDetails {
+    model: VoiceModel;
+    credits_per_minute: number;
+    base_credits: number;
+    prompt_tokens: number;            // the instructions and knowledge that go with every answer
+    reply_sec_expected: number | null;
+    reply_sec_measured: number | null; // median over its recent calls
+    calls_measured: number;
+}
+
 export interface VoiceOverview {
-    minutes_included: number;
-    minutes_used: number;
-    minutes_topup: number;
+    credits_left: number;
+    credits_included: number;   // a plan's credits this month
+    credits_used: number;       // of those
+    credits_bought: number;     // bought and free credits; they don't expire
     cycle_ends: string | null;
     calls_this_month: number;
     calls_last_month: number;

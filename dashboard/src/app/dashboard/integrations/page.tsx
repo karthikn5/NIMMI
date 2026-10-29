@@ -19,7 +19,7 @@ type Tone = "good" | "neutral" | "warn" | "bad";
 
 const TABS: { id: Tab; label: string; hint: string; icon: ComponentType<{ size?: number; className?: string }> }[] = [
     { id: "email", label: "Email", hint: "Alerts and customer follow-ups", icon: Mail },
-    { id: "whatsapp", label: "WhatsApp", hint: "AI chat and confirmations", icon: MessageCircle },
+    { id: "whatsapp", label: "WhatsApp", hint: "Now its own section", icon: MessageCircle },
     { id: "webhook", label: "Webhook", hint: "Your own system, Zapier, Make", icon: Webhook },
     { id: "leadsquared", label: "LeadSquared", hint: "CRM sync", icon: Contact },
     { id: "activity", label: "Activity", hint: "What went out", icon: Activity },
@@ -32,9 +32,8 @@ function status(tab: Tab, s: IntegrationSettings, log: LogRow[] | null): { label
             if (on && !s.server.email) return { label: "Needs setup", tone: "warn" };
             return on ? { label: "On", tone: "good" } : { label: "Off", tone: "neutral" };
         }
-        case "whatsapp":
-            return s.whatsapp_chat_enabled && s.whatsapp_has_token && s.whatsapp_phone_number_id
-                ? { label: "Connected", tone: "good" } : { label: "Not connected", tone: "neutral" };
+        case "whatsapp":  // server.whatsapp: the workspace has a connected number (or the server has one)
+            return s.server.whatsapp ? { label: "Connected", tone: "good" } : { label: "Not connected", tone: "neutral" };
         case "webhook":
             return s.webhook_url ? { label: "On", tone: "good" } : { label: "Off", tone: "neutral" };
         case "leadsquared":
@@ -149,7 +148,7 @@ function Integrations() {
 
             <section className="min-w-0">
                 {tab === "email" && <EmailPanel {...props} />}
-                {tab === "whatsapp" && <WhatsAppPanel {...props} />}
+                {tab === "whatsapp" && <WhatsAppPanel />}
                 {tab === "webhook" && <WebhookPanel {...props} />}
                 {tab === "leadsquared" && <LeadSquaredPanel {...props} />}
                 {tab === "activity" && <ActivityPanel log={log.data} onRefresh={log.reload} />}

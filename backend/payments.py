@@ -1,5 +1,5 @@
 """
-Razorpay payments for bot plans and voice minute packs.
+Razorpay payments for bot plans and voice credit packs.
 
 The browser never decides what was bought: after the signature check, the
 order's own notes (fetched from Razorpay) say which plan or pack it was, for
@@ -103,7 +103,7 @@ async def verify_payment(req: PaymentVerify, ctx: AuthContext = Depends(get_ctx)
         topup = await credit_topup(db, req.razorpay_order_id, req.razorpay_payment_id)
         if not topup:
             raise HTTPException(status_code=404, detail="Top-up not found")
-        return {"success": True, "message": f"Added {topup.minutes} voice minutes"}
+        return {"success": True, "message": f"Added {topup.minutes:,} voice credits"}
 
     if notes.get("kind") == "balance_topup":
         rupees = int(order.get("amount") or 0) // 100
@@ -119,21 +119,21 @@ async def verify_payment(req: PaymentVerify, ctx: AuthContext = Depends(get_ctx)
     return {"success": True, "message": f"Bot activated until {sub.end_date:%b %d, %Y}", "redirect_url": f"{dashboard}/dashboard/billing"}
 
 
-@router.post("/create-minutes-order")
+@router.post("/create-minutes-order")  # the address from when packs were minutes
 async def create_minutes_order(req: MinutesOrderRequest, ctx: AuthContext = Depends(require_owner), db: AsyncSession = Depends(get_db)):
     pack = PACKS_BY_ID.get(req.pack_id)
     if not pack:
-        raise HTTPException(status_code=400, detail="Unknown minute pack")
+        raise HTTPException(status_code=400, detail="Unknown credit pack")
     amount = pack["price"] * 100
     order = await asyncio.to_thread(get_razorpay_client().order.create, data={
         "amount": amount, "currency": "INR", "receipt": f"nimmi_voice_{req.pack_id}",
         "notes": {"kind": "voice_topup", "user_id": ctx.owner_id, "pack_id": req.pack_id},
     })
-    db.add(VoiceTopup(user_id=ctx.owner_id, pack_id=req.pack_id, minutes=pack["minutes"],
+    db.add(VoiceTopup(user_id=ctx.owner_id, pack_id=req.pack_id, minutes=pack["credits"],
                       amount=pack["price"], razorpay_order_id=order["id"]))
     await db.commit()
     return {"order_id": order["id"], "amount": amount, "currency": "INR", "key_id": _keys()[0],
-            "minutes": pack["minutes"], "pack_id": req.pack_id}
+            "credits": pack["credits"], "pack_id": req.pack_id}
 
 
 @router.post("/create-balance-order")
@@ -178,7 +178,7 @@ async def get_payment_history(ctx: AuthContext = Depends(require_manager), db: A
                         "iso": tx.created_at.isoformat(), "status": tx.status, "bot_id": tx.bot_id,
                         "transaction_id": tx.razorpay_payment_id or tx.id[:12]})
     for t in topups:
-        history.append({"plan_name": f"{t.minutes} voice minutes", "amount": t.amount,
+        history.append({"plan_name": f"{t.minutes:,} voice credits", "amount": t.amount,
                         "date": t.created_at.strftime("%b %d, %Y, %I:%M %p"), "iso": t.created_at.isoformat(),
                         "status": "success", "bot_id": None, "transaction_id": t.razorpay_payment_id or t.id[:12]})
     history.sort(key=lambda h: h["iso"], reverse=True)

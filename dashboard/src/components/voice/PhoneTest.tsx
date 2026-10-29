@@ -33,7 +33,7 @@ export default function PhoneTest({ botId, botName }: { botId: string; botName: 
     return (
         <Card className="p-5 mt-4">
             <h2 className="text-[15px] font-semibold">Test on a real phone</h2>
-            <p className="text-[13px] text-stone-500 mt-0.5">We&apos;ll ring this number from one of your phone numbers. Uses saved settings and minutes.</p>
+            <p className="text-[13px] text-stone-500 mt-0.5">We&apos;ll ring this number from one of your phone numbers. Uses saved settings and credits.</p>
             <form onSubmit={call} className="flex gap-2 mt-4">
                 <Input type="tel" inputMode="tel" required placeholder="+91 98765 43210" aria-label="Your phone number"
                        className="tabular-nums" value={phone} onChange={(e) => setPhone(e.target.value)} />

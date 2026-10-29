@@ -280,7 +280,7 @@ def test_site_addresses(client, make_user):
 
 
 # ─── plans ────────────────────────────────────────────────────────
-def test_free_plan_one_assistant_one_site_no_voice_or_integrations(client, make_user, run, monkeypatch):
+def test_free_plan_one_assistant_one_site_no_integrations(client, make_user, run, monkeypatch):
     monkeypatch.setenv("ENFORCE_PLAN_LIMITS", "true")
     u = make_user()
     limits = client.get("/api/account/limits", headers=u.h()).json()
@@ -293,7 +293,8 @@ def test_free_plan_one_assistant_one_site_no_voice_or_integrations(client, make_
     assert client.post("/api/sites", json={"name": "Second"}, headers=u.h()).status_code == 402
     domain = client.put(f"/api/sites/{site['id']}/domain", json={"domain": "www.example.in"}, headers=u.h())
     assert domain.status_code == 402 and "Custom domains" in domain.json()["detail"]
-    assert client.post("/api/voice/session", json={"bot_id": bot}, headers=u.h()).status_code == 402
+    # Calls are paid with credits (10 free), not a plan: 503 here only because tests have no speech service.
+    assert client.post("/api/voice/session", json={"bot_id": bot}, headers=u.h()).status_code == 503
     assert client.put("/api/integrations", json={}, headers=u.h()).status_code == 402
     # Free uploads are smaller.
     big = _deploy_zip(client, u, site["id"], {"index.html": "x", "photo.jpg": b"\1" * (11 * 1024 * 1024)})
@@ -313,7 +314,7 @@ def test_free_plan_one_assistant_one_site_no_voice_or_integrations(client, make_
 
 
 def test_limits_follow_the_plan_module():
-    assert plans.FREE.sites == 1 and plans.FREE.assistants == 1 and not plans.FREE.voice and not plans.FREE.integrations
+    assert plans.FREE.sites == 1 and plans.FREE.assistants == 1 and plans.FREE.voice and not plans.FREE.integrations
     assert plans.PAID.custom_domains and plans.PAID.deploy_bytes > plans.FREE.deploy_bytes
     assert site_serve.with_assistant(b"<body>x</body>", "b1").count(b"nimmi-widget.js") == 1
     assert site_serve.with_assistant(b'<script src="/static/nimmi-widget.js"></script>', "b1").count(b"nimmi-widget.js") == 1

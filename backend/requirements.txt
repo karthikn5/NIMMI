@@ -39,6 +39,7 @@ multidict>=6.9.1
 # AI and knowledge
 google-generativeai
 openai
+anthropic>=2.3.0
 groq
 pinecone
 protobuf>=5.29.6

@@ -53,12 +53,14 @@ def _contents(messages: list[dict]) -> list[dict]:
     return out or [{"role": "user", "parts": [{"text": "Hello"}]}]
 
 
-def _body(model: str, system: str, messages: list[dict], temperature: float, max_tokens: int, json_mode: bool) -> dict:
+def _body(model: str, system: str, messages: list[dict], temperature: float, max_tokens: int, json_mode: bool,
+          extra: Optional[dict] = None) -> dict:
     config: dict = {"temperature": temperature, "maxOutputTokens": max_tokens}
     if model.startswith("gemini-2.5-flash"):
         config["thinkingConfig"] = {"thinkingBudget": 0}  # answers in ~2s instead of ~30s
     if json_mode:
         config["responseMimeType"] = "application/json"
+    config.update(extra or {})
     body = {"contents": _contents(messages), "generationConfig": config, "safetySettings": SAFETY}
     if system:
         body["systemInstruction"] = {"parts": [{"text": system}]}
@@ -100,7 +102,8 @@ def _gemini(system: str, messages: list[dict], *, api_key: Optional[str], models
 
 
 def _gemini_stream(system: str, messages: list[dict], *, api_key: Optional[str], models: list[str],
-                   temperature: float, max_tokens: int, timeout: Optional[httpx.Timeout] = None) -> Iterator[str]:
+                   temperature: float, max_tokens: int, timeout: Optional[httpx.Timeout] = None,
+                   extra: Optional[dict] = None) -> Iterator[str]:
     last = "no Gemini key configured"
     with httpx.Client(timeout=timeout or TIMEOUT) as client:
         for key in _keys(api_key):
@@ -109,7 +112,7 @@ def _gemini_stream(system: str, messages: list[dict], *, api_key: Optional[str],
                 try:
                     with client.stream("POST", f"{GEMINI_URL}/{model}:streamGenerateContent", params={"alt": "sse"},
                                        headers={"x-goog-api-key": key},
-                                       json=_body(model, system, messages, temperature, max_tokens, False)) as r:
+                                       json=_body(model, system, messages, temperature, max_tokens, False, extra)) as r:
                         if r.status_code != 200:
                             error = r.read()
                             last = f"{model}: HTTP {r.status_code} {error[:160]!r}"
@@ -172,9 +175,11 @@ def chat(system: str, messages: list[dict], *, provider: str = "google", model: 
 
 def chat_stream(system: str, messages: list[dict], *, provider: str = "google", model: Optional[str] = None,
                 api_key: Optional[str] = None, temperature: float = 0.3, max_tokens: int = 1024,
-                timeout: Optional[httpx.Timeout] = None) -> Iterator[str]:
+                timeout: Optional[httpx.Timeout] = None, only: bool = False, config: Optional[dict] = None) -> Iterator[str]:
     """The answer in pieces as it's written. Raises AIError before the first piece if no model could answer.
-    `timeout` (Gemini) replaces the default limits, e.g. tighter ones for a live phone call."""
+    `timeout` (Gemini) replaces the default limits, e.g. tighter ones for a live phone call. `only`: that Gemini
+    model and no other (a voice agent's own choice; the call has its own backups). `config`: added to Gemini's
+    generationConfig (e.g. a thinking setting)."""
     if provider == "openai":
         import openai
         try:
@@ -188,8 +193,34 @@ def chat_stream(system: str, messages: list[dict], *, provider: str = "google", 
             return
         except Exception as e:
             raise AIError(f"openai: {e}") from e
-    yield from _gemini_stream(system, messages, api_key=api_key, models=_order(model), temperature=temperature,
-                              max_tokens=max_tokens, timeout=timeout)
+    yield from _gemini_stream(system, messages, api_key=api_key, models=[model] if only and model else _order(model),
+                              temperature=temperature, max_tokens=max_tokens, timeout=timeout, extra=config)
+
+
+def look(instruction: str, data: bytes, mime: str, max_tokens: int = 400) -> str:
+    """What a photo, PDF or recording shows or says (e.g. something a customer sent on WhatsApp), read by Gemini.
+    Raises AIError when no model could read it."""
+    import base64
+    parts = [{"inline_data": {"mime_type": mime, "data": base64.b64encode(data).decode()}}, {"text": instruction}]
+    last = "no Gemini key configured"
+    with httpx.Client(timeout=httpx.Timeout(connect=6.0, read=90.0, write=60.0, pool=6.0)) as client:
+        for key in _keys(None):
+            for model in CHAT_MODELS:
+                config: dict = {"temperature": 0, "maxOutputTokens": max_tokens}
+                if model.startswith("gemini-2.5-flash"):
+                    config["thinkingConfig"] = {"thinkingBudget": 0}
+                try:
+                    r = client.post(f"{GEMINI_URL}/{model}:generateContent", headers={"x-goog-api-key": key}, json={
+                        "contents": [{"role": "user", "parts": parts}], "generationConfig": config, "safetySettings": SAFETY})
+                    if r.status_code == 200 and _text(r.json()).strip():
+                        return _text(r.json()).strip()
+                    last = f"{model}: HTTP {r.status_code} {r.text[:160]}"
+                    if r.status_code in (400, 401, 403) and "API key" in r.text:
+                        break
+                except httpx.HTTPError as e:
+                    last = f"{model}: {type(e).__name__}"
+                logger.warning(f"AI model couldn't read the file, trying the next one: {last}")
+    raise AIError(last)
 
 
 def extract_json(system: str, text: str, max_tokens: int = 400) -> dict:

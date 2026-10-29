@@ -44,15 +44,6 @@ export interface IntegrationSettings {
     whatsapp_enabled: boolean;
     whatsapp_template: string;
     whatsapp_language: string;
-    // WhatsApp two-way AI chat
-    whatsapp_chat_enabled: boolean;
-    whatsapp_bot_id: string;
-    whatsapp_phone_number_id: string;
-    whatsapp_has_token: boolean;
-    whatsapp_access_token?: string;
-    whatsapp_verify_token: string;
-    whatsapp_business_account_id: string;
-    whatsapp_webhook_url: string;
     // Webhook and CRM
     webhook_url: string;
     webhook_secret: string;

@@ -90,13 +90,13 @@ def test_connect_own_twilio_number_routes_calls_and_restores_webhook(client, mak
     assert "isn't set up" in r.text
 
     # Outbound calls from it go through their account, with their webhook token.
-    async def minutes():
+    async def credits():
         from voice import metering
         async with async_session() as db:
             wallet = await metering.get_wallet(db, u.id)
-            wallet.topup_minutes = 30
+            wallet.credits = 30
             await db.commit()
-    run(minutes)
+    run(credits)
     r = client.post("/api/voice/test-call", json={"bot_id": bot, "phone": "98765 43210"}, headers=u.h())
     assert r.status_code == 200, r.text
     assert seen["placed"][-1] == {"to": "+919876543210", "from": "+14155550123", "creds": (SID, TOKEN), "hook": hook}

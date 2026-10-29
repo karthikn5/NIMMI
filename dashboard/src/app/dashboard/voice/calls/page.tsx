@@ -8,7 +8,7 @@ import {
 } from "@/components/ui";
 import { apiUrl } from "@/lib/api";
 import { apiSave, useApi } from "@/lib/useApi";
-import { OUTCOMES, SENTIMENT, formatDuration, formatWhen, languageLabel } from "@/lib/voice/api";
+import { OUTCOMES, SENTIMENT, formatDuration, formatNumber, formatWhen, languageLabel } from "@/lib/voice/api";
 import type { CallOutcome, CallRecord } from "@/lib/voice/types";
 
 export default function CallsPage() {
@@ -181,6 +181,12 @@ function CallSheet({ id, onClose }: { id: string | null; onClose: () => void }) 
                         )}
                         {c.sentiment && (
                             <div><dt className="text-xs text-stone-500">Caller mood</dt><dd className="mt-1"><Status tone={SENTIMENT[c.sentiment].tone}>{SENTIMENT[c.sentiment].label}</Status></dd></div>
+                        )}
+                        {c.ai_model && (
+                            <div><dt className="text-xs text-stone-500">AI model</dt><dd className="mt-1 text-[13px]">{c.ai_model}</dd></div>
+                        )}
+                        {c.credits_used != null && (
+                            <div><dt className="text-xs text-stone-500">Credits used</dt><dd className="mt-1 text-[13px] tabular-nums">{formatNumber(c.credits_used)}</dd></div>
                         )}
                     </dl>
 

@@ -108,7 +108,7 @@ async def reply(conversation_id: str, data: ReplyIn, ctx: AuthContext = Depends(
     room = conv.visitor_session_id
     payload = {"room": room, "message": text, "sender": "agent", "id": message.id, "conversation_id": conversation_id}
     if room.startswith("wa:"):
-        await relay_to_whatsapp(db, conv, room[3:], text)
+        await relay_to_whatsapp(db, conv, text, message_id=message.id, author_id=ctx.user_id)
     await emit("message", payload, room=socket_room(room, conv.bot_id))
     return payload
 

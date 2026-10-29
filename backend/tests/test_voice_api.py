@@ -24,7 +24,7 @@ def test_voices_and_overview(client, make_user):
     voices = client.get("/api/voice/voices").json()
     assert {"priya", "shubh"} <= {v["id"] for v in voices}
     ov = client.get("/api/voice/overview", headers=u.h()).json()
-    assert ov["minutes_topup"] == 30 and len(ov["calls_by_day"]) == 14  # trial minutes
+    assert ov["credits_left"] == 10 and ov["credits_bought"] == 10 and len(ov["calls_by_day"]) == 14  # free credits
     assert client.post("/api/voice/session", json={"bot_id": u.bot()}, headers=u.h()).status_code == 503  # no SARVAM key
 
 

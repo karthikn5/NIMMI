@@ -7,6 +7,9 @@ import re
 import threading
 import time
 import unicodedata
+import uuid
+from contextlib import aclosing
+from dataclasses import dataclass
 from typing import AsyncIterator, Iterator, Optional
 
 import httpx
@@ -14,6 +17,8 @@ import httpx
 import ai
 import knowledge_sources
 from backend.models import Bot, VoiceAgent
+from voice import ai_models
+from voice import functions as agent_functions
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +268,9 @@ def _caller_lines(caller: Optional[dict]) -> str:
         lines.append("Earlier calls, newest first:")
         lines += [f"- {c['when']}, {'they called you' if c['direction'] == 'inbound' else 'you called them'}: {c['summary']}"
                   for c in caller["calls"]]
+    if caller.get("chats"):
+        lines.append("Their WhatsApp chat with the business:")
+        lines += [f"- {c['when']}: {c['summary']}" for c in caller["chats"]]
     name = f" Call them {caller['first_name']} where it's natural." if caller.get("first_name") else ""
     return ("\n\nYou have spoken with this person before. What you know about them:\n" + "\n".join(lines) +
             f"\n{name.strip()} Don't ask again for anything listed here. Where it helps, pick up from the last call, for"
@@ -339,58 +347,375 @@ def _groq_models() -> list[str]:
 def _note_limit(model: str, error: Exception) -> None:
     """A model out of its per-minute allowance is skipped until it refills (Groq says when); one too slow to
     start answering rests for a while."""
-    if getattr(error, "status_code", None) in (413, 429) or "rate_limit" in str(error):
+    status = getattr(error, "status_code", None) or getattr(getattr(error, "response", None), "status_code", None)
+    if status in (413, 429) or "rate_limit" in str(error):
         wait = 20.0
         try:
             wait = float(getattr(error, "response").headers.get("retry-after") or wait)
         except (AttributeError, TypeError, ValueError):
             pass
         _rate_limited[model] = time.monotonic() + min(max(wait, 5.0), 60.0)
-    elif isinstance(error, TimeoutError) or type(error).__name__ == "APITimeoutError":
+    elif isinstance(error, (TimeoutError, httpx.TimeoutException)) or type(error).__name__ == "APITimeoutError":
         _rate_limited[model] = time.monotonic() + SLOW_MODEL_REST_SEC
 
 
-def _stream_groq(model: str, prompt: str, history: list[dict], user_text: str) -> Iterator[str]:
+@dataclass
+class ToolCall:
+    """The model asking to run one of the agent's functions (voice/functions.py)."""
+    id: str
+    name: str
+    arguments: dict
+    raw: Optional[dict] = None  # Gemini: the model turn's own parts, sent back unchanged (they carry its thought signatures)
+
+
+def _arguments(text: str) -> dict:
+    try:
+        value = json.loads(text or "{}")
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _trim(history: list[dict]) -> list[dict]:
+    """The recent conversation, never starting with a function's result whose request was cut off."""
+    recent = history[-HISTORY_MESSAGES:]
+    while recent and (recent[0].get("role") == "tool" or recent[0].get("tool_calls")):
+        recent = recent[1:]
+    return recent
+
+
+def _openai_history(history: list[dict]) -> list[dict]:
+    out = []
+    for h in _trim(history):
+        if h.get("role") == "tool":
+            out.append({"role": "tool", "tool_call_id": h["tool_call_id"], "content": h["content"]})
+        elif h.get("tool_calls"):
+            out.append({"role": "assistant", "content": h.get("content") or None, "tool_calls": [
+                {"id": c["id"], "type": "function", "function": {"name": c["name"], "arguments": json.dumps(c["arguments"], ensure_ascii=False)}}
+                for c in h["tool_calls"]]})
+        else:
+            out.append({"role": h["role"], "content": h["content"]})
+    return out
+
+
+def _turns(prompt: str, history: list[dict], user_text: Optional[str]) -> list[dict]:
+    """OpenAI-style messages. No `user_text` when the model continues after its functions' results."""
+    turns = [{"role": "system", "content": prompt}, *_openai_history(history)]
+    return turns + [{"role": "user", "content": user_text}] if user_text is not None else turns
+
+
+def _openai_tools(tools: Optional[list[dict]]) -> dict:
+    return {"tools": [{"type": "function", "function": t} for t in tools], "tool_choice": "auto"} if tools else {}
+
+
+def _collect_calls(calls: dict, deltas) -> None:
+    """OpenAI-style streaming sends a function call in pieces: its id and name first, then its arguments."""
+    for d in deltas or []:
+        slot = calls.setdefault(d.index, {"id": None, "name": "", "arguments": ""})
+        slot["id"] = slot["id"] or d.id
+        if d.function is not None:
+            slot["name"] += d.function.name or ""
+            slot["arguments"] += d.function.arguments or ""
+
+
+def _finished_calls(calls: dict) -> Iterator[ToolCall]:
+    for i, c in sorted(calls.items()):
+        if c["name"]:
+            yield ToolCall(c["id"] or f"call_{i}_{uuid.uuid4().hex[:8]}", c["name"], _arguments(c["arguments"]))
+
+
+def _stream_groq(model: str, prompt: str, history: list[dict], user_text: Optional[str],
+                 tools: Optional[list[dict]] = None) -> Iterator["str | ToolCall"]:
     started = time.monotonic()
     stream = _groq().chat.completions.create(
         model=model, stream=True, temperature=0.4, max_tokens=300,
-        messages=[{"role": "system", "content": prompt}, *history[-HISTORY_MESSAGES:], {"role": "user", "content": user_text}],
-        timeout=httpx.Timeout(GROQ_FIRST_WORDS_SEC, connect=2.0), **_reasoning_params(model),
+        messages=_turns(prompt, history, user_text),
+        timeout=httpx.Timeout(GROQ_FIRST_WORDS_SEC, connect=2.0), **_reasoning_params(model), **_openai_tools(tools),
     )
+    calls: dict = {}
     try:
         answering = False
         for chunk in stream:
-            delta = chunk.choices[0].delta.content if chunk.choices else None
-            if delta:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if getattr(delta, "tool_calls", None):
                 answering = True
-                yield delta
+                _collect_calls(calls, delta.tool_calls)
+            if text := getattr(delta, "content", None):
+                answering = True
+                yield text
             elif not answering and time.monotonic() - started > GROQ_FIRST_WORDS_SEC:
                 raise SlowModel(f"no words after {GROQ_FIRST_WORDS_SEC:.0f}s")  # still thinking (hidden reasoning)
+        yield from _finished_calls(calls)
     finally:
         stream.close()  # stopped early (the answer was cut short): don't keep reading the rest
 
 
-def _stream_gemini(prompt: str, history: list[dict], user_text: str, api_key: Optional[str]) -> Iterator[str]:
-    """Gemini over REST (ai.py), the fast model first."""
-    messages = [{"role": "user" if h["role"] == "user" else "assistant", "content": h["content"]}
-                for h in history[-HISTORY_MESSAGES:]]
-    messages.append({"role": "user", "content": user_text})
+def _as_text(history: list[dict]) -> list[dict]:
+    """The conversation for a model asked without functions: a function's result becomes a note in the conversation."""
+    out = []
+    for h in _trim(history):
+        if h.get("role") == "tool":
+            out.append({"role": "user", "content": f"(Result of {h.get('name')}: {h['content'][:800]})"})
+        elif h.get("tool_calls"):
+            if h.get("content"):
+                out.append({"role": "assistant", "content": h["content"]})
+        else:
+            out.append({"role": "user" if h["role"] == "user" else "assistant", "content": h["content"]})
+    return out
+
+
+def _stream_gemini(prompt: str, history: list[dict], user_text: Optional[str], api_key: Optional[str]) -> Iterator[str]:
+    """Gemini over REST (ai.py), the fast model first: the last resort, so it answers without functions."""
+    messages = _as_text(history)
+    if user_text is not None:
+        messages.append({"role": "user", "content": user_text})
     yield from ai.chat_stream(prompt, messages, model=VOICE_GEMINI_MODEL, api_key=api_key, temperature=0.4, max_tokens=220,
                               timeout=VOICE_GEMINI_TIMEOUT)
 
 
-def stream_reply(bot: Bot, prompt: str, history: list[dict], user_text: str) -> Iterator[str]:
-    """Groq (fastest to the first word), moving to the next Groq model when one is rate-limited, then Gemini."""
+_http: Optional[httpx.Client] = None
+_openai_client = None
+_anthropic_client = None
+# How long the agent's own model may take to start answering before a backup answers instead: the smarter models
+# take a second or two longer by nature.
+CHOSEN_FIRST_WORDS_SEC = {ai_models.FAST: GROQ_FIRST_WORDS_SEC, ai_models.SMART: GROQ_FIRST_WORDS_SEC * 2}
+
+
+def _stream_openai_style(url: str, headers: dict, body: dict, limit: float) -> Iterator[str]:
+    """A chat model behind an OpenAI-style streaming API (Sarvam's), over one shared connection."""
+    global _http
+    if _http is None:
+        _http = httpx.Client(timeout=15)
     started = time.monotonic()
+    with _http.stream("POST", url, headers=headers, json=body, timeout=httpx.Timeout(limit, connect=2.0)) as r:
+        if r.status_code != 200:
+            raise httpx.HTTPStatusError(f"HTTP {r.status_code} {r.read()[:160]!r}", request=r.request, response=r)
+        answering = False
+        for line in r.iter_lines():
+            data = line[5:].strip() if line.startswith("data:") else ""
+            if data == "[DONE]":
+                return
+            try:
+                chunk = json.loads(data) if data else {}
+            except ValueError:
+                continue
+            for choice in chunk.get("choices") or []:
+                if piece := (choice.get("delta") or {}).get("content"):
+                    answering = True
+                    yield piece
+            if not answering and time.monotonic() - started > limit:
+                raise SlowModel(f"no words after {limit:.0f}s")
+
+
+def _stream_openai(m: ai_models.AiModel, prompt: str, history: list[dict], user_text: Optional[str], limit: float,
+                   tools: Optional[list[dict]] = None) -> Iterator["str | ToolCall"]:
+    """ChatGPT's models, asked to answer without reasoning first (m.extra)."""
+    global _openai_client
+    if _openai_client is None:
+        import openai
+        _openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15, max_retries=0)
+    started = time.monotonic()
+    stream = _openai_client.chat.completions.create(
+        model=m.model, stream=True, max_completion_tokens=300, messages=_turns(prompt, history, user_text),
+        timeout=httpx.Timeout(limit, connect=2.0), **m.extra, **_openai_tools(tools))
+    calls: dict = {}
+    try:
+        answering = False
+        for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if getattr(delta, "tool_calls", None):
+                answering = True
+                _collect_calls(calls, delta.tool_calls)
+            if text := getattr(delta, "content", None):
+                answering = True
+                yield text
+            elif not answering and time.monotonic() - started > limit:
+                raise SlowModel(f"no words after {limit:.0f}s")
+        yield from _finished_calls(calls)
+    finally:
+        stream.close()
+
+
+def _claude_turns(history: list[dict], user_text: Optional[str]) -> list[dict]:
+    """Claude's conversation starts with the caller (on a call the agent speaks first); a function's request is a
+    tool_use block and its result a tool_result from the user's side."""
+    turns: list[dict] = []
+    for h in _trim(history):
+        if h.get("role") == "tool":
+            block = {"type": "tool_result", "tool_use_id": h["tool_call_id"], "content": h["content"]}
+            if turns and turns[-1]["role"] == "user" and isinstance(turns[-1]["content"], list):
+                turns[-1]["content"].append(block)
+            else:
+                turns.append({"role": "user", "content": [block]})
+        elif h.get("tool_calls"):
+            blocks = [{"type": "text", "text": h["content"]}] if h.get("content") else []
+            turns.append({"role": "assistant", "content": blocks + [
+                {"type": "tool_use", "id": c["id"], "name": c["name"], "input": c["arguments"]} for c in h["tool_calls"]]})
+        elif str(h.get("content") or "").strip():
+            turns.append({"role": "user" if h["role"] == "user" else "assistant", "content": h["content"]})
+    if user_text is not None:
+        turns.append({"role": "user", "content": user_text})
+    return turns if turns and turns[0]["role"] == "user" else [{"role": "user", "content": "(The call connected.)"}, *turns]
+
+
+def _stream_anthropic(m: ai_models.AiModel, prompt: str, history: list[dict], user_text: Optional[str], limit: float,
+                      tools: Optional[list[dict]] = None) -> Iterator["str | ToolCall"]:
+    """Claude's models, through Anthropic's SDK, asked to answer without thinking first where they can (m.extra). The
+    instructions are cached between the answers of a call."""
+    global _anthropic_client
+    import anthropic
+    if _anthropic_client is None:
+        _anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=15, max_retries=0)
+    started = time.monotonic()
+    extra = {"tools": [{"name": t["name"], "description": t["description"], "input_schema": t["parameters"]} for t in tools]} if tools else {}
+    with _anthropic_client.messages.stream(
+            model=m.model, max_tokens=300, system=[{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}],
+            messages=_claude_turns(history, user_text), timeout=anthropic.Timeout(limit, connect=2.0), **m.extra, **extra) as stream:
+        answering, calls, current = False, [], None
+        for event in stream:
+            if event.type == "content_block_start" and getattr(event.content_block, "type", "") == "tool_use":
+                answering = True
+                current = {"id": event.content_block.id, "name": event.content_block.name, "arguments": ""}
+            elif event.type == "content_block_delta" and event.delta.type == "input_json_delta" and current is not None:
+                current["arguments"] += event.delta.partial_json
+            elif event.type == "content_block_stop" and current is not None:
+                calls.append(ToolCall(current["id"], current["name"], _arguments(current["arguments"])))
+                current = None
+            elif event.type == "content_block_delta" and event.delta.type == "text_delta" and event.delta.text:
+                answering = True
+                yield event.delta.text
+            elif not answering and time.monotonic() - started > limit:
+                raise SlowModel(f"no words after {limit:.0f}s")  # still thinking
+        yield from calls
+
+
+# Gemini checks that the function calls in a conversation are its own (thought signatures). One another model made
+# (a backup answered that turn) is marked as such, as Gemini's docs say.
+_FOREIGN_CALL = "skip_thought_signature_validator"
+
+
+def _gemini_contents(history: list[dict], user_text: Optional[str]) -> list[dict]:
+    contents: list[dict] = []
+
+    def add(role: str, parts: list[dict]) -> None:
+        if contents and contents[-1]["role"] == role:
+            contents[-1]["parts"].extend(parts)
+        else:
+            contents.append({"role": role, "parts": parts})
+    for h in _trim(history):
+        if h.get("role") == "tool":
+            add("user", [{"functionResponse": {"name": h["name"], "response": {"result": h["content"]}}}])
+        elif h.get("tool_calls"):
+            own = (h.get("raw") or {}).get("gemini_parts")
+            add("model", own or ([{"text": h["content"]}] if h.get("content") else []) + [
+                {"functionCall": {"name": c["name"], "args": c["arguments"]}, "thoughtSignature": _FOREIGN_CALL}
+                for c in h["tool_calls"]])
+        elif str(h.get("content") or "").strip():
+            add("user" if h["role"] == "user" else "model", [{"text": h["content"]}])
+    if user_text is not None:
+        add("user", [{"text": user_text}])
+    if not contents or contents[0]["role"] != "user":
+        contents.insert(0, {"role": "user", "parts": [{"text": "(The call connected.)"}]})
+    return contents
+
+
+def _stream_gemini_chosen(m: ai_models.AiModel, prompt: str, history: list[dict], user_text: Optional[str], limit: float,
+                          tools: Optional[list[dict]] = None) -> Iterator["str | ToolCall"]:
+    """A Gemini model the agent chose, over REST, without thinking first (m.extra). Its function calls keep the parts
+    they came in, to send back unchanged."""
+    global _http
+    if _http is None:
+        _http = httpx.Client(timeout=15)
+    body = {"contents": _gemini_contents(history, user_text), "systemInstruction": {"parts": [{"text": prompt}]},
+            "generationConfig": {"temperature": 0.4, "maxOutputTokens": 220, **m.extra}, "safetySettings": ai.SAFETY}
+    if tools:
+        body["tools"] = [{"functionDeclarations": tools}]
+    started, answering, parts = time.monotonic(), False, []
+    with _http.stream("POST", f"{ai.GEMINI_URL}/{m.model}:streamGenerateContent", params={"alt": "sse"},
+                      headers={"x-goog-api-key": os.getenv("GEMINI_API_KEY", "")}, json=body,
+                      timeout=httpx.Timeout(limit + 1, connect=2.0)) as r:
+        if r.status_code != 200:
+            raise httpx.HTTPStatusError(f"HTTP {r.status_code} {r.read()[:160]!r}", request=r.request, response=r)
+        for line in r.iter_lines():
+            if not line.startswith("data:"):
+                continue
+            try:
+                chunk = json.loads(line[5:])
+            except ValueError:
+                continue
+            for part in ((chunk.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []:
+                parts.append(part)
+                if part.get("functionCall"):
+                    answering = True
+                elif part.get("text") and not part.get("thought"):
+                    answering = True
+                    yield part["text"]
+            if not answering and time.monotonic() - started > limit:
+                raise SlowModel(f"no words after {limit:.0f}s")
+    calls = [p["functionCall"] for p in parts if p.get("functionCall")]
+    for i, call in enumerate(calls):
+        yield ToolCall(call.get("id") or f"call_{uuid.uuid4().hex[:12]}", call.get("name", ""), call.get("args") or {},
+                       {"gemini_parts": parts} if i == 0 else None)
+
+
+def _stream_chosen(m: ai_models.AiModel, prompt: str, history: list[dict], user_text: Optional[str],
+                   tools: Optional[list[dict]] = None) -> Iterator["str | ToolCall"]:
+    """The model the agent was set to use (Voice > Agents), from whoever runs it."""
+    limit = CHOSEN_FIRST_WORDS_SEC[m.group]
+    if m.runs_on == "groq":
+        return _stream_groq(m.model, prompt, history, user_text, *([tools] if tools else []))
+    if m.runs_on == "sarvam":
+        return _stream_openai_style("https://api.sarvam.ai/v1/chat/completions",
+                                    {"api-subscription-key": os.getenv("SARVAM_API_KEY", "")},
+                                    {"model": m.model, "stream": True, "temperature": 0.4, "max_tokens": 300,
+                                     "messages": _turns(prompt, _as_text(history), user_text)}, limit)
+    if m.runs_on == "openai":
+        return _stream_openai(m, prompt, history, user_text, limit, tools)
+    if m.runs_on == "anthropic":
+        return _stream_anthropic(m, prompt, history, user_text, limit, tools)
+    return _stream_gemini_chosen(m, prompt, history, user_text, limit, tools)
+
+
+def stream_reply(bot: Bot, prompt: str, history: list[dict], user_text: Optional[str], model: Optional[str] = None,
+                 answered: Optional[list] = None, tools: Optional[list[dict]] = None) -> Iterator["str | ToolCall"]:
+    """The agent's own AI model first. When it's busy, slow to start or fails: Groq, the fastest to the first word,
+    moving to the next Groq model when one is rate-limited, then Gemini. Yields the answer's text, and a ToolCall for
+    each of the agent's functions the model wants run (`tools`; the last-resort Gemini answers without them).
+    `answered` gets the catalog id of the model that answered (the call is billed for the models that did)."""
+    started = time.monotonic()
+    chosen = ai_models.ai_model(model)
+    resting = chosen.model if chosen.runs_on == "groq" else chosen.id  # a busy Groq model is skipped below too
+    can_answer = chosen.functions or not tools  # a model that can't run functions hands a turn that needs them over
+    if can_answer and ai_models.available(chosen) and _rate_limited.get(resting, 0) <= started:
+        yielded = False
+        try:
+            for item in _stream_chosen(chosen, prompt, history, user_text, tools):
+                if not yielded:
+                    logger.info(f"Voice reply from {chosen.model}: first words after {time.monotonic() - started:.2f}s")
+                    if answered is not None:
+                        answered.append(chosen.id)
+                yielded = True
+                yield item
+            if yielded:
+                return
+        except Exception as e:
+            _note_limit(resting, e)
+            logger.warning(f"{chosen.name} failed{' mid-answer' if yielded else ''}: {str(e)[:160]}")
+            if yielded:
+                return  # part of the answer was already spoken; don't start a second one
     if os.getenv("GROQ_API_KEY"):
         for model in _groq_models():
+            if chosen.runs_on == "groq" and model == chosen.model and can_answer:
+                continue  # just tried
             yielded = False
             try:
-                for text in _stream_groq(model, prompt, history, user_text):
+                for item in _stream_groq(model, prompt, history, user_text, *([tools] if tools else [])):
                     if not yielded:
                         logger.info(f"Voice reply from {model}: first words after {time.monotonic() - started:.2f}s")
+                        if answered is not None:
+                            answered.append(ai_models.by_service_name(model).id)
                     yielded = True
-                    yield text
+                    yield item
                 if yielded:
                     return
             except Exception as e:
@@ -400,6 +725,8 @@ def stream_reply(bot: Bot, prompt: str, history: list[dict], user_text: str) -> 
                     return  # part of the answer was already spoken; don't start a second one
     own_key = bot.ai_api_key if (bot.ai_provider or "google") == "google" else None
     logger.info(f"Voice reply from Gemini (Groq unavailable) after {time.monotonic() - started:.2f}s")
+    if answered is not None:
+        answered.append(ai_models.by_service_name(VOICE_GEMINI_MODEL).id)
     yield from _stream_gemini(prompt, history, user_text, own_key)
 
 
@@ -432,66 +759,123 @@ def _clean_for_speech(text: str) -> str:
     return text
 
 
-async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user_text: str,
-                          direction: str, consent_source: Optional[str], variables: Optional[dict] = None,
-                          purpose: Optional[str] = None, after_hours: Optional[str] = None,
-                          knowledge: Optional[str] = None, reply_language: Optional[str] = None,
-                          script: Optional[dict] = None, caller: Optional[dict] = None, phone_known: bool = False
-                          ) -> AsyncIterator[tuple[str, Optional[str]]]:
-    """
-    Yields (sentence, control) pairs as the model streams. `control` is None, or
-    TRANSFER / END_CALL once the model signals it (with any final sentence).
-    `knowledge` is the call's knowledge, worked out once per call by CallSession.
-    """
-    if knowledge is None:
-        knowledge = await call_knowledge(bot)
-    prompt = system_prompt(agent, bot, knowledge, direction, consent_source, variables, purpose, after_hours, reply_language,
-                           script=script, caller=caller, phone_known=phone_known)
+# How many times in one turn the model may run functions before it has to answer with what it has.
+MAX_FUNCTION_ROUNDS = 3
+# Added to the instructions when the agent has functions: models otherwise ran them with made-up values before asking
+# (Gemini sent "order_id" as the order number) and filled gaps in a result with guesses (a test call, Oct 2026).
+FUNCTION_RULES = ("\n- Functions: use one only when you have every detail it needs from the caller; never make values up. "
+                  "Tell the caller only what its result says. If the result doesn't answer their question, say you couldn't find that.")
+
+
+async def _model_chunks(bot: Bot, prompt: str, history: list[dict], user_text: Optional[str], agent: VoiceAgent,
+                        answered: Optional[list], tools: Optional[list[dict]], language: str) -> AsyncIterator["str | ToolCall"]:
+    """stream_reply in a thread: the models' SDKs block. Closing this stops reading the model at once."""
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
     stop = threading.Event()
 
     def produce():
         try:
-            for chunk in stream_reply(bot, prompt, history, user_text):
+            for chunk in stream_reply(bot, prompt, history, user_text, agent.ai_model, answered, tools):
                 if stop.is_set():
                     break  # the answer ended early: stop reading the model (and spending its allowance)
                 loop.call_soon_threadsafe(queue.put_nowait, chunk)
         except Exception as e:
             logger.error(f"Voice LLM error: {e}")
-            language = reply_language or agent.language or "en-IN"  # the caller's language once they switched
             loop.call_soon_threadsafe(queue.put_nowait, FALLBACK_ERRORS.get(language, FALLBACK_ERRORS["en-IN"]))
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, None)
 
     loop.run_in_executor(None, produce)
-    buffer = ""
-    control: Optional[str] = None
     try:
         while (chunk := await queue.get()) is not None:
-            buffer += chunk
-            if TRANSFER in buffer:
-                control = TRANSFER
-            if END_CALL in buffer:
-                control = control or END_CALL
-            parts = _SENTENCE_END.split(buffer)
-            for sentence in parts[:-1]:
-                spoken = _clean_for_speech(sentence)
-                if spoken:
-                    yield spoken, None
-                    if spoken.endswith("?"):
-                        return  # a question ends the turn: the caller answers it, not the model
-            buffer = parts[-1]
-        tail = _clean_for_speech(buffer)
-        if control and tail.endswith("?"):
-            # The models (gpt-oss most) add the marker to questions too: hanging up on "What's your number?"
-            # cut live calls mid-conversation. A question is answered first, as everywhere else.
-            logger.warning(f"The model wrote {control} after a question; waiting for the answer instead")
-            control = None
-        if tail or control:
-            yield tail, control
+            yield chunk
     finally:
         stop.set()
+
+
+async def reply_sentences(bot: Bot, agent: VoiceAgent, history: list[dict], user_text: str,
+                          direction: str, consent_source: Optional[str], variables: Optional[dict] = None,
+                          purpose: Optional[str] = None, after_hours: Optional[str] = None,
+                          knowledge: Optional[str] = None, reply_language: Optional[str] = None,
+                          script: Optional[dict] = None, caller: Optional[dict] = None, phone_known: bool = False,
+                          answered: Optional[list] = None, function_values: Optional[dict] = None,
+                          function_log: Optional[list] = None) -> AsyncIterator[tuple[str, Optional[str]]]:
+    """
+    Yields (sentence, control) pairs as the model streams. `control` is None, or
+    TRANSFER / END_CALL once the model signals it (with any final sentence). `answered`: see stream_reply.
+    `knowledge` is the call's knowledge, worked out once per call by CallSession.
+    The agent's functions (agent.functions) run when the model asks for them: their requests and results go into
+    `function_log` (for the call's history), with `function_values` for their {{placeholders}}.
+    """
+    if knowledge is None:
+        knowledge = await call_knowledge(bot)
+    prompt = system_prompt(agent, bot, knowledge, direction, consent_source, variables, purpose, after_hours, reply_language,
+                           script=script, caller=caller, phone_known=phone_known)
+    language = reply_language or agent.language or "en-IN"  # the caller's language once they switched
+    specs = agent_functions.tool_specs(getattr(agent, "functions", None))
+    if specs:
+        prompt += FUNCTION_RULES
+    turn, pending, said = list(history), user_text, []
+    for round_no in range(MAX_FUNCTION_ROUNDS + 1):
+        tools = specs if specs and round_no < MAX_FUNCTION_ROUNDS else None
+        buffer, control, calls = "", None, []
+        async with aclosing(_model_chunks(bot, prompt, turn, pending, agent, answered, tools, language)) as chunks:
+            async for chunk in chunks:
+                if isinstance(chunk, ToolCall):
+                    calls.append(chunk)
+                    continue
+                buffer += chunk
+                if TRANSFER in buffer:
+                    control = TRANSFER
+                if END_CALL in buffer:
+                    control = control or END_CALL
+                parts = _SENTENCE_END.split(buffer)
+                for sentence in parts[:-1]:
+                    spoken = _clean_for_speech(sentence)
+                    if spoken:
+                        said.append(spoken)
+                        yield spoken, None
+                        if spoken.endswith("?"):
+                            return  # a question ends the turn: the caller answers it, not the model
+                buffer = parts[-1]
+        tail = _clean_for_speech(buffer)
+        if not calls:
+            if control and tail.endswith("?"):
+                # The models (gpt-oss most) add the marker to questions too: hanging up on "What's your number?"
+                # cut live calls mid-conversation. A question is answered first, as everywhere else.
+                logger.warning(f"The model wrote {control} after a question; waiting for the answer instead")
+                control = None
+            if tail or control:
+                yield tail, control
+            return
+        if tail:
+            said.append(tail)
+            yield tail, None
+        # The model wants functions run: say the owner's "while it runs" line if nothing was said yet, run them
+        # together, then let the model answer with their results.
+        wanted = [(c, agent_functions.by_name(getattr(agent, "functions", None), c.name)) for c in calls]
+        holding = next((fn["speak_during"] for _, fn in wanted if fn and fn.get("speak_during")), "")
+        if holding and not said:
+            said.append(holding)
+            yield holding, None
+        results = await asyncio.gather(*(
+            agent_functions.run(fn, c.arguments, function_values or {}) if fn else _no_such_function(c.name) for c, fn in wanted))
+        ask = {"role": "assistant", "content": " ".join(said), "tool_calls": [
+            {"id": c.id, "name": c.name, "arguments": c.arguments} for c in calls],
+            "raw": next((c.raw for c in calls if c.raw), None)}
+        answers = [{"role": "tool", "tool_call_id": c.id, "name": c.name, "content": r} for c, r in zip(calls, results)]
+        logger.info(f"Ran functions {[c.name for c in calls]}")
+        if pending is not None:
+            turn.append({"role": "user", "content": pending})
+        turn += [ask, *answers]
+        pending, said = None, []
+        if function_log is not None:
+            function_log += [ask, *answers]
+
+
+async def _no_such_function(name: str) -> str:
+    return f"There's no function called {name}. Answer without it."
 
 
 SUMMARY_PROMPT = """Read this phone call transcript between a business's assistant and a caller.

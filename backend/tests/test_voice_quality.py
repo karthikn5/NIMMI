@@ -143,17 +143,18 @@ def test_a_rate_limited_groq_model_hands_over_to_the_next_then_gemini(monkeypatc
     monkeypatch.setattr(llm, "_stream_groq", fake_groq)
     monkeypatch.setattr(llm, "_stream_gemini", lambda *a: iter(["From Gemini."]))
     bot = llm.Bot(bot_name="Desk")
-    assert "".join(llm.stream_reply(bot, "p", [], "hi")) == "From B."
+    backups_only = "gpt-5.4-mini"  # the agent's own model isn't set up here, so the backups answer
+    assert "".join(llm.stream_reply(bot, "p", [], "hi", backups_only)) == "From B."
     assert "model-a" in llm._rate_limited
     # The limited model is skipped while it refills.
     tried.clear()
-    assert "".join(llm.stream_reply(bot, "p", [], "hi")) == "From B." and tried == ["model-b"]
+    assert "".join(llm.stream_reply(bot, "p", [], "hi", backups_only)) == "From B." and tried == ["model-b"]
 
     def all_fail(model, prompt, history, text):
         raise RateLimited("rate_limit_exceeded")
         yield  # pragma: no cover
     monkeypatch.setattr(llm, "_stream_groq", all_fail)
-    assert "".join(llm.stream_reply(bot, "p", [], "hi")) == "From Gemini."
+    assert "".join(llm.stream_reply(bot, "p", [], "hi", backups_only)) == "From Gemini."
 
 
 def test_groq_doesnt_wait_out_a_rate_limit_by_itself(monkeypatch):
@@ -384,7 +385,7 @@ def test_a_question_ends_the_answer_and_stops_the_model(monkeypatch):
     pieces = ["உங்கள் மொபைல் ", "எண் என்ன?", "ஹ்ம்ம், 91 99949 20257, சரியா?", "ஆம், சரி. "] + ["மேலும் "] * 20
     read = []
 
-    def fake_stream(bot, prompt, history, text):
+    def fake_stream(bot, prompt, history, text, *_):
         for piece in pieces:
             read.append(piece)
             yield piece

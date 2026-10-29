@@ -1,9 +1,10 @@
 """
 What a workspace may use on its plan.
 
-Free (no assistant on an active plan): one assistant and one website, a nimmi subdomain, and
-smaller uploads. Voice, integrations and custom domains need a paid plan. A workspace is paid
-while any of its assistants has an active plan (plans are bought per assistant, see subscriptions.py).
+Free (no assistant on an active plan): one assistant and one website, a nimmi subdomain, smaller
+uploads, and phone calls paid with voice credits (10 free to start, then packs: voice/catalog.py).
+Integrations and custom domains need a paid plan. A workspace is paid while any of its assistants
+has an active plan (plans are bought per assistant, see subscriptions.py).
 
 Limits apply to new things only: a workspace that made more assistants before these limits keeps
 them, it just can't add another until it upgrades.
@@ -44,7 +45,7 @@ class Limits:
     deploys_kept: int           # older deployments are removed (their files too)
 
 
-FREE = Limits(paid=False, assistants=1, sites=1, custom_domains=False, voice=False, integrations=False,
+FREE = Limits(paid=False, assistants=1, sites=1, custom_domains=False, voice=True, integrations=False,
               deploy_bytes=25 * MB, deploy_files=1000, file_bytes=10 * MB, deploys_kept=5)
 PAID = Limits(paid=True, assistants=None, sites=10, custom_domains=True, voice=True, integrations=True,
               deploy_bytes=100 * MB, deploy_files=5000, file_bytes=25 * MB, deploys_kept=20)

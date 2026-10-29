@@ -8,8 +8,8 @@ import { Button, Card, Dialog, EmptyState, Notice, Skeleton, Status, cn, useToas
 import { apiJson } from "@/lib/api";
 import { payAndVerify } from "@/lib/razorpay";
 import { useApi } from "@/lib/useApi";
-import { OUTCOMES, formatDate, formatDuration, formatINR, formatNumber, formatWhen } from "@/lib/voice/api";
-import type { CallRecord, MinutePack, VoiceOverview } from "@/lib/voice/types";
+import { OUTCOMES, formatDate, formatDuration, formatINR, formatNumber, formatRate, formatWhen } from "@/lib/voice/api";
+import type { CallRecord, VoiceModels, VoiceOverview } from "@/lib/voice/types";
 
 export default function VoiceOverviewPage() {
     const overview = useApi<VoiceOverview>("/api/voice/overview");
@@ -50,7 +50,7 @@ export default function VoiceOverviewPage() {
                     </div>
                     <DailyChart data={o.calls_by_day} unit="call" />
                 </Card>
-                <MinutesCard overview={o} onBought={overview.reload} />
+                <CreditsCard overview={o} onBought={overview.reload} />
             </div>
 
             <div className="grid gap-6 lg:grid-cols-3 mt-6">
@@ -105,52 +105,56 @@ function Metric({ label, value, note, className }: { label: string; value: strin
     );
 }
 
-function MinutesCard({ overview: o, onBought }: { overview: VoiceOverview; onBought: () => void }) {
+function CreditsCard({ overview: o, onBought }: { overview: VoiceOverview; onBought: () => void }) {
     const [open, setOpen] = useState(false);
-    const total = o.minutes_included + o.minutes_topup;
-    const left = Math.max(total - o.minutes_used, 0);
-    const pct = total ? Math.min((o.minutes_used / total) * 100, 100) : 0;
-    const low = pct >= 80;
+    const out = o.credits_left < 0.5;  // less than a half-minute
+    const low = !out && o.credits_left < 5;
 
     return (
         <Card className="p-5 flex flex-col">
-            <h2 className="text-[15px] font-semibold">Minutes</h2>
+            <h2 className="text-[15px] font-semibold">Credits</h2>
             <p className="mt-4 tabular-nums">
-                <span className="text-[28px] leading-none font-semibold tracking-tight">{formatNumber(left)}</span>
-                <span className="text-sm text-stone-500"> min left</span>
+                <span className="text-[28px] leading-none font-semibold tracking-tight">{formatNumber(o.credits_left)}</span>
+                <span className="text-sm text-stone-500"> credits left</span>
             </p>
-            <div className="mt-4 h-1.5 rounded-full bg-stone-100 overflow-hidden" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100} aria-label="Minutes used">
-                <div className={cn("h-full rounded-full", low ? "bg-amber-500" : "bg-plum")} style={{ width: `${pct}%` }} />
-            </div>
+            <p className="text-[13px] text-stone-500 mt-2 leading-relaxed">
+                A call minute is 1 credit for the voice and phone line, plus the agent&apos;s AI model.
+                Calls are counted in half-minutes. <Link href="/dashboard/billing#rates" className="text-plum hover:underline">Call rates</Link>
+            </p>
             <dl className="mt-4 text-[13px] space-y-1.5">
-                <div className="flex justify-between"><dt className="text-stone-500">Used</dt><dd className="tabular-nums">{formatNumber(o.minutes_used)} of {formatNumber(total)}</dd></div>
-                <div className="flex justify-between"><dt className="text-stone-500">Top-up balance</dt><dd className="tabular-nums">{formatNumber(o.minutes_topup)}</dd></div>
-                {o.minutes_included > 0 && o.cycle_ends && (
-                    <div className="flex justify-between"><dt className="text-stone-500">Plan minutes reset</dt><dd>{formatDate(o.cycle_ends)}</dd></div>
+                {o.credits_included > 0 && (
+                    <div className="flex justify-between gap-3"><dt className="text-stone-500">Plan credits used</dt><dd className="tabular-nums">{formatNumber(o.credits_used)} of {formatNumber(o.credits_included)}</dd></div>
                 )}
+                {o.credits_included > 0 && o.cycle_ends && (
+                    <div className="flex justify-between gap-3"><dt className="text-stone-500">Plan credits reset</dt><dd>{formatDate(o.cycle_ends)}</dd></div>
+                )}
+                <div className="flex justify-between gap-3"><dt className="text-stone-500">Bought and free credits</dt><dd className="tabular-nums">{formatNumber(o.credits_bought)}</dd></div>
             </dl>
-            {low && <p className="mt-3 text-[13px] text-amber-700">You&apos;ve used {Math.round(pct)}% of this month&apos;s minutes.</p>}
+            {out && <p className="mt-3 text-[13px] text-signal">Calls are paused until you add credits.</p>}
+            {low && <p className="mt-3 text-[13px] text-amber-700">Running low. Calls stop when the credits run out.</p>}
             <div className="mt-auto pt-5">
-                <Button className="w-full" onClick={() => setOpen(true)}>Buy minutes</Button>
+                <Button className="w-full" variant={out || low ? "primary" : undefined} onClick={() => setOpen(true)}>Buy credits</Button>
             </div>
-            <BuyMinutesDialog open={open} onClose={() => setOpen(false)} onBought={onBought} />
+            <BuyCreditsDialog open={open} onClose={() => setOpen(false)} onBought={onBought} />
         </Card>
     );
 }
 
-function BuyMinutesDialog({ open, onClose, onBought }: { open: boolean; onClose: () => void; onBought: () => void }) {
+function BuyCreditsDialog({ open, onClose, onBought }: { open: boolean; onClose: () => void; onBought: () => void }) {
     const toast = useToast();
-    const packs = useApi<MinutePack[]>(open ? "/api/voice/packs" : null);
+    const rates = useApi<VoiceModels>(open ? "/api/voice/models" : null);
     const [selected, setSelected] = useState<string>("p_500");
     const [busy, setBusy] = useState(false);
+    const chosen = rates.data?.packs.find((p) => p.id === selected);
+    const usual = rates.data?.models.find((m) => m.id === rates.data?.default);
 
     const checkout = async () => {
         setBusy(true);
         try {
-            const order = await apiJson<{ order_id: string; amount: number; currency: string; key_id: string; minutes: number }>(
+            const order = await apiJson<{ order_id: string; amount: number; currency: string; key_id: string; credits: number }>(
                 "/api/payments/create-minutes-order", { method: "POST", json: { pack_id: selected } });
             onClose();
-            const result = await payAndVerify(order, { description: `${order.minutes} voice minutes` });
+            const result = await payAndVerify(order, { description: `${formatNumber(order.credits)} voice credits` });
             if (result) {
                 toast(result.message);
                 onBought();
@@ -166,16 +170,16 @@ function BuyMinutesDialog({ open, onClose, onBought }: { open: boolean; onClose:
         <Dialog
             open={open}
             onClose={onClose}
-            title="Buy minutes"
-            description="Top-up minutes never expire and are used after any plan minutes. You pay the price shown."
+            title="Buy credits"
+            description="Pay as you go: credits never expire and are used after any plan credits. You pay the price shown."
             footer={<>
                 <Button variant="ghost" onClick={onClose}>Cancel</Button>
                 <Button variant="primary" onClick={checkout} disabled={busy}>{busy ? "Opening payment…" : "Continue to payment"}</Button>
             </>}
         >
             <fieldset className="space-y-2">
-                <legend className="sr-only">Minute packs</legend>
-                {(packs.data ?? []).map((p) => (
+                <legend className="sr-only">Credit packs</legend>
+                {(rates.data?.packs ?? []).map((p) => (
                     <label
                         key={p.id}
                         className={cn(
@@ -184,14 +188,20 @@ function BuyMinutesDialog({ open, onClose, onBought }: { open: boolean; onClose:
                         )}
                     >
                         <input type="radio" name="pack" value={p.id} checked={selected === p.id} onChange={() => setSelected(p.id)} className="accent-plum" />
-                        <span className="flex-1 text-sm font-medium tabular-nums">{formatNumber(p.minutes)} minutes</span>
+                        <span className="flex-1 text-sm font-medium tabular-nums">{formatNumber(p.credits)} credits</span>
                         <span className="text-right">
                             <span className="block text-sm tabular-nums">{formatINR(p.price)}</span>
-                            <span className="block text-xs text-stone-500 tabular-nums">₹{(p.price / p.minutes).toFixed(2)} per min</span>
+                            <span className="block text-xs text-stone-500 tabular-nums">₹{(p.price / p.credits).toFixed(2)} a credit</span>
                         </span>
                     </label>
                 ))}
             </fieldset>
+            {chosen && usual && (
+                <p className="text-xs text-stone-500 mt-3 leading-relaxed">
+                    About {formatNumber(Math.floor(chosen.credits / usual.credits_per_minute))} minutes of calls on {usual.name},
+                    at {formatRate(usual.credits_per_minute)} credits a minute. Smarter models use more.
+                </p>
+            )}
         </Dialog>
     );
 }

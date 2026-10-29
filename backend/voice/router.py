@@ -4,6 +4,8 @@ import hmac
 import logging
 import os
 import re
+import statistics
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -26,7 +28,8 @@ from notify.email import send_email
 from notify.events import fire_and_forget
 from phone import callable_destination, display, extract_contact, mask, to_e164
 import assist
-from voice import accounts, ambience, catalog, exotel, llm, memory, metering, recording, sarvam, scheduler, scripts, twilio
+from voice import (accounts, ai_models, ambience, catalog, exotel, functions, llm, memory, metering, recording, sarvam,
+                   scheduler, scripts, twilio)
 from voice.pipeline import CallSession, CallSetup, prepare_opening
 from voice.transports import BrowserTransport, ExotelTransport, TwilioTransport
 import plans
@@ -79,7 +82,8 @@ def _agent_json(agent: VoiceAgent, bot: Bot, direction: str = "outbound") -> dic
         "silence_reminders": 1 if agent.silence_reminders is None else agent.silence_reminders,
         "pronunciations": agent.pronunciations or [],
         "voicemail_action": agent.voicemail_action or "off", "voicemail_message": agent.voicemail_message or "",
-        "transfer_mode": agent.transfer_mode or "cold",
+        "transfer_mode": agent.transfer_mode or "cold", "ai_model": ai_models.ai_model(agent.ai_model).id,
+        "functions": functions.public(agent.functions),
     }
 
 
@@ -136,6 +140,8 @@ def _call_json(c: CallLog, bot_names: dict, full: bool = False) -> dict:
         "in_progress": c.outcome == "in_progress", "language": c.language, "summary": c.summary,
         "captured": c.captured or {}, "consent_source": c.consent_source,
         "successful": c.successful, "sentiment": c.sentiment, "campaign_id": c.campaign_id,
+        "credits_used": c.credits_used, "ai_model": ai_models.ai_model(c.ai_model).name if c.ai_model else None,
+        "reply_sec": round(c.reply_ms / 1000, 2) if c.reply_ms else None,
     }
     if full:
         data["transcript"] = c.transcript or []
@@ -182,7 +188,8 @@ async def overview(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depen
     )).first()
     cb = await _callbacks(ctx.owner_id, db)
     return {
-        "minutes_included": wallet.plan_minutes, "minutes_used": wallet.plan_minutes_used, "minutes_topup": wallet.topup_minutes,
+        "credits_left": metering.credits_left(wallet), "credits_included": wallet.plan_credits or 0,
+        "credits_used": wallet.plan_credits_used or 0, "credits_bought": max(wallet.credits or 0, 0),
         "cycle_ends": wallet.cycle_end.isoformat() if wallet.cycle_end else None,
         "calls_this_month": len(month_calls), "calls_last_month": last_count,
         "ai_resolved_pct": round(100 * len(resolved) / len(connected)) if connected else 0,
@@ -270,6 +277,8 @@ class AgentUpdate(BaseModel):
     voicemail_action: str = "off"
     voicemail_message: str = Field("", max_length=500)
     transfer_mode: str = "cold"
+    ai_model: Optional[str] = Field(None, max_length=40)  # voice/ai_models.py id ("auto": the default); None = unchanged
+    functions: Optional[list[dict]] = Field(None, max_length=functions.MAX_FUNCTIONS + 1)  # None = unchanged
 
 
 @router.put("/agents/{bot_id}")
@@ -292,6 +301,20 @@ async def update_agent(bot_id: str, data: AgentUpdate, direction: Optional[str] 
     if data.voicemail_action not in ("off", "hangup", "leave_message") or data.transfer_mode not in ("cold", "warm"):
         raise HTTPException(status_code=400, detail="Unknown option")
     agent, exists = await _agent_for(bot, ctx.owner_id, db)
+    if data.ai_model is not None:
+        data.ai_model = ai_models.DEFAULT if data.ai_model == "auto" else data.ai_model
+        chosen = ai_models.AI_MODELS_BY_ID.get(data.ai_model)
+        if not chosen:
+            raise HTTPException(status_code=400, detail="Unknown AI model")
+        # One that's no longer set up can stay while other settings are saved; calls use the default meanwhile.
+        if not ai_models.available(chosen) and chosen.id != ai_models.ai_model(scripts.for_direction(agent, direction).ai_model).id:
+            raise HTTPException(status_code=400, detail=f"{chosen.name} isn't available yet. Choose another model.")
+    cleaned_functions = None
+    if data.functions is not None:
+        try:
+            cleaned_functions = functions.clean(data.functions, scripts.for_direction(agent, direction).functions)
+        except functions.FunctionError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     inbound = dict(agent.inbound or {})
     for field, value in data.model_dump().items():
         if value is None:
@@ -304,6 +327,8 @@ async def update_agent(bot_id: str, data: AgentUpdate, direction: Optional[str] 
             value = _clean_fields(data.collect_fields)
         elif field == "pronunciations":
             value = [{"word": p["word"].strip(), "say": p["say"].strip()} for p in value][:40]
+        elif field == "functions":
+            value = cleaned_functions
         if direction == "inbound" and field in scripts.PER_DIRECTION:
             inbound[field] = value
         elif direction == "inbound" and field in ("greeting", "call_goal", "collect_fields", "voicemail_action",
@@ -543,7 +568,7 @@ async def browser_call(ws: WebSocket, token: str = ""):
     direction = rest[0] if rest and rest[0] in scripts.DIRECTIONS else "inbound"
     async with async_session() as db:
         # The signed token is only issued after /session checked access to this bot, so trust it,
-        # and run the call in the bot's own workspace (its minutes, compliance and logs).
+        # and run the call in the bot's own workspace (its credits, compliance and logs).
         bot = (await db.execute(select(Bot).where(Bot.bot_id == bot_id))).scalars().first()
         if not bot:
             await ws.close(code=4404)
@@ -921,7 +946,7 @@ class TestCallRequest(BaseModel):
 
 @router.post("/test-call")
 async def test_call(req: TestCallRequest, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
-    """Ring your own phone from one of your numbers and talk to the assistant (uses minutes)."""
+    """Ring your own phone from one of your numbers and talk to the assistant (uses credits)."""
     await plans.require(db, ctx.owner_id, "voice")
     rate_limit(f"testcall-try:{ctx.owner_id}", 20, 600)
     bot = await get_owned_bot(req.bot_id, ctx, db)
@@ -940,9 +965,10 @@ async def test_call(req: TestCallRequest, ctx: AuthContext = Depends(require_man
             break
     if not number:
         raise HTTPException(status_code=400, detail="You need an active phone number to place a test call")
+    agent, _ = await _agent_for(bot, ctx.owner_id, db)
     wallet = await metering.get_wallet(db, ctx.owner_id)
-    if metering.minutes_left(wallet) <= 0:
-        raise HTTPException(status_code=402, detail="You're out of voice minutes")
+    if not metering.enough_for_a_call(metering.credits_left(wallet), ai_models.per_minute(ai_models.call_model(agent.ai_model))):
+        raise HTTPException(status_code=402, detail="You're out of voice credits. Buy credits on the Voice page to keep testing.")
     if not await _publicly_reachable():
         raise HTTPException(status_code=503, detail="The phone company can't reach this server right now, so the call would "
                                                     "drop as soon as you answer. Check PUBLIC_BACKEND_URL (or restart the tunnel) and try again.")
@@ -950,7 +976,6 @@ async def test_call(req: TestCallRequest, ctx: AuthContext = Depends(require_man
     # while you fix it.
     rate_limit(f"testcall:{ctx.owner_id}", 5, 600)
     # Make the opening while the phone rings, so the assistant speaks the moment it's answered.
-    agent, _ = await _agent_for(bot, ctx.owner_id, db)
     script_row = (await db.execute(select(VoiceScript).where(
         VoiceScript.bot_id == bot.bot_id, VoiceScript.direction == "outbound"))).scalars().first()
     variables: dict = {}
@@ -1374,6 +1399,22 @@ async def erase_caller(data: EraseRequest, ctx: AuthContext = Depends(require_ow
     chats = [c for c in convs if extract_contact(c.captured_data).get("phone") == e164]
     for conv in chats:
         await db.delete(conv)
+    # WhatsApp chats with the number, and the files kept from them.
+    from backend.models import WhatsAppChat, WhatsAppMessage
+    from whatsapp import storage as whatsapp_storage
+    wa_chats = (await db.execute(select(WhatsAppChat).where(
+        WhatsAppChat.user_id == ctx.owner_id, WhatsAppChat.wa_id == e164.lstrip("+")))).scalars().all()
+    for wa_chat in wa_chats:
+        for media in (await db.execute(select(WhatsAppMessage.media).where(WhatsAppMessage.chat_id == wa_chat.id))).scalars().all():
+            if (media or {}).get("stored") and not (media or {}).get("file_id"):  # not the business's own Files
+                await whatsapp_storage.delete(media["stored"])
+        if wa_chat.conversation_id:
+            conv = await db.get(Conversation, wa_chat.conversation_id)
+            if conv is not None and conv not in chats:
+                await db.delete(conv)
+                chats.append(conv)
+        await db.execute(sa_delete(WhatsAppMessage).where(WhatsAppMessage.chat_id == wa_chat.id))
+        await db.delete(wa_chat)
     await db.commit()
 
     db.add(DncEntry(user_id=ctx.owner_id, e164=e164, reason="caller_request"))
@@ -1387,3 +1428,73 @@ async def erase_caller(data: EraseRequest, ctx: AuthContext = Depends(require_ow
 @router.get("/packs")
 async def packs():
     return catalog.PACKS
+
+
+def _rate_card() -> dict:
+    return {"base_credits": ai_models.BASE_CREDITS, "billing_step_sec": catalog.BILLING_STEP_SEC,
+            "free_credits": catalog.FREE_CREDITS, "groups": ai_models.GROUPS, "packs": catalog.PACKS}
+
+
+@router.get("/models")
+async def list_ai_models(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depends(get_db)):
+    """The AI models an agent can use: what a call minute costs on each, how fast it starts answering, and how
+    long the workspace's credits last on it."""
+    left = metering.credits_left(await metering.get_wallet(db, ctx.owner_id))
+    return {**_rate_card(), "credits_left": left, "default": ai_models.DEFAULT,
+            "models": [ai_models.public(m, left) for m in ai_models.AI_MODELS]}
+
+
+@router.get("/rates")
+async def rates():
+    """The public rate card (the website's pricing): what a call minute costs on each model that's set up."""
+    return {**_rate_card(), "models": [ai_models.public(m) for m in ai_models.AI_MODELS if ai_models.available(m)]}
+
+
+class FunctionTest(BaseModel):
+    function: dict
+    arguments: dict = Field(default_factory=dict)
+    direction: Optional[str] = None
+
+
+@router.post("/agents/{bot_id}/functions/test")
+async def test_function(bot_id: str, req: FunctionTest, ctx: AuthContext = Depends(require_manager),
+                        db: AsyncSession = Depends(get_db)):
+    """Run one of the agent's functions with sample arguments, as it would run on a call (the Test button)."""
+    rate_limit(f"fntest:{ctx.owner_id}", 30, 600)
+    bot = await get_owned_bot(bot_id, ctx, db)
+    agent, _ = await _agent_for(bot, ctx.owner_id, db)
+    try:
+        fn = functions.clean([req.function], scripts.for_direction(agent, _direction(req.direction)).functions)[0]
+    except functions.FunctionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    started = time.monotonic()
+    result = await functions.run(fn, req.arguments, functions.test_variables())
+    return {"result": result, "ms": int((time.monotonic() - started) * 1000)}
+
+
+# From the caller stopping to the agent's first sound, apart from the model: the transcript and the first audio
+# (measured on a 4-minute test call, Oct 2026).
+REPLY_OVERHEAD_SEC = 0.35
+
+
+@router.get("/agents/{bot_id}/details")
+async def agent_details(bot_id: str, direction: Optional[str] = None, ctx: AuthContext = Depends(get_ctx),
+                        db: AsyncSession = Depends(get_db)):
+    """The agent page's summary line: what a call minute costs, how quickly it replies (measured on its recent calls,
+    or expected from its model), and how long the instructions are that go with every answer."""
+    direction = _direction(direction)
+    bot = await get_owned_bot(bot_id, ctx, db)
+    agent, _ = await _agent_for(bot, ctx.owner_id, db)
+    script_row = (await db.execute(select(VoiceScript).where(
+        VoiceScript.bot_id == bot.bot_id, VoiceScript.direction == direction))).scalars().first()
+    call_agent, script = _for_call(agent, script_row, None, direction, {})
+    model = ai_models.call_model(call_agent.ai_model)
+    prompt = llm.system_prompt(call_agent, bot, await llm.call_knowledge(bot), direction, None,
+                               script=scripts.style(script), phone_known=True)
+    recent = (await db.execute(select(CallLog.reply_ms).where(
+        CallLog.bot_id == bot.bot_id, CallLog.direction == direction, CallLog.reply_ms.is_not(None))
+        .order_by(CallLog.started_at.desc()).limit(20))).scalars().all()
+    return {"model": ai_models.public(model), "credits_per_minute": ai_models.per_minute(model),
+            "base_credits": ai_models.BASE_CREDITS, "prompt_tokens": -(-len(prompt) // 4),
+            "reply_sec_expected": round(model.first_words + REPLY_OVERHEAD_SEC, 2) if model.first_words else None,
+            "reply_sec_measured": round(statistics.median(recent) / 1000, 2) if recent else None, "calls_measured": len(recent)}

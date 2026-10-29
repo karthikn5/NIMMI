@@ -13,7 +13,8 @@ from datetime import datetime, timedelta
 from sqlalchemy import Text, insert, select, type_coerce, update
 
 from backend.models import (Bot, CallbackJob, CallLog, Campaign, Conversation, DeletedItem, IntegrationSettings,
-                            KnowledgeGap, Message, PhoneNumber, Subscription, Transaction, VoiceAgent)
+                            KnowledgeGap, Message, PhoneNumber, Subscription, Transaction, VoiceAgent, WhatsAppChat,
+                            WhatsAppNumber)
 from secretbox import EncryptedText
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,8 @@ KEEP_DAYS = 30
 OWNED = [Bot, Conversation, Message, VoiceAgent, KnowledgeGap, Campaign, CallbackJob]
 # Kept, but pointing at the bot: re-attached on restore. (model, column, key column)
 LINKED = [(CallLog, "bot_id", "id"), (PhoneNumber, "bot_id", "id"), (IntegrationSettings, "whatsapp_bot_id", "user_id"),
-          (Subscription, "bot_id", "id"), (Transaction, "bot_id", "id")]
+          (Subscription, "bot_id", "id"), (Transaction, "bot_id", "id"), (WhatsAppNumber, "bot_id", "id"),
+          (WhatsAppChat, "bot_id", "id")]
 
 
 async def _rows(db, model, where) -> list[dict]:

@@ -26,7 +26,7 @@ export const TIERS: Tier[] = [
     {
         name: "Pro", monthly: 6999, summary: "Add phone calls and campaigns.", cta: "Start free",
         previous: "Growth",
-        includes: ["Voice assistant with 300 minutes included", "Call-backs and outbound campaigns", "25,000 AI replies a month",
+        includes: ["Voice assistant with 300 call credits a month", "Call-backs and outbound campaigns", "25,000 AI replies a month",
                    "Webhooks, LeadSquared and Google Sheets", "Business hours and warm transfers", "5 team seats"],
     },
 ];

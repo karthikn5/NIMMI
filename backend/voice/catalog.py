@@ -1,5 +1,5 @@
 """
-Voice product settings in one place. Business numbers (prices, trial minutes)
+Voice product settings in one place. Business numbers (prices, free credits, credits per minute)
 read from the environment so they can change without a deploy.
 """
 import json
@@ -30,28 +30,38 @@ STT_MODEL = os.getenv("SARVAM_STT_MODEL", "saaras:v3")  # v3 supports the code-m
 TTS_MODEL = os.getenv("SARVAM_TTS_MODEL", "bulbul:v3")
 
 
+# ─── Credits ──────────────────────────────────────────────────────
+# Calls are paid for in credits: a call minute is 1 credit for hearing the caller, the voice and the phone line, plus the
+# agent's AI model's credits (voice/ai_models.py, from 0.01 a minute). Measured on 40 test calls (Oct 2026): about 450
+# spoken characters a minute, so speech and the phone line cost us roughly Rs 2.8 a minute (Rs 3.7 on a busy call). A
+# pack credit sells for Rs 4.50-5.49: Bolna charges Rs 5.52 and Ringg Rs 6 a minute; Retell about Rs 7.2 before the model.
+FREE_CREDITS = float(os.getenv("VOICE_FREE_CREDITS", "10"))  # every new workspace: tests and a first pilot
+BILLING_STEP_SEC = 30  # calls are billed in half-minute steps (Bolna's 30-second pulses)
+
+
 def _packs() -> list[dict]:
-    raw = os.getenv("VOICE_PACKS_JSON")
-    if raw:
+    packs = None
+    if raw := os.getenv("VOICE_PACKS_JSON"):
         try:
-            return json.loads(raw)
+            packs = json.loads(raw)
         except ValueError:
             pass
-    # Priced against a real cost of roughly Rs 2.0-2.5 per call-minute.
-    return [
-        {"id": "p_100", "minutes": 100, "price": 549},
-        {"id": "p_500", "minutes": 500, "price": 2499},
-        {"id": "p_1000", "minutes": 1000, "price": 4499},
+    packs = packs or [
+        {"id": "p_100", "credits": 100, "price": 549},
+        {"id": "p_500", "credits": 500, "price": 2499},
+        {"id": "p_1000", "credits": 1000, "price": 4499},
     ]
+    # Packs set before credits counted minutes: a minute was a standard-model minute, which is one credit.
+    return [{**p, "credits": p.get("credits", p.get("minutes"))} for p in packs]
 
 
 PACKS = _packs()
 PACKS_BY_ID = {p["id"]: p for p in PACKS}
 
-# Free minutes every new workspace gets for browser tests and a first pilot.
-TRIAL_MINUTES = int(os.getenv("VOICE_TRIAL_MINUTES", "30"))
-# Minutes a bot plan includes each month, by plan name. Empty = plans include none.
-PLAN_MINUTES: dict = json.loads(os.getenv("VOICE_PLAN_MINUTES_JSON", "{}") or "{}")
+# Credits a bot plan includes each month, by plan name. Empty = plans include none.
+PLAN_CREDITS: dict = json.loads(os.getenv("VOICE_PLAN_CREDITS_JSON") or os.getenv("VOICE_PLAN_MINUTES_JSON") or "{}")
+
+
 NUMBER_MONTHLY_FEE = int(os.getenv("VOICE_NUMBER_MONTHLY_FEE", "999"))
 
 CITIES = ["Chennai", "Coimbatore", "Bengaluru", "Hyderabad", "Mumbai", "Pune", "Delhi"]

@@ -20,6 +20,7 @@ const nav = [
     { href: "/dashboard/integrations", label: "Integrations", managerOnly: true }, // agents can't change settings
     { href: "/dashboard/analytics", label: "Analytics" },
     { href: "/dashboard/billing", label: "Billing", ownerOnly: true },
+    { href: "/dashboard/reference", label: "Reference" },
 ] as { href: string; label: string; exact?: boolean; ownerOnly?: boolean; managerOnly?: boolean }[];
 
 type Workspace = { owner_id: string; name: string; role: "owner" | "admin" | "agent" };

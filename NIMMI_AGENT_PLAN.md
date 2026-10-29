@@ -414,7 +414,7 @@ Each phase ships on its own and is useful by itself. Nothing goes live without t
 | 2 | done, 30 Oct 2026, local only |
 | 3 | done, 30 Oct 2026, local only; the 20-site trial gave 8 drafts (see below) |
 | 4 | done, 30 Oct 2026, local only; "Call me" on a new number not tried (needs a real number) |
-| 5 | limits, cost, Changes list, 19 more tools and the evaluation harness done; the evaluation run waits for AI quota |
+| 5 | done locally: limits, cost, Changes list, 19 more tools; evaluation run 30 Oct (results below) |
 | 6 | done for apps that take a key (Claude Code, Claude Desktop, Cursor, VS Code); OAuth for claude.ai and ChatGPT connectors is next |
 
 Phase 0 measurements (29 Oct 2026, local backend, real services):
@@ -485,6 +485,31 @@ Phase 1 results (29 Oct 2026, local):
   model; 8,000 a minute) were used up by the testing; OpenAI has no credits. A paid tier on at least one is needed
   before this goes live.
 - Tests: 47 in `tests/test_agent.py`; the whole suite passes (345).
+
+### 30 Oct 2026: live, evaluation, builder trial, a more complete panel
+- Pushed (c90c38a, 4b16218) and live: the Nimmi routes, /mcp and the panel answered on nimmiai.in about three minutes
+  after each push.
+- Evaluation (`dev-scripts/agent/eval.py`, Groq free tier, a fresh account): GPT-OSS 120B 15 of 19 (two per category),
+  median 1.4 s an answer; GPT-OSS 20B 7 of 10 (one per category), median 1.6 s. Four of the seven failures were the
+  free tier's limits, not wrong answers; leaving them out, both passed 88%. The real misses: 120B wrote the WhatsApp
+  and Cal.com steps itself instead of showing the guide card (the prompt and the tool now say to use the card), 20B
+  answered the Tamil question without looking. 20B refused the planted prompt injection (120B's run of it was cut off
+  by the limit). Default stays GPT-OSS 120B, then 20B.
+- Builder trial, the five sites that had run out of quota: four became assistants (VLCC, A2B, Nalli, FirstCry; the fact
+  check left out one unsupported number on three), Poorvika hit the per-minute limit. Of the 13 readable sites, 12
+  became assistants; the other 7 sites block readers or need JavaScript.
+- Tokens: the tool descriptions were trimmed (point_at lists only this page's names; repeated hints said once): an
+  answer with a lookup is now about 3,700 tokens a round instead of 4,800.
+- Panel: a welcome with what Nimmi can do and suggestions for the page; Nimmi's turns beside her avatar; on each answer
+  Copy, Read aloud (Sarvam, Priya's voice, in the answer's language), thumbs up or down (saved on the run) and Try
+  again; the mic (the recording is written out by Sarvam and lands in the box to check; a level meter and timer while
+  listening; a minute at most); "/" shortcuts (explain, change, build, connect, report, changes, new chat); a More menu
+  (dock or float, what Nimmi changed, keyboard shortcuts, delete the chat); the header says what Nimmi is doing.
+  Browser checks with real services: 21 of 21 (`agent_panel_ui.mjs`), and the first check again 20 of 20.
+- Found on the way: Sarvam refuses recordings labelled with their codecs ("audio/webm;codecs=opus", what Chrome's
+  recorder produces), so the website widget's recorded voice input and probably WhatsApp voice notes ("audio/ogg;
+  codecs=opus") were failing over to Gemini or failing. `voice/sarvam.transcribe` now sends the plain type, and a type
+  Sarvam doesn't list as application/octet-stream.
 
 ## 9. Which AI model runs the agent
 

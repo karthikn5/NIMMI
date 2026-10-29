@@ -311,8 +311,14 @@ only on the owner's machines): @.claude/private-notes.md
   a Change (exact settings before/after); confirm tools need a preview and run only on Confirm. Each area's tools come
   on its own screens (AREAS); an unknown screen gets all.
 - Tables: agent_threads, agent_messages, agent_runs (cost_inr), agent_events, agent_actions, agent_jobs, agent_keys.
-- Dashboard: `components/agent/` (AgentProvider in `app/dashboard/layout.tsx`, AgentPanel with the Changes tab,
-  AgentToggle, AgentCards, AgentText, AgentKeys on Profile), `lib/agent/` (screens, stream, changes). `useApi` reloads
+- Dashboard: `components/agent/` (AgentProvider in `app/dashboard/layout.tsx`; AgentPanel: header with status and a
+  More menu, history, Changes tab, keyboard shortcuts; AgentComposer: the box, the mic, "/" shortcuts; AgentMessages:
+  welcome, turns, Copy / Read aloud / thumbs / Try again; AgentCards, AgentText, AgentToggle, AgentKeys on Profile),
+  `lib/agent/` (screens, stream, changes, useRecorder, useSpeaker). The mic posts a recording to
+  `/api/agent/transcribe` (Sarvam, language found by itself); Read aloud is `/api/agent/speak` (Sarvam, Priya, the
+  language from the script); thumbs are `/api/agent/runs/{id}/feedback` (agent_runs.feedback).
+- Sarvam STT refuses a content type with codecs ("audio/webm;codecs=opus", Chrome's recorder): `sarvam.transcribe`
+  sends the plain type, and an unlisted one as application/octet-stream (widget mic, panel mic, WhatsApp voice notes). `useApi` reloads
   when Nimmi changes something (`nimmi:changed`); the builder saves unsaved edits before each message (`useAgentScreen`
   flush). Pointable elements carry `data-agent="..."` (a test checks the names). The builder opens a tab from `?tab=`;
   Voice > Numbers and WhatsApp > Settings open their connect form from `?connect=1`.

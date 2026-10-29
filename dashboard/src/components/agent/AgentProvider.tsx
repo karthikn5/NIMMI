@@ -18,7 +18,7 @@ import type { Card } from "./AgentCards";
 
 export type Item =
     | { type: "user"; id: string; text: string }
-    | { type: "text"; id: string; text: string }
+    | { type: "text"; id: string; text: string; runId?: string; rated?: "up" | "down" }
     | { type: "step"; id: string; label: string; ok?: boolean; running?: boolean; actionId?: string; undoable?: boolean; undone?: boolean; busy?: boolean }
     | { type: "confirm"; id: string; actionId: string; title: string; summary: string; state: string; message?: string; busy?: boolean }
     | { type: "note"; id: string; text: string }
@@ -53,6 +53,8 @@ type AgentState = {
     decide: (actionId: string, choice: "confirm" | "cancel") => void;
     undo: (actionId: string) => void;
     jobStep: (jobId: string, step: string, payload: Record<string, unknown>) => void;
+    rate: (itemId: string, rating: "up" | "down") => void;
+    retry: () => void;
 };
 
 const AgentContext = createContext<AgentState | null>(null);
@@ -172,9 +174,11 @@ export default function AgentProvider({ children }: { children: ReactNode }) {
                 setThreadId(String(e.threadId));
                 store(threadKey(), String(e.threadId));
                 break;
-            case "TEXT_MESSAGE_START":
-                setItems((all) => all.some((i) => i.id === e.messageId) ? all : [...all, { type: "text", id: String(e.messageId), text: "" }]);
+            case "TEXT_MESSAGE_START": {
+                const run = runId.current ?? undefined;
+                setItems((all) => all.some((i) => i.id === e.messageId) ? all : [...all, { type: "text", id: String(e.messageId), text: "", runId: run }]);
                 break;
+            }
             case "TEXT_MESSAGE_CONTENT":
                 setItems((all) => all.map((i) => i.id === e.messageId && i.type === "text" ? { ...i, text: i.text + String(e.delta) } : i));
                 break;
@@ -323,6 +327,20 @@ export default function AgentProvider({ children }: { children: ReactNode }) {
         });
     }, [follow, running]);
 
+    /** A thumbs up or down on an answer (kept with its run, to follow the answers' quality). */
+    const rate = useCallback((itemId: string, rating: "up" | "down") => {
+        const item = items.find((i) => i.id === itemId);
+        if (!item || item.type !== "text" || !item.runId) return;
+        setItems((all) => all.map((i) => i.id === itemId && i.type === "text" ? { ...i, rated: rating } : i));
+        void apiFetch(`/api/agent/runs/${item.runId}/feedback`, { method: "POST", json: { rating } }).catch(() => {});
+    }, [items]);
+
+    /** Ask the last question again. */
+    const retry = useCallback(() => {
+        const last = [...items].reverse().find((i) => i.type === "user");
+        if (last && last.type === "user") send(last.text);
+    }, [items, send]);
+
     const note = useCallback((text: string) => {
         setItems((all) => [...all, { type: "note", id: `n-${Date.now()}`, text }]);
     }, []);
@@ -403,8 +421,9 @@ export default function AgentProvider({ children }: { children: ReactNode }) {
     const value = useMemo<AgentState>(() => ({
         open, toggle, close, docked, canDock, setDocked, width, setWidth, ready, items, running, threadId, send, stop,
         newChat, threads, loadThreads, openThread: (id: string) => void load(id), deleteThread, screen, setPage, decide, undo, jobStep,
+        rate, retry,
     }), [open, toggle, close, docked, canDock, setDocked, width, setWidth, ready, items, running, threadId, send, stop,
-         newChat, threads, loadThreads, load, deleteThread, screen, setPage, decide, undo, jobStep]);
+         newChat, threads, loadThreads, load, deleteThread, screen, setPage, decide, undo, jobStep, rate, retry]);
 
     const dockedNow = open && docked && canDock;
     // The same elements in every mode, so the page itself is never re-created when the panel moves.

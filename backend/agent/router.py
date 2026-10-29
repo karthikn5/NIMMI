@@ -6,11 +6,12 @@ Sending a message starts a run in the background and answers with its events as 
 If the connection drops, GET /runs/{id}/events?after=<last seq seen> picks up where it stopped, from any process.
 """
 import os
+import re
 from datetime import timedelta
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import agent.tools  # noqa: F401  (registers the tools)
 from agent import events, loop, providers, registry
 from agent.prompt import clean_screen
-from auth import AuthContext, get_ctx
+from auth import AuthContext, get_ctx, rate_limit
 from backend.models import AgentAction, AgentEvent, AgentJob, AgentMessage, AgentRun, AgentThread
 from database import get_db
 
@@ -178,7 +179,7 @@ def _items(messages: list[AgentMessage], skip_run: Optional[str], errors: Option
             items.append({"type": "user", "id": m.id, "text": m.content or ""})
         elif m.role == "assistant" and m.run_id != skip_run:
             if m.content:
-                items.append({"type": "text", "id": m.id, "text": m.content})
+                items.append({"type": "text", "id": m.id, "text": m.content, "runId": m.run_id})
             for call in m.tool_calls or []:
                 result = results.get(call.get("id"))
                 ok = result is not None and not (result.content or "").startswith('{"error"')
@@ -350,3 +351,73 @@ async def usage(days: int = 30, ctx: AuthContext = Depends(get_ctx), db: AsyncSe
     total = {k: sum(d[k] for d in by_day.values()) for k in ("messages", "tokens_in", "tokens_out", "failed")}
     total["cost_inr"] = round(sum(d["cost_inr"] for d in by_day.values()), 2)
     return {"days": days, "total": total, "by_day": by_day, "by_person": by_person, "today": {"used": used, "limit": limit}}
+
+
+# ─── Speaking to Nimmi, hearing its answers, and rating them ────────
+
+MAX_VOICE_BYTES = 1_000_000  # about a minute of compressed speech
+SPEAK_CHARS = 1500
+
+
+@router.post("/transcribe")
+async def transcribe(file: UploadFile = File(...), ctx: AuthContext = Depends(get_ctx)):
+    """The panel's mic: a short recording to text (Sarvam, which hears Indian languages and mixes like Tanglish, and
+    finds the language itself)."""
+    rate_limit(f"agent-mic:{ctx.user_id}", 30, 60)
+    if not (file.content_type or "").startswith("audio/"):
+        raise HTTPException(status_code=400, detail="Send an audio recording")
+    audio = await file.read(MAX_VOICE_BYTES + 1)
+    if not audio or len(audio) > MAX_VOICE_BYTES:
+        raise HTTPException(status_code=400, detail="Keep it under a minute")
+    from voice import sarvam
+    if not sarvam.configured():
+        raise HTTPException(status_code=503, detail="Voice input isn't available right now")
+    try:
+        text = await sarvam.transcribe(audio, file.filename or "speech.webm", file.content_type, "unknown")
+    except sarvam.SarvamError:
+        raise HTTPException(status_code=502, detail="Couldn't make that out. Please try again, or type it.")
+    return {"text": (text or "").strip()}
+
+
+def spoken(text: str) -> str:
+    """An answer as it should be read aloud: no Markdown marks, links read by their words."""
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text or "")
+    text = re.sub(r"[*_`#>]+", "", text)
+    text = re.sub(r"^\s*(?:[-•]|\d+[.)])\s+", "", text, flags=re.MULTILINE)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+class SpeakIn(BaseModel):
+    text: str = Field(..., max_length=8000)
+
+
+@router.post("/speak")
+async def speak(body: SpeakIn, ctx: AuthContext = Depends(get_ctx)):
+    """Read an answer aloud in Priya's voice, in the language it's written in (Sarvam)."""
+    rate_limit(f"agent-speak:{ctx.user_id}", 30, 60)
+    text = spoken(body.text)[:SPEAK_CHARS]
+    if not text:
+        raise HTTPException(status_code=400, detail="Nothing to read")
+    from voice import sarvam
+    from voice.pipeline import written_language
+    if not sarvam.configured():
+        raise HTTPException(status_code=503, detail="Reading aloud isn't available right now")
+    try:
+        pcm = await sarvam.synthesize(text, written_language(text, None) or "en-IN", "priya", 1.0, 22050)
+    except sarvam.SarvamError:
+        raise HTTPException(status_code=502, detail="Couldn't read that aloud just now. Please try again.")
+    return Response(sarvam.pcm_to_wav(pcm, 22050), media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
+class FeedbackIn(BaseModel):
+    rating: Literal["up", "down"]
+    note: str = Field("", max_length=1000)
+
+
+@router.post("/runs/{run_id}/feedback")
+async def feedback(run_id: str, body: FeedbackIn, ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depends(get_db)):
+    """A thumbs up or down on an answer (and why), so the answers' quality can be followed."""
+    run = await _own_run(run_id, ctx, db)
+    run.feedback, run.feedback_note = body.rating, body.note.strip() or None
+    await db.commit()
+    return {"saved": True}

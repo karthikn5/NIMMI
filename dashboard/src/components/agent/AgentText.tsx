@@ -10,7 +10,7 @@ import type { ReactNode } from "react";
  */
 export default function AgentText({ text }: { text: string }) {
     const blocks: ReactNode[] = [];
-    let list: { ordered: boolean; items: string[] } | null = null;
+    let list: { ordered: boolean; items: { text: string; nested: boolean }[] } | null = null;
     let para: string[] = [];
 
     const flushPara = () => {
@@ -19,7 +19,7 @@ export default function AgentText({ text }: { text: string }) {
     };
     const flushList = () => {
         if (!list) return;
-        const items = list.items.map((item, i) => <li key={i}>{inline(item)}</li>);
+        const items = list.items.map((item, i) => <li key={i} className={item.nested ? "ml-4 list-[circle]" : undefined}>{inline(item.text)}</li>);
         blocks.push(list.ordered
             ? <ol key={blocks.length} className="list-decimal pl-5 space-y-1">{items}</ol>
             : <ul key={blocks.length} className="list-disc pl-5 space-y-1">{items}</ul>);
@@ -28,14 +28,15 @@ export default function AgentText({ text }: { text: string }) {
 
     for (const raw of text.split("\n")) {
         const line = raw.trim();
+        const nested = /^\s{2,}\S/.test(raw) && !!list;  // an indented bullet under the one before it
         const bullet = line.match(/^[-*•]\s+(.*)$/);
         const numbered = line.match(/^\d+[.)]\s+(.*)$/);
         if (bullet || numbered) {
             flushPara();
             const ordered = !!numbered;
-            if (list && list.ordered !== ordered) flushList();
+            if (list && list.ordered !== ordered && !nested) flushList();
             list ??= { ordered, items: [] };
-            list.items.push((bullet ?? numbered)![1]);
+            list.items.push({ text: (bullet ?? numbered)![1], nested });
         } else if (!line) {
             flushPara();
             flushList();

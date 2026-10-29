@@ -39,9 +39,9 @@ async def _status(tc, db) -> dict:
     return out
 
 
-@tool("connection_guide", "Show them step by step how to connect their own Twilio or Exotel account, a WhatsApp number, "
-      "or Cal.com for booking during calls: a card in the panel with the exact clicks in that company's console, a link "
-      "to it, and a button to Nimmi's form. They paste keys only into that form, never into the chat.", "Preparing the steps",
+@tool("connection_guide", "Use whenever they ask how to connect, set up or link WhatsApp, a phone number (their own "
+      "Twilio or Exotel account) or Cal.com: shows a card with the exact clicks in that company's console, a link to it, "
+      "and a button to Nimmi's form. They paste keys only into that form, never into the chat.", "Preparing the steps",
       {"type": "object", "required": ["provider"], "properties": {
           "provider": {"type": "string", "enum": list(guides.GUIDES)},
           "assistant_id": {"type": "string", "description": "Cal.com only: the assistant whose phone agent books."}}})

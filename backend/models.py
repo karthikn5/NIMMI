@@ -760,6 +760,8 @@ class AgentRun(Base):
     tokens_out = Column(Integer, default=0)
     first_output_ms = Column(Integer, nullable=True)  # from the message to the first words or tool step
     cost_inr = Column(Float, nullable=True)  # what the AI cost, at the models' list prices (agent/providers.cost_inr)
+    feedback = Column(String, nullable=True)  # the person's thumbs on the answer: up, down
+    feedback_note = Column(Text, nullable=True)
     error = Column(Text, nullable=True)
     last_seq = Column(Integer, default=0)
     started_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)

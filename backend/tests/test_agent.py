@@ -1160,3 +1160,75 @@ def test_nimmi_can_have_its_own_ai_keys_so_it_never_uses_up_the_ones_calls_and_c
     monkeypatch.delenv("AGENT_GROQ_API_KEY")
     run(collect, providers.stream("S", "", [{"role": "user", "content": "hi"}], []))
     assert seen[-1]["headers"]["authorization"] == "Bearer test-GROQ_API_KEY"  # without its own: the backend's
+
+
+
+# ─── The panel's voice and feedback ─────────────────────────────────
+
+def test_the_mic_writes_out_speech_and_answers_can_be_read_aloud_and_rated(client, make_user, model, monkeypatch):
+    from voice import sarvam
+    user = make_user()
+    heard = {}
+
+    async def transcribe(audio, filename, content_type, language="unknown"):
+        heard.update(audio=audio, language=language)
+        return "  என் assistants எத்தனை?  "
+
+    async def synthesize(text, language, speaker, pace, sample_rate):
+        heard.update(text=text, said_in=language, speaker=speaker)
+        return b"\x00\x01" * 200
+    monkeypatch.setattr(sarvam, "configured", lambda: True)
+    monkeypatch.setattr(sarvam, "transcribe", transcribe)
+    monkeypatch.setattr(sarvam, "synthesize", synthesize)
+
+    def mic(data, kind="audio/webm", who=user.h()):
+        return client.post("/api/agent/transcribe", files={"file": ("speech.webm", data, kind)}, headers=who)
+    assert mic(b"voice").json() == {"text": "என் assistants எத்தனை?"} and heard["language"] == "unknown"
+    assert mic(b"x", "text/plain").status_code == 400 and mic(b"x" * 1_000_001).status_code == 400
+    assert client.post("/api/agent/transcribe", files={"file": ("s.webm", b"v", "audio/webm")}).status_code == 401
+
+    said = client.post("/api/agent/speak", json={"text": "**Done.** Open [Billing](/dashboard/billing):\n- one\n- two"}, headers=user.h())
+    assert said.status_code == 200 and said.headers["content-type"] == "audio/wav" and said.content[:4] == b"RIFF"
+    assert heard["text"] == "Done. Open Billing: one two" and heard["said_in"] == "en-IN" and heard["speaker"] == "priya"
+    client.post("/api/agent/speak", json={"text": "உங்களிடம் மூன்று assistants இருக்கு"}, headers=user.h())
+    assert heard["said_in"] == "ta-IN"
+    assert client.post("/api/agent/speak", json={"text": "** **"}, headers=user.h()).status_code == 400
+
+    model([Text("You have one assistant.")])
+    evs = ask(user, "how many assistants?")
+    run_id = evs[0]["runId"]
+    thread = client.get(f"/api/agent/threads/{evs[0]['threadId']}", headers=user.h()).json()
+    assert thread["items"][-1]["runId"] == run_id  # each answer knows its run, for the thumbs
+    assert client.post(f"/api/agent/runs/{run_id}/feedback", json={"rating": "down", "note": "wrong count"}, headers=user.h()).json() == {"saved": True}
+    assert client.post(f"/api/agent/runs/{run_id}/feedback", json={"rating": "meh"}, headers=user.h()).status_code == 422
+    assert client.post(f"/api/agent/runs/{run_id}/feedback", json={"rating": "up"}, headers=make_user().h()).status_code == 404
+
+    async def rated():
+        from backend.models import AgentRun
+        from database import async_session
+        async with async_session() as db:
+            run = await db.get(AgentRun, run_id)
+            return run.feedback, run.feedback_note
+    assert client.portal.call(rated) == ("down", "wrong count")
+
+
+
+def test_recordings_reach_sarvam_with_a_type_it_takes(run, monkeypatch):
+    """Chrome labels recordings "audio/webm;codecs=opus", which Sarvam refuses; Safari's audio/mp4 it doesn't list."""
+    import httpx as real_httpx
+    from voice import sarvam
+    sent = []
+
+    def answer(request):
+        label = request.content.split(b"Content-Type: ")[1].split(b"\r\n")[0].decode()
+        sent.append(label)
+        if label in ("audio/webm", "application/octet-stream"):
+            return real_httpx.Response(200, json={"transcript": " hello "})
+        return real_httpx.Response(400, json={"error": {"message": f"Invalid file type: {label}. Only [...]"}})
+    real = real_httpx.AsyncClient
+    monkeypatch.setattr(sarvam.httpx, "AsyncClient", lambda **kw: real(transport=real_httpx.MockTransport(answer)))
+    monkeypatch.setenv("SARVAM_API_KEY", "test")
+    assert run(sarvam.transcribe, b"voice", "speech.webm", "audio/webm;codecs=opus") == "hello"
+    assert sent == ["audio/webm"]
+    assert run(sarvam.transcribe, b"voice", "speech.mp4", "audio/mp4") == "hello"
+    assert sent[1:] == ["audio/mp4", "application/octet-stream"]

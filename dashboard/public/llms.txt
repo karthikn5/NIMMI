@@ -1,0 +1,26 @@
+# Nimmi AI
+
+> Nimmi AI (https://nimmiai.in) is an Indian SaaS for AI assistants on three channels: a website chat widget, WhatsApp, and phone calls (an AI voice agent). Assistants are trained on a business's own information, speak 11 Indian languages (English, Hindi, Tamil, Telugu, Kannada, Malayalam, Marathi, Bengali, Gujarati, Punjabi, Odia), capture and score leads, follow up, book meetings and hand over to the business's team.
+
+## Products
+- [AI voice agent](https://nimmiai.in/ai-voice-agent): answers business calls, calls back leads within a minute, books appointments and meetings, follows up by lead rating, transfers to the team with a brief; follows the caller's language; made for TRAI's calling rules.
+- [WhatsApp AI chatbot](https://nimmiai.in/whatsapp-chatbot): replies on the business's own WhatsApp number through Meta's WhatsApp Business Platform; understands voice notes, photos and PDFs; sends brochures and price lists; team inbox and takeover.
+- [Custom AI chatbot for websites](https://nimmiai.in/ai-chatbot-for-website): trained on website pages, PDFs, YouTube videos and FAQs; one line of code or a WordPress plugin; lead capture; live chat handover.
+- [AI lead management](https://nimmiai.in/lead-management): leads from every channel scored hot, warm or cold; call-backs, follow-ups and meetings with the team's approval; leads sent to email, LeadSquared, Google Sheets or any CRM by webhook.
+
+## Pricing
+- [Pricing](https://nimmiai.in/pricing): free plan with one assistant, one website and 10 call credits. Paid plans per assistant: Starter ₹999/month, Growth ₹2,499/month (WhatsApp), Pro ₹6,999/month (voice, campaigns); yearly billing gives 12 months for the price of 10. Calls use credits: 1 credit a minute plus the chosen AI model's rate; packs from ₹549 for 100 credits.
+
+## Industries
+- [Real estate](https://nimmiai.in/solutions/real-estate)
+- [Clinics and hospitals](https://nimmiai.in/solutions/healthcare)
+- [E-commerce](https://nimmiai.in/solutions/ecommerce)
+
+## Guides
+- [Is AI calling legal in India? TRAI rules](https://nimmiai.in/blog/ai-calling-rules-india-trai)
+- [What is an AI voice agent?](https://nimmiai.in/blog/what-is-an-ai-voice-agent)
+- [Speed to lead](https://nimmiai.in/blog/speed-to-lead-call-back-in-5-minutes)
+- [WhatsApp chatbot for business in India](https://nimmiai.in/blog/whatsapp-chatbot-for-business-india)
+
+## Contact
+- Email: support.nimmi@gmail.com

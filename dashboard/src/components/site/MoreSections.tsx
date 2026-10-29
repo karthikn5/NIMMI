@@ -138,7 +138,7 @@ export function Pricing() {
                     </div>
                 </div>
 
-                <div className="mt-10">
+                <div id="rates" className="mt-10 scroll-mt-24">
                     <h3 className="font-display text-[19px] font-medium">Call rates by AI model</h3>
                     <p className="text-[14px] text-stone-600 mt-1 max-w-[62ch]">
                         Choose the AI model for each agent. Quicker models cost less; the smarter ones handle detailed questions.
@@ -158,6 +158,10 @@ export const FAQS = [
     { q: "Is it allowed to call my leads automatically?", a: "Only people who asked to be called or agreed to it. The assistant says it's automated and that the call may be recorded, honours requests to stop, and keeps a do-not-call list, in line with TRAI rules." },
     { q: "Can I try it before paying?", a: "Yes. The free plan includes one assistant to build and test, one website published on a free address, and 10 call credits to try phone calls. After that, calls are pay as you go with credit packs. Integrations and custom domains come with a paid plan, and you pay when you put an assistant live." },
     { q: "What counts as an AI reply?", a: "Each answer your assistant writes in website chat or WhatsApp. Replies your team sends from Live chat don't count. If you reach your plan's limit, we'll let you know before anything stops, and you can move up a plan." },
+    { q: "Can it call people back at a time they choose?", a: "Yes. When a caller says “call me after 10 minutes” or “tomorrow at 11”, the assistant books it during the call and rings them then, from the number they called. A time outside your calling hours is moved to the nearest one, and the caller is told." },
+    { q: "Does it follow up with leads by itself?", a: "When you turn it on. After each call it rates the lead hot, warm or cold and plans the next call by your rules, with what to say. You can check each follow-up before it's made. Follow-ups stop when someone books, says no or opts out, and seven days after they last spoke with you." },
+    { q: "Can customers book a meeting with my team?", a: "Yes. The assistant offers your free times and books the one they pick. You approve it, the assistant calls to confirm, and they get a reminder and the joining link on WhatsApp or email before it starts." },
+    { q: "Does it remember people who call again?", a: "Yes. It greets returning callers by name and remembers what earlier calls and WhatsApp chats were about, along with your team's notes. You can switch this off, or make it forget a caller." },
 ];
 
 export function FAQ() {
@@ -206,7 +210,8 @@ export function FinalCTA() {
 
 export function SiteFooter() {
     const cols = [
-        { title: "Product", links: [["Website chat", "#product"], ["Phone calls", "#voice"], ["Campaigns", "#campaigns"], ["Live chat", "#team"], ["Pricing", "#pricing"]] },
+        { title: "Product", links: [["AI voice agent", "/ai-voice-agent"], ["WhatsApp chatbot", "/whatsapp-chatbot"], ["Website chatbot", "/ai-chatbot-for-website"],
+                                    ["Lead management", "/lead-management"], ["Campaigns", "/#campaigns"], ["Live chat", "/#team"], ["Pricing", "/pricing"]] },
         { title: "Industries", links: [["Real estate", "/solutions/real-estate"], ["Healthcare", "/solutions/healthcare"], ["Online stores", "/solutions/ecommerce"]] },
         { title: "Resources", links: [["Blog", "/blog"], ["Build a custom AI chatbot", "/blog/how-to-build-custom-ai-chatbot-2026"], ["Chatbot ROI", "/blog/calculating-chatbot-roi"]] },
     ];

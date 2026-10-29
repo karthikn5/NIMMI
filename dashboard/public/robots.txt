@@ -1,8 +1,5 @@
-User-agent: Googlebot
-Allow: /
-Disallow: /dashboard/
-Disallow: /api/
-
+# Nimmi AI: public pages are open to every search engine and AI assistant.
+# The signed-in app and the API are private; sign-in pages and the embedded chat window are marked noindex.
 User-agent: *
 Allow: /
 Disallow: /dashboard/

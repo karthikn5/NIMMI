@@ -22,9 +22,19 @@ const SLIDES = [
         alt: "A call opened in the Calls page, showing its summary, collected details and transcript",
     },
     {
+        id: "contacts", title: "Remembers every caller", path: "voice/contacts",
+        text: "Each caller's name, what they told the assistant, your team's notes and every call, with their lead rating and what's coming up for them.",
+        alt: "A contact opened in Contacts, with the lead rating, an upcoming meeting, team notes and what they told the assistant",
+    },
+    {
         id: "campaign", title: "Call a whole list", path: "voice/campaigns",
         text: "Upload the people who asked to hear from you. Watch progress as it happens, and export who booked, who didn't and why.",
         alt: "A campaign page with progress, reached and goal-met counts, and results for each person",
+    },
+    {
+        id: "schedule", title: "Follow-ups and meetings", path: "voice/schedule",
+        text: "Call-backs people asked for, follow-ups by lead rating and meeting requests waiting for your OK, all in one place.",
+        alt: "The Schedule page with the month's call-backs, follow-ups and meetings, and meeting requests waiting for approval",
     },
     {
         id: "data", title: "Every lead in one table", path: "voice/data",

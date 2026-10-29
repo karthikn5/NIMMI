@@ -32,6 +32,15 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // The signed-in app, sign-in pages and the embedded chat window stay out of search results.
+        source: "/:area(dashboard|widget|auth)/:path*",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+      },
+      {
+        source: "/:area(dashboard|widget|auth)",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+      },
+      {
         // public/fonts: a changed font gets a new file name, so browsers can keep these for a year.
         source: "/fonts/:file*",
         headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],

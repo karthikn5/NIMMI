@@ -1,13 +1,16 @@
 import Link from "next/link";
 import type { CSSProperties } from "react";
 import { ArrowRight, Check, Globe, MessageCircle, Phone } from "lucide-react";
-import { CallSummaryPreview, CampaignPreview, ChatPreview, DataPreview, LiveChatPreview, TranscriptPreview } from "./Previews";
+import {
+    CallSummaryPreview, CampaignPreview, ChatPreview, DataPreview, FunctionPreview, LiveChatPreview, MemoryPreview,
+    SchedulePreview, TranscriptPreview, WhatsAppPreview,
+} from "./Previews";
 import { Container, Eyebrow, Heading, Lead, PrimaryLink, Section, SecondaryLink } from "./primitives";
 import ProductTour from "./ProductTour";
 
 export const LANGUAGES = ["English", "Hindi", "Tamil", "Telugu", "Kannada", "Malayalam", "Marathi", "Bengali", "Gujarati", "Punjabi", "Odia"];
 
-function Ticks({ items, dark }: { items: string[]; dark?: boolean }) {
+export function Ticks({ items, dark }: { items: string[]; dark?: boolean }) {
     return (
         <ul className="space-y-2.5">
             {items.map((t) => (
@@ -32,9 +35,12 @@ export function Hero() {
             }} />
             <Container className="grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] gap-14 lg:gap-12 items-center">
                 <div>
-                    <p className="site-rise text-[14px] text-stone-600 mb-5">AI assistant for website chat, WhatsApp and phone calls</p>
-                    <h1 className="site-rise font-display text-[42px] sm:text-[62px] leading-[1.02] font-medium tracking-[-0.03em] text-balance" style={{ "--rise-delay": "80ms" } as CSSProperties}>
-                        Every customer answered, <span className="text-plum">in their language.</span>
+                    {/* One heading for search engines (what Nimmi is, then the promise), drawn as the two lines it always was. */}
+                    <h1>
+                        <span className="site-rise block text-[14px] text-stone-600 mb-5">AI voice agent and chatbot for website chat, WhatsApp and phone calls</span>
+                        <span className="site-rise block font-display text-[42px] sm:text-[62px] leading-[1.02] font-medium tracking-[-0.03em] text-balance" style={{ "--rise-delay": "80ms" } as CSSProperties}>
+                            Every customer answered, <span className="text-plum">in their language.</span>
+                        </span>
                     </h1>
                     <p className="site-rise text-[18px] leading-relaxed text-stone-600 mt-6 max-w-xl" style={{ "--rise-delay": "180ms" } as CSSProperties}>
                         Nimmi is an assistant trained on your business. It answers questions, captures leads and books appointments
@@ -59,17 +65,17 @@ export function Hero() {
 export function Channels() {
     const channels = [
         {
-            icon: Globe, name: "Website chat",
+            icon: Globe, name: "Website chat", href: "/ai-chatbot-for-website", more: "Website chatbot",
             items: ["A chat window in your colours, live in one line of code", "Flows for forms and qualifying questions",
                     "Visitors can switch to a person at any time", "A call-back button for people who'd rather talk"],
         },
         {
-            icon: MessageCircle, name: "WhatsApp",
+            icon: MessageCircle, name: "WhatsApp", href: "/whatsapp-chatbot", more: "WhatsApp chatbot",
             items: ["Replies day and night on your WhatsApp Business number", "Understands Tanglish and Hinglish, and replies in kind",
                     "Your team takes over from Live chat when needed", "Confirms bookings made on calls"],
         },
         {
-            icon: Phone, name: "Phone calls",
+            icon: Phone, name: "Phone calls", href: "/ai-voice-agent", more: "AI voice agent",
             items: ["Answers calls on your business number", "Calls back new leads within a minute",
                     "Transfers to your team with a one-line brief", "Recording, transcript and summary for every call"],
         },
@@ -81,11 +87,14 @@ export function Channels() {
                 <Heading>Everywhere your customers already reach you.</Heading>
                 <Lead>Train it once. The same knowledge, tone and rules apply on your website, on WhatsApp and on the phone, and every conversation lands in one place.</Lead>
                 <div className="grid md:grid-cols-3 gap-px bg-line border border-line rounded-lg overflow-hidden mt-12">
-                    {channels.map(({ icon: Icon, name, items }, i) => (
+                    {channels.map(({ icon: Icon, name, items, href, more }, i) => (
                         <div key={name} data-reveal style={{ "--reveal-delay": `${i * 90}ms` } as CSSProperties} className="bg-white p-6 sm:p-7">
                             <Icon size={20} className="text-plum" aria-hidden />
                             <h3 className="font-display text-[19px] font-medium mt-4 mb-4">{name}</h3>
                             <Ticks items={items} />
+                            <Link href={href} className="inline-flex items-center gap-1.5 mt-6 text-[14px] font-medium text-plum hover:underline underline-offset-4">
+                                {more} <ArrowRight size={14} />
+                            </Link>
                         </div>
                     ))}
                 </div>
@@ -130,6 +139,9 @@ export function Voice() {
                                 </div>
                             ))}
                         </dl>
+                        <Link href="/ai-voice-agent" className="inline-flex items-center gap-1.5 mt-10 text-[15px] font-medium text-[#d9b8e0] hover:underline underline-offset-4">
+                            More about the AI voice agent <ArrowRight size={15} />
+                        </Link>
                     </div>
                     <div className="lg:sticky lg:top-24 space-y-4">
                         <TranscriptPreview />
@@ -202,6 +214,111 @@ export function Team() {
                     <Link href="/auth/signup" className="inline-flex items-center gap-1.5 mt-8 text-[15px] font-medium text-plum hover:underline underline-offset-4">
                         Try it with your team <ArrowRight size={15} />
                     </Link>
+                </div>
+            </Container>
+        </Section>
+    );
+}
+
+export function WhatsApp() {
+    return (
+        <Section id="whatsapp">
+            <Container className="grid lg:grid-cols-2 gap-14 items-center">
+                <div className="order-2 lg:order-1"><WhatsAppPreview /></div>
+                <div className="order-1 lg:order-2">
+                    <Eyebrow>WhatsApp</Eyebrow>
+                    <Heading>On WhatsApp, it chats like a person.</Heading>
+                    <Lead>It waits for customers to finish typing, shows that it&apos;s typing, and answers in short messages. It understands voice notes, photos and PDFs, and sends your brochure or price list when that helps.</Lead>
+                    <div className="mt-8"><Ticks items={[
+                        "Listens to voice notes in Tamil, Hindi, English and more",
+                        "Reads the photos and PDFs customers send, like a form or a receipt",
+                        "Sends your brochures, price lists and menus from your files",
+                        "Quick-reply buttons for common choices",
+                        "Your team can take over any chat from the inbox",
+                    ]} /></div>
+                    <Link href="/whatsapp-chatbot" className="inline-flex items-center gap-1.5 mt-8 text-[15px] font-medium text-plum hover:underline underline-offset-4">
+                        More about the WhatsApp chatbot <ArrowRight size={15} />
+                    </Link>
+                </div>
+            </Container>
+        </Section>
+    );
+}
+
+export function Memory() {
+    return (
+        <Section id="memory" tone="white">
+            <Container className="grid lg:grid-cols-2 gap-14 items-center">
+                <div>
+                    <Eyebrow>Caller memory</Eyebrow>
+                    <Heading>Greets returning callers by name.</Heading>
+                    <Lead>When someone calls again, the assistant knows who they are and what they asked last time, from earlier calls and WhatsApp chats. It picks up where you left off, without asking the same questions twice.</Lead>
+                    <div className="mt-8"><Ticks items={[
+                        "Their name, the details they gave and what each call was about",
+                        "Your team's notes, read before the next call",
+                        "Separate agents for incoming and outgoing calls, each with its own opening and manner",
+                        "Scripts written with AI: answer a few questions and get the opening, instructions and goal",
+                        "Forgets a caller on request, and never reads out their number",
+                    ]} /></div>
+                </div>
+                <MemoryPreview />
+            </Container>
+        </Section>
+    );
+}
+
+export function FollowUps() {
+    const points = [
+        { title: "Call-backs when asked", text: "“Call me after 10 minutes” or “tomorrow at 11”: it books the time during the call and rings them then, from the number they called." },
+        { title: "Follow-ups that know the lead", text: "After each call it rates the lead hot, warm or cold and writes what the next call should say. Your rules set how many, and how far apart." },
+        { title: "Meetings you approve", text: "It offers your free times and books one. You approve, it calls to confirm, and the joining link reaches them on WhatsApp or email before it starts." },
+        { title: "Within the rules", text: "Calling hours, opt-outs and India's 7‑day consent rule are built in. Turn on a review step to check each follow-up before it's made." },
+    ];
+    return (
+        <Section id="schedule" tone="white">
+            <Container>
+                <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] gap-14 items-start">
+                    <div>
+                        <Eyebrow>Follow-ups and meetings</Eyebrow>
+                        <Heading>Every lead followed up. Every meeting confirmed.</Heading>
+                        <Lead>Your assistant keeps working after the call ends. It calls back when people ask, follows up with leads by how interested they sounded, and books meetings with your team.</Lead>
+                        <dl className="grid sm:grid-cols-2 gap-x-8 gap-y-7 mt-12">
+                            {points.map((p, i) => (
+                                <div key={p.title} data-reveal style={{ "--reveal-delay": `${(i % 2) * 80}ms` } as CSSProperties}>
+                                    <dt className="text-[15px] font-semibold">{p.title}</dt>
+                                    <dd className="text-[14px] leading-relaxed text-stone-600 mt-1.5">{p.text}</dd>
+                                </div>
+                            ))}
+                        </dl>
+                        <Link href="/lead-management" className="inline-flex items-center gap-1.5 mt-10 text-[15px] font-medium text-plum hover:underline underline-offset-4">
+                            How AI lead management works <ArrowRight size={15} />
+                        </Link>
+                    </div>
+                    <div className="lg:sticky lg:top-24">
+                        <SchedulePreview />
+                    </div>
+                </div>
+            </Container>
+        </Section>
+    );
+}
+
+export function Connected() {
+    return (
+        <Section id="functions">
+            <Container className="grid lg:grid-cols-2 gap-14 items-center">
+                <div className="order-2 lg:order-1"><FunctionPreview /></div>
+                <div className="order-1 lg:order-2">
+                    <Eyebrow>Connected to your systems</Eyebrow>
+                    <Heading>Looks it up while they&apos;re on the line.</Heading>
+                    <Lead>Connect your own systems and calendar. During the call the assistant checks an order, a booking or a free slot, and answers from what it finds.</Lead>
+                    <div className="mt-8"><Ticks items={[
+                        "Your own API: order status, balances, delivery dates and more",
+                        "Cal.com: checks free slots and books appointments on the call",
+                        "Asks for the details it needs first, and never makes up an answer",
+                        "Keys and passwords are stored encrypted, never shown in full",
+                        "Choose each agent's AI model, from low-cost to the smartest",
+                    ]} /></div>
                 </div>
             </Container>
         </Section>

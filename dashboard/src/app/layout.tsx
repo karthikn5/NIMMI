@@ -4,37 +4,37 @@ import { preload } from "react-dom";
 import "./globals.css";
 import "./fonts.css";
 
+// Defaults for every page. Each public page sets its own title, description and canonical address (lib/site/seo.ts);
+// there is deliberately no site-wide canonical here: inherited, it told search engines every page was the home page.
 export const metadata: Metadata = {
   metadataBase: new URL("https://nimmiai.in"),
-  title: "Nimmi AI | AI assistant for website chat, WhatsApp and phone calls",
-  description: "AI assistants for website chat, WhatsApp and phone calls in 11 Indian languages. Trained on your business, they answer customers, capture leads and hand over to your team. Free to build and test.",
-  alternates: {
-    canonical: "https://nimmiai.in",
+  title: {
+    default: "AI Voice Agent, WhatsApp & Website Chatbot | Nimmi AI",
+    template: "%s | Nimmi AI",
+  },
+  description: "AI voice agent and chatbot that answers calls, WhatsApp and website chat in 11 Indian languages, captures leads, follows up and books meetings. Start free.",
+  applicationName: "Nimmi AI",
+  authors: [{ name: "Nimmi AI", url: "https://nimmiai.in" }],
+  creator: "Nimmi AI",
+  publisher: "Nimmi AI",
+  category: "Business software",
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true, "max-image-preview": "large", "max-snippet": -1, "max-video-preview": -1 },
   },
   verification: {
     google: "woQlFXLN9lakQBgXCghYGOoN5RNv7bQBFUr-bJZmlOk",
   },
   openGraph: {
-    title: "Nimmi AI | AI assistant for website chat, WhatsApp and phone calls",
-  description: "AI assistants for website chat, WhatsApp and phone calls in 11 Indian languages. Trained on your business, they answer customers, capture leads and hand over to your team. Free to build and test.",
-    url: "https://nimmiai.in",
     siteName: "Nimmi AI",
-    images: [
-      {
-        url: "/og-image.png",
-        width: 1200,
-        height: 630,
-        alt: "Nimmi AI",
-      },
-    ],
+    images: [{ url: "/og/home.png", width: 1200, height: 630, alt: "Nimmi AI: AI voice agent and chatbot for Indian businesses" }],
     locale: "en_IN",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Nimmi AI | AI assistant for website chat, WhatsApp and phone calls",
-    description: "AI assistants for website chat, WhatsApp and phone calls in 11 Indian languages. Trained on your business, they answer customers, capture leads and hand over to your team. Free to build and test.",
-    images: ["/og-image.png"],
+    images: ["/og/home.png"],
   },
   icons: {
     icon: "/favicon.png",
@@ -51,7 +51,7 @@ export default function RootLayout({
   preload("/fonts/geist-v5-latin.woff2", { as: "font", type: "font/woff2" });
   preload("/fonts/geist-mono-v6-latin.woff2", { as: "font", type: "font/woff2" });
   return (
-    <html lang="en">
+    <html lang="en-IN">
       <body
         className="antialiased"
         suppressHydrationWarning

@@ -268,7 +268,7 @@ function LeadSection({ contact: c, onChanged }: { contact: ContactDetail; onChan
             </div>
             {c.lead_status && (
                 <p className="text-xs text-stone-500">
-                    {c.lead_set_by_team ? "Set by your team." : `Rated by the assistant${c.lead_reason ? `: ${c.lead_reason}` : "."}`}
+                    {c.lead_set_by_team ? "Set by your team." : `Rated by the assistant${c.lead_reason ? `: ${c.lead_reason.replace(/[.!?]?$/, ".")}` : "."}`}
                     {c.follow_ups > 0 && ` ${c.follow_ups} follow-up call${c.follow_ups === 1 ? "" : "s"} so far.`}
                 </p>
             )}

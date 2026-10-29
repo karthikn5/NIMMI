@@ -1,6 +1,10 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowLeft, CheckCircle2, ShoppingCart, Stethoscope, Building2, ArrowRight, Zap, ShieldCheck, HeartPulse } from "lucide-react";
+import { notFound } from "next/navigation";
+import { CheckCircle2, ShoppingCart, Stethoscope, Building2, ArrowRight, Zap, ShieldCheck, HeartPulse } from "lucide-react";
+import JsonLd from "@/components/site/JsonLd";
+import { breadcrumbLd, pageMetadata } from "@/lib/site/seo";
 
 const industries = {
   "ecommerce": {
@@ -9,12 +13,12 @@ const industries = {
     icon: <ShoppingCart className="text-[#9d55ac]" size={48} />,
     heroImage: "/industry-ecommerce.png",
     benefits: [
-      "Instant Cart Recovery: Remind users about their items.",
-      "24/7 Customer Support: Resolve tracking and return queries instantly.",
-      "Personalized Recommendations: Suggest products based on user intent.",
-      "Seamless WhatsApp Integration: Sell where your customers chat."
+      "Order Questions: Answer order status, returns and delivery queries from your own system.",
+      "24/7 Customer Support: Website chat, WhatsApp and phone, in 11 Indian languages.",
+      "Cash-on-Delivery Checks: Call customers to confirm COD orders before you ship.",
+      "Seamless WhatsApp Integration: Sell where your customers chat, and send catalogues and price lists."
     ],
-    description: "Scale your online store in India with Nimmi AI. Our specialized e-commerce bots handle everything from size guides to order tracking, letting you focus on growth."
+    description: "Scale your online store in India with Nimmi AI. Your assistant answers product questions, sizes and order status on your website, WhatsApp and phone, so your team can focus on growth."
   },
   "healthcare": {
     title: "AI Chatbots for Healthcare",
@@ -22,12 +26,12 @@ const industries = {
     icon: <Stethoscope className="text-[#9d55ac]" size={48} />,
     heroImage: "/industry-healthcare.png",
     benefits: [
-      "Automated Appointment Booking: Sync with your clinical calendar.",
-      "Patient Triage: Direct patients to the right department based on symptoms.",
-      "Secure FAQ Handling: Answer common medical and insurance questions.",
-      "Post-Care Follow-ups: Send automated wellness checks and reminders."
+      "Appointment Booking: Book consultations on your free slots, by phone, WhatsApp or chat.",
+      "Doctor Timings and Departments: Answer where to go and when, never medical advice.",
+      "Clinic FAQs: Fees, location, insurance accepted and what to bring, from your own information.",
+      "Reminders and Follow-ups: A reminder before each appointment, and a call to rebook missed ones."
     ],
-    description: "Provide compassionate, instant support with HIPAA-compliant AI assistants. Nimmi AI helps hospitals and clinics in India provide better care through automation."
+    description: "Answer every patient call and message, day and night. Nimmi AI helps hospitals and clinics in India book appointments and answer routine questions, and hands patients to your staff when needed."
   },
   "real-estate": {
     title: "AI Chatbots for Real Estate",
@@ -35,22 +39,54 @@ const industries = {
     icon: <Building2 className="text-[#9d55ac]" size={48} />,
     heroImage: "/industry-realestate.png",
     benefits: [
-      "24/7 Lead Capture: Never miss a property inquiry again.",
-      "Virtual Tour Scheduling: Automate site visit bookings instantly.",
-      "Property Matching: Filter listings based on budget and location.",
-      "Instant Quote Generation: Provide basic pricing info on the spot."
+      "24/7 Lead Capture: Never miss a property enquiry again, on calls, WhatsApp or your website.",
+      "Site Visit Booking: Book site visits on your free times, confirmed with a call.",
+      "Project Answers: Prices, sizes and amenities from your own brochures and price lists.",
+      "Lead Follow-ups: Calls back interested buyers and follows up until they decide."
     ],
-    description: "Stay ahead in the competitive Indian real estate market. Our bots engage property seekers the moment they land on your site, qualifying leads while you sleep."
+    description: "Stay ahead in the competitive Indian real estate market. Your assistant engages property seekers the moment they enquire, on calls, WhatsApp or your website, qualifying leads while you sleep."
   }
 };
 
-export default function IndustryPage({ params }: { params: { industry: string } }) {
-  const data = industries[params.industry as keyof typeof industries];
+// What each page is called in search results, with what people search for: chatbot, voice agent, WhatsApp.
+const SEO: Record<string, { name: string; title: string; description: string }> = {
+  "ecommerce": {
+    name: "E-commerce", title: "AI Chatbot and Voice Agent for E-commerce",
+    description: "AI chatbot, WhatsApp bot and voice agent for online stores in India: order status, returns, COD confirmation calls and product questions, 24/7.",
+  },
+  "healthcare": {
+    name: "Healthcare", title: "AI Receptionist for Clinics and Hospitals",
+    description: "AI receptionist for clinics and hospitals in India: books appointments, answers doctor timings and fees on calls, WhatsApp and chat, never medical advice.",
+  },
+  "real-estate": {
+    name: "Real estate", title: "AI Chatbot and Voice Agent for Real Estate",
+    description: "AI voice agent and chatbot for real estate in India: answers project enquiries, books site visits and follows up with buyers on calls, WhatsApp and web.",
+  },
+};
 
-  if (!data) return <div className="p-20 text-center">Industry solution not found</div>;
+type Params = Promise<{ industry: string }>;
+
+export function generateStaticParams() {
+  return Object.keys(industries).map((industry) => ({ industry }));
+}
+
+export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
+  const { industry } = await params;
+  const seo = SEO[industry];
+  if (!seo) return { title: "Not found", robots: { index: false } };
+  return pageMetadata({ title: seo.title, description: seo.description, path: `/solutions/${industry}` });
+}
+
+export default async function IndustryPage({ params }: { params: Params }) {
+  const { industry } = await params;
+  const data = industries[industry as keyof typeof industries];
+
+  if (!data) notFound();
+  const seo = SEO[industry];
 
   return (
     <div className="min-h-screen bg-white font-[family-name:var(--font-geist-sans)]">
+      <JsonLd data={breadcrumbLd([["Home", "/"], [seo.name, `/solutions/${industry}`]])} />
       {/* Navigation */}
       <nav className="p-6">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -76,11 +112,11 @@ export default function IndustryPage({ params }: { params: { industry: string } 
             </p>
             <div className="flex flex-col sm:flex-row gap-4">
               <Link href="/auth/signup" className="px-8 py-4 bg-[#9d55ac] text-white rounded-2xl font-bold text-lg hover:bg-[#8a4a97] transition-all shadow-xl shadow-purple-500/20 text-center">
-                Get Started for {params.industry}
+                Start free
               </Link>
-              <button className="px-8 py-4 border border-zinc-200 text-zinc-600 rounded-2xl font-bold text-lg hover:bg-zinc-50 transition-all text-center">
-                View Live Demo
-              </button>
+              <Link href="/#how" className="px-8 py-4 border border-zinc-200 text-zinc-600 rounded-2xl font-bold text-lg hover:bg-zinc-50 transition-all text-center">
+                See How It Works
+              </Link>
             </div>
           </div>
           <div className="relative aspect-square lg:aspect-video w-full rounded-[3rem] bg-zinc-50 border border-zinc-100 overflow-hidden shadow-inner">
@@ -120,7 +156,7 @@ export default function IndustryPage({ params }: { params: { industry: string } 
                 <Zap className="text-[#9d55ac]" />
               </div>
               <h3 className="text-xl font-bold">Fast Deployment</h3>
-              <p className="text-zinc-500">Go live with your industry-specific bot in under 10 minutes. No coding required.</p>
+              <p className="text-zinc-500">Start from a template for your industry and go live the same day. No coding required.</p>
            </div>
            <div className="space-y-4">
               <div className="w-16 h-16 bg-purple-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
@@ -142,7 +178,7 @@ export default function IndustryPage({ params }: { params: { industry: string } 
       {/* Final CTA */}
       <section className="py-24 px-6 border-t border-zinc-100">
          <div className="max-w-4xl mx-auto text-center">
-            <h2 className="text-3xl md:text-5xl font-bold mb-6">Ready to scale your {params.industry} business?</h2>
+            <h2 className="text-3xl md:text-5xl font-bold mb-6">Ready to grow your {seo.name.toLowerCase()} business?</h2>
             <Link href="/auth/signup" className="inline-flex items-center gap-2 px-10 py-4 bg-[#9d55ac] text-white rounded-2xl font-bold text-xl hover:bg-[#8a4a97] transition-all shadow-2xl shadow-purple-500/30">
               Start Building Now <ArrowRight size={24} />
             </Link>
@@ -151,7 +187,7 @@ export default function IndustryPage({ params }: { params: { industry: string } 
 
       {/* Footer */}
       <footer className="py-12 bg-white text-center border-t border-zinc-50">
-        <p className="text-zinc-400 text-sm">© 2026 Nimmi AI. The leading AI solution for businesses in India.</p>
+        <p className="text-zinc-400 text-sm">© 2026 Nimmi AI. AI assistants for website chat, WhatsApp and phone calls, made in India.</p>
       </footer>
     </div>
   );

@@ -265,6 +265,23 @@ only on the owner's machines): @.claude/private-notes.md
 - Tests: `tests/test_whatsapp.py` (FakeMeta). Local run without a number: `dev-scripts/whatsapp/fake_meta.py` +
   `sim_chat.py` (backend started with `WHATSAPP_GRAPH_URL=http://127.0.0.1:8790`); UI: `dev-scripts/ui-checks/whatsapp_ui.mjs`.
 
+## Public site and SEO
+
+- Pages: home `src/app/page.tsx` (sections in `components/site/`); product pages `/ai-voice-agent`, `/whatsapp-chatbot`,
+  `/ai-chatbot-for-website`, `/lead-management`, `/pricing`, built from `components/site/PageParts.tsx` (SitePage,
+  PageHero, PageFaq, RelatedPages); `/solutions/[industry]` (older design); blog posts in `src/lib/site/blog.ts`
+  (`seoTitle` is the search title, `title` the H1).
+- Each public page sets its own metadata with `pageMetadata()` (`src/lib/site/seo.ts`: title, a 140-160 character
+  description, its own canonical, a 1200x630 share image from `public/og/`) and JSON-LD (`components/site/JsonLd.tsx`).
+  No canonical in the root layout: inherited, it told Google every page was a copy of the home page (Oct 2026: on live,
+  every page had one title and that canonical). The home page needs `title.absolute` (the root template skips it).
+- Hidden from search: auth, dashboard and widget (noindex layouts + X-Robots-Tag in `next.config.ts`), and demo.
+  robots.txt is the static `public/robots.txt` (an `app/robots.ts` would clash). New pages and posts go in
+  `app/sitemap.ts` with real dates. `public/llms.txt` describes the product for AI assistants.
+- Copy claims only what the product does (no HIPAA, no invented figures). One page per search topic, no keyword stuffing:
+  the keyword map (`dev-scripts/seo/keywords.py`) gives each keyword its page; `dev-scripts/seo/crawl.py` checks every
+  page's title, description, canonical, H1, JSON-LD and share image (dashboard on :3000).
+
 ## Testing conventions
 
 - Fakes in `tests/test_pipeline.py` (FakeTransport, FakeStt, fake_tts, replier_saying); `run` fixture runs

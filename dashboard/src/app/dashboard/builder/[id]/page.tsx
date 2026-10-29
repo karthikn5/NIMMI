@@ -225,7 +225,7 @@ function Builder({ params }: { params: Promise<{ id: string }> }) {
                 </Link>
                 <div className="flex items-center gap-2.5 min-w-0">
                     <span className="h-7 w-7 shrink-0 rounded-full border border-line bg-stone-50 overflow-hidden flex items-center justify-center text-[12px] font-semibold text-stone-500">
-                        {visual.logo_url ? <img src={assetUrl(visual.logo_url)} alt="" className="h-full w-full object-cover" /> : (botName || "A").slice(0, 1).toUpperCase()}
+                        {visual.logo_url ? <img src={assetUrl(visual.logo_url)} alt="" className="h-full w-full object-cover object-top" /> : (botName || "A").slice(0, 1).toUpperCase()}
                     </span>
                     <span className="text-sm font-semibold truncate max-w-[9rem] sm:max-w-[14rem]">{loading ? "Loading…" : botName || "Untitled assistant"}</span>
                 </div>

@@ -15,6 +15,7 @@ from sqlalchemy.future import select
 import behaviour
 import knowledge_sources
 import supa
+import svgsafe
 from auth import AuthContext, get_ctx, get_optional_ctx, get_owned_bot, require_manager
 from security import is_production, local_dev
 from crawler import crawl_site, extract_text_from_url, extract_youtube_transcript
@@ -33,8 +34,8 @@ router = APIRouter(prefix="/api", tags=["bots"])
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_DOC_BYTES = 20 * 1024 * 1024
-# Recognised by their first bytes, never by the name or type the browser sends. SVG isn't accepted:
-# it can carry scripts, and logos are shown on customers' websites.
+# Recognised by their first bytes, never by the name or type the browser sends. An SVG is stored only as
+# svgsafe rebuilds it: it can carry scripts, and logos are shown on customers' websites.
 IMAGE_SIGNATURES = [
     (b"\x89PNG\r\n\x1a\n", "image/png", ".png"),
     (b"\xff\xd8\xff", "image/jpeg", ".jpg"),
@@ -331,8 +332,14 @@ async def _store_image(file: UploadFile, prefix: str) -> str:
     if len(content) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Images must be 5 MB or smaller")
     kind = _image_kind(content)
+    if not kind and svgsafe.looks_like_svg(content):
+        try:
+            content = await asyncio.to_thread(svgsafe.clean, content)
+        except svgsafe.SvgError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        kind = ("image/svg+xml", ".svg")
     if not kind:
-        raise HTTPException(status_code=400, detail="Upload a PNG, JPG, WebP or GIF image")
+        raise HTTPException(status_code=400, detail=svgsafe.NOT_SVG)
     content_type, ext = kind
     name = f"{prefix}{uuid.uuid4()}{ext}"
 

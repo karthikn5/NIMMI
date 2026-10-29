@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Bot, Send, User, X } from "lucide-react";
 import { isLight } from "@/lib/color";
-import { assetUrl, type Visual } from "./design";
+import { API_URL, assetUrl, type Visual } from "./design";
 
 /**
  * The chat widget as visitors see it, drawn at real size inside a desktop or phone frame and scaled to fit.
@@ -110,9 +110,10 @@ function Overlay({ visual: v, botName, open, callbacks, viewportH, mobile }: {
     visual: Visual; botName: string; open: boolean; callbacks: boolean; viewportH: number; mobile: boolean;
 }) {
     const side: CSSProperties = v.position === "left" ? { left: v.right_padding } : { right: v.right_padding };
+    const launcherH = characterHeight(v, mobile) || 60;
     const windowStyle: CSSProperties = mobile
-        ? { left: 20, right: 20, bottom: 90, height: viewportH - 120 }
-        : { ...side, bottom: v.bottom_padding + 76, width: v.window_width, height: Math.min(v.window_height, viewportH - v.bottom_padding - 96) };
+        ? { left: 20, right: 20, bottom: launcherH + 30, height: viewportH - launcherH - 60 }
+        : { ...side, bottom: v.bottom_padding + launcherH + 16, width: v.window_width, height: Math.min(v.window_height, viewportH - v.bottom_padding - launcherH - 36) };
     return (
         <>
             {open ? (
@@ -122,25 +123,54 @@ function Overlay({ visual: v, botName, open, callbacks, viewportH, mobile }: {
                 </div>
             ) : v.launcher_greeting.trim() ? (
                 <div className="absolute max-w-[260px] pl-3.5 pr-9 py-3 bg-white text-[#1c1917] text-[14px] leading-[1.45] rounded-[14px] border border-black/5 shadow-[0_8px_28px_rgba(0,0,0,0.14)]"
-                     style={{ ...side, bottom: v.bottom_padding + 76, fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" }}>
+                     style={{ ...side, bottom: v.bottom_padding + launcherH + 16, fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" }}>
                     {v.launcher_greeting}
                     <span className="absolute top-1.5 right-1.5 h-6 w-6 flex items-center justify-center text-stone-500 text-lg leading-none">×</span>
                 </div>
             ) : null}
             <div className="absolute" style={{ ...side, bottom: v.bottom_padding }}>
-                <Launcher visual={v} />
+                <Launcher visual={v} mobile={mobile} />
             </div>
         </>
     );
 }
 
-export function Launcher({ visual: v }: { visual: Visual }) {
+/** The character launcher's height (as nimmi-widget.js draws it), or 0 when the launcher is a button. */
+const characterHeight = (v: Visual, mobile: boolean) =>
+    v.launcher_shape === "character" && (v.logo_url || v.character_animation === "violet")
+        ? (mobile ? Math.min(v.character_height, 120) : v.character_height) : 0;
+
+/** Violet, Nimmi's animated character: the same module nimmi-widget.js loads on websites. */
+function Violet({ height }: { height: number }) {
+    const box = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        let violet: (HTMLElement & { wave?: () => void }) | null = null;
+        let stale = false;
+        import(/* webpackIgnore: true */ `${API_URL}/static/characters/violet/violet.js`).then(() => {
+            if (stale || !box.current) return;
+            violet = document.createElement("nimmi-violet");
+            violet.style.cssText = "display:block;width:100%;height:100%";
+            violet.addEventListener("avatar-ready", () => setTimeout(() => violet?.wave?.(), 800), { once: true });
+            box.current.appendChild(violet);
+        }).catch(() => {});
+        return () => { stale = true; violet?.remove(); };
+    }, []);
+    return <div ref={box} style={{ height, aspectRatio: "390 / 1170" }} />;
+}
+
+export function Launcher({ visual: v, mobile = false }: { visual: Visual; mobile?: boolean }) {
     const [broken, setBroken] = useState(false);
     useEffect(() => setBroken(false), [v.logo_url]);
     const filled = v.show_launcher_bg;
-    const radius = { circle: "50%", rounded: "12px", square: "0", oval: "40px" }[v.launcher_shape];
+    const radius = { circle: "50%", rounded: "12px", square: "0", oval: "40px", character: "50%" }[v.launcher_shape];
     const icon = Math.min(v.logo_size, 56);
     const label = v.launcher_label.trim();
+    const standing = characterHeight(v, mobile);
+    if (standing && v.character_animation === "violet") return <Violet height={standing} />;
+    if (standing && !broken) {
+        return <img src={assetUrl(v.logo_url)} alt="" onError={() => setBroken(true)}
+                    className="block w-auto max-w-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.16)]" style={{ height: standing }} />;
+    }
     if (label) {
         return (
             <div className="flex items-center gap-2 h-[52px] pl-3.5 pr-5 rounded-full whitespace-nowrap text-[15px] font-semibold"
@@ -224,7 +254,7 @@ function ChatWindow({ visual: v, botName, callbacks }: { visual: Visual; botName
                     style={{ backgroundColor: v.color, color: v.text_color, minHeight: v.header_height, borderTopLeftRadius: radius, borderTopRightRadius: radius }}>
                 <div className="flex items-center gap-3 min-w-0">
                     <img src={v.logo_url && !broken ? assetUrl(v.logo_url) : "/favicon.png"} alt="" onError={() => setBroken(true)}
-                         className="w-10 h-10 rounded-full border-2 border-white/50 object-cover shrink-0 bg-white" />
+                         className="w-10 h-10 rounded-full border-2 border-white/50 object-cover object-top shrink-0 bg-white" />
                     <div className="flex flex-col min-w-0 flex-1">
                         <span className="font-bold text-sm tracking-tight truncate">{name}</span>
                         <span className="text-[11px] opacity-75 font-medium truncate">

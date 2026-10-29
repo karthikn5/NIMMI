@@ -12,7 +12,7 @@ How Nimmi protects customer data, and what to do when something goes wrong.
 | Workspaces | Every signed-in endpoint checks the workspace. `tests/test_tenant_isolation.py` calls all of them as another workspace and fails if any data is shown or changed. |
 | Live chat | Agents can only open their own workspace's conversations and only they speak as "agent"; WhatsApp rooms are kept apart per assistant. |
 | Public endpoints | Size limits on every request, rate limits per visitor address, and the flow's HTTP and AI steps only run what the business put in its flow. Outbound requests to customer-supplied URLs can't reach private networks, also after redirects (`netsafe.safe_client`). |
-| Uploads | Images are recognised by their content (no SVG), PDFs must be real PDFs, and `/static` files are served sandboxed. |
+| Uploads | Images are recognised by their content. An SVG is never stored as sent: `svgsafe` rebuilds it from a list of drawing elements, without scripts, event handlers, animation, links, embedded pages or anything loaded from outside the file. PDFs must be real PDFs, and `/static` files are served sandboxed. |
 | Calls | Only to supported countries (`CALL_COUNTRY_CODES`), never to premium-rate ranges. Twilio webhooks need Twilio's signature. |
 | Browsers | Security headers on the API and dashboard; the dashboard can't be framed by other sites (the widget can). |
 | Data loss | A daily encrypted backup (private `backups` bucket, 30 days). Deleted assistants can be restored for 30 days, and payment records are never deleted with them. Uploads and recordings never silently fall back to the server's disk in production. |

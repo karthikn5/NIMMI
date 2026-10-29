@@ -27,10 +27,12 @@ export type Visual = {
     input_bg_color: string;
     input_text_color: string;
     footer_bg_color: string; // "" keeps the default dark footer
-    launcher_shape: "circle" | "rounded" | "square" | "oval";
+    launcher_shape: "circle" | "rounded" | "square" | "oval" | "character"; // character: the avatar stands at full height
     show_launcher_bg: boolean;
     show_tail: boolean;
     logo_size: number;
+    character_height: number; // the character launcher's height on computers (phones: up to 120)
+    character_animation: "" | "violet"; // "violet": Nimmi's animated Violet stands in for the avatar picture
     right_padding: number;
     bottom_padding: number;
     launcher_greeting: string;
@@ -72,6 +74,8 @@ export const VISUAL_DEFAULTS: Visual = {
     show_launcher_bg: true,
     show_tail: true,
     logo_size: 32,
+    character_height: 140,
+    character_animation: "",
     right_padding: 20,
     bottom_padding: 20,
     launcher_greeting: "",
@@ -123,10 +127,12 @@ export function normalizeVisual(raw: Record<string, unknown> | null | undefined)
         input_bg_color: str(pick("input_bg_color", "inputBgColor"), "") || d.input_bg_color,
         input_text_color: str(pick("input_text_color", "inputTextColor"), "") || d.input_text_color,
         footer_bg_color: str(pick("footer_bg_color"), ""),
-        launcher_shape: (["circle", "rounded", "square", "oval"].includes(shape) ? shape : "circle") as Visual["launcher_shape"],
+        launcher_shape: (["circle", "rounded", "square", "oval", "character"].includes(shape) ? shape : "circle") as Visual["launcher_shape"],
         show_launcher_bg: bool(pick("show_launcher_bg", "showLauncherBg"), true),
         show_tail: bool(pick("show_tail", "showTail"), true),
         logo_size: num(pick("logo_size", "logoSize"), d.logo_size) || d.logo_size,
+        character_height: Math.min(220, Math.max(80, num(pick("character_height"), d.character_height))),
+        character_animation: pick("character_animation") === "violet" ? "violet" : "",
         right_padding: num(pick("right_padding", "rightPadding"), d.right_padding),
         bottom_padding: num(pick("bottom_padding", "bottomPadding"), d.bottom_padding),
         launcher_greeting: str(pick("launcher_greeting"), ""),

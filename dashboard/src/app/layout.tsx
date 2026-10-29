@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Script from "next/script";
 import { preload } from "react-dom";
+import SiteAssistant from "@/components/site/SiteAssistant";
 import "./globals.css";
 import "./fonts.css";
 
@@ -78,6 +79,7 @@ export default function RootLayout({
         {/* End Google Tag Manager */}
 
         {children}
+        <SiteAssistant />
       </body>
     </html>
   );

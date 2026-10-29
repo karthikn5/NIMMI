@@ -558,7 +558,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                     <img
                         src={visual.logo_url || visual.botLogo || "/favicon.png"}
                         alt=""
-                        className="w-10 h-10 rounded-full border-2 border-white/50 object-cover shrink-0"
+                        className="w-10 h-10 rounded-full border-2 border-white/50 object-cover object-top shrink-0"
                     />
                     <div className="flex flex-col min-w-0 flex-1">
                         <span className="font-bold text-sm tracking-tight truncate">{botConfig?.bot_name || "Assistant"}</span>

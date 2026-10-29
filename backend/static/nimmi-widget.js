@@ -69,6 +69,10 @@
     const clamp = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.min(Math.max(n, lo), hi) : d; };
     const windowWidth = clamp(visual.window_width, 320, 480, 400);
     const windowHeight = clamp(visual.window_height, 460, 760, 600);
+    // The "character" launcher is the avatar itself (a standing figure) at full height, with no button around it.
+    const characterHeight = clamp(visual.character_height, 80, 220, 140);
+    const phoneCharacterHeight = Math.min(characterHeight, 120);
+    const animatedCharacter = visual.character_animation === 'violet'; // Nimmi's own animated character
     // A short message beside the launcher, and opening the chat by itself; both optional.
     const greeting = String(visual.launcher_greeting || '').trim();
     const greetingDelay = clamp(visual.greeting_delay, 0, 60, 3);
@@ -241,6 +245,40 @@
                 bottom: 90px;
             }
         }
+        #nimmi-launcher.character {
+            width: auto;
+            height: ${characterHeight}px;
+            background: transparent;
+            box-shadow: none;
+            border: none;
+            border-radius: 0;
+            align-items: flex-end;
+        }
+        #nimmi-launcher.character:hover { transform: translateY(-4px); }
+        #nimmi-launcher.character::after { display: none; }
+        #nimmi-launcher.character img {
+            width: auto;
+            height: 100%;
+            max-width: none;
+            max-height: none;
+            filter: drop-shadow(0 6px 10px rgba(0,0,0,0.16));
+            transform-origin: 50% 100%;
+            animation: nimmi-breathe 4.5s ease-in-out infinite;
+        }
+        @keyframes nimmi-breathe { 0%, 100% { transform: none; } 50% { transform: translateY(-2px) scaleY(1.008); } }
+        #nimmi-launcher.character nimmi-violet { display: block; height: 100%; aspect-ratio: 390 / 1170; }
+        #nimmi-launcher.character ~ #nimmi-chat-window,
+        #nimmi-launcher.character ~ #nimmi-greeting { bottom: ${bottomPadding + characterHeight + 16}px; }
+        #nimmi-launcher.character ~ #nimmi-chat-window { max-height: calc(100vh - ${bottomPadding + characterHeight + 36}px); }
+        @media (max-width: 480px) {
+            #nimmi-launcher.character { height: ${phoneCharacterHeight}px; }
+            #nimmi-launcher.character ~ #nimmi-greeting { bottom: ${bottomPadding + phoneCharacterHeight + 16}px; }
+            #nimmi-launcher.character ~ #nimmi-chat-window { bottom: ${phoneCharacterHeight + 30}px; height: calc(100% - ${phoneCharacterHeight + 60}px); max-height: none; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            #nimmi-launcher.character img { animation: none; }
+            #nimmi-launcher.character:hover { transform: none; }
+        }
     `;
     shadow.appendChild(style);
 
@@ -266,16 +304,35 @@
             return (u.protocol === 'https:' || u.protocol === 'http:') ? u.href : '';
         } catch (e) { return ''; }
     })();
-    if (safeLogo) {
+    // A character needs its picture (or Violet): without one, or if it fails to load, the launcher is the round button.
+    const isCharacter = launcherShape === 'character' && (animatedCharacter || !!safeLogo);
+    const showLogo = () => {
+        if (!safeLogo) {
+            launcher.classList.remove('character');
+            launcher.appendChild(chatIcon());
+            return;
+        }
         const img = document.createElement('img');
         img.alt = 'Chat';
         img.src = safeLogo;
-        img.addEventListener('error', () => img.replaceWith(chatIcon()), { once: true });
+        img.addEventListener('error', () => { launcher.classList.remove('character'); img.replaceWith(chatIcon()); }, { once: true });
         launcher.appendChild(img);
+    };
+    if (isCharacter && animatedCharacter) {
+        // Violet (static/characters/violet): she fades in once her picture has loaded, and waves hello. If her code or
+        // picture can't load, the avatar picture (or the round button) shows instead.
+        launcher.setAttribute('aria-label', 'Chat');
+        import(`${apiBase}/static/characters/violet/violet.js`).then(() => {
+            const violet = document.createElement('nimmi-violet');
+            violet.addEventListener('avatar-ready', () => setTimeout(() => violet.wave(), 1200), { once: true });
+            violet.addEventListener('avatar-error', () => { violet.remove(); showLogo(); }, { once: true });
+            launcher.appendChild(violet);
+        }).catch(showLogo);
     } else {
-        launcher.appendChild(chatIcon());
+        showLogo();
     }
-    if (labelText) {
+    if (isCharacter) launcher.classList.add('character');
+    if (labelText && !isCharacter) {
         launcher.classList.add('labelled');
         const span = document.createElement('span');
         span.textContent = labelText;

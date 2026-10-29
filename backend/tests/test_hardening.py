@@ -2,9 +2,11 @@
 import base64
 import hashlib
 import hmac
+import os
 import sqlite3
 import time
 from collections import defaultdict
+from xml.etree import ElementTree as ET
 
 import pytest
 from sqlalchemy.future import select
@@ -172,6 +174,80 @@ def test_uploads_are_checked_by_content(client, make_user):
     assert url.endswith(".png")  # the name comes from what the file is, not what it's called
     fake_pdf = {"file": ("doc.pdf", b"<html>not a pdf</html>", "application/pdf")}
     assert client.post(f"/api/bots/{bot}/knowledge/upload", files=fake_pdf, headers=u.h()).status_code == 400
+
+
+UPLOADS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static", "uploads")
+
+
+def _stored(url: str) -> str:
+    path = os.path.join(UPLOADS, url.rsplit("/", 1)[1])
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    os.remove(path)
+    return text
+
+
+def test_svg_uploads_keep_the_drawing_and_lose_everything_active(client, make_user):
+    u = make_user()
+    bot = u.bot()
+    # As Illustrator writes it (entities, a switch with its private data), plus every way an SVG can run or load something
+    svg = b"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" [
+  <!ENTITY ns_ai "http://ns.adobe.com/AdobeIllustrator/10.0/">
+]>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:i="&ns_ai;"
+     width="64" height="64" onload="alert(1)">
+  <script>alert(2)</script>
+  <style>@import url(https://evil.example/a.css); .a{fill:url(#g)} .b{fill:url(https://evil.example/b.png)}</style>
+  <defs><linearGradient id="g"><stop offset="0" stop-color="#550a64"/></linearGradient></defs>
+  <switch>
+    <foreignObject requiredExtensions="&ns_ai;"><i:pgfRef xlink:href="#adobe_illustrator_pgf"/></foreignObject>
+    <g i:extraneous="self"><rect class="a" width="64" height="64" rx="12" onclick="alert(3)"/></g>
+  </switch>
+  <a xlink:href="javascript:alert(4)"><circle cx="32" cy="32" r="10" fill="url(#g)"/></a>
+  <image href="https://evil.example/track.png" width="1" height="1"/>
+  <image xlink:href="data:image/png;base64,iVBORw0KGgo=" width="1" height="1"/>
+  <use href="https://evil.example/s.svg#x"/>
+  <animate attributeName="href" values="javascript:alert(5)"/>
+  <html:script xmlns:html="http://www.w3.org/1999/xhtml">alert(6)</html:script>
+  <text x="4" y="60">Nimmi &amp; Co</text>
+</svg>"""
+    res = client.post(f"/api/bots/{bot}/logo", files={"file": ("logo.svg", svg, "image/svg+xml")}, headers=u.h())
+    assert res.status_code == 200, res.json()
+    assert res.json()["logo_url"].endswith(".svg")
+    kept = _stored(res.json()["logo_url"])
+    ET.fromstring(kept)  # still a well-formed SVG
+    for gone in ("script", "alert", "javascript", "evil.example", "onload", "onclick", "foreignObject", "@import",
+                 "animate", "pgfRef", "extraneous", "adobe"):
+        assert gone not in kept, gone
+    for still in ('<rect class="a" width="64" height="64" rx="12"/>', '<circle cx="32" cy="32" r="10" fill="url(#g)"/>',
+                  ".a{fill:url(#g)} .b{fill:none}", '<stop offset="0" stop-color="#550a64"/>', 'viewBox="0 0 64 64"',
+                  'xlink:href="data:image/png;base64,iVBORw0KGgo="', "<text x=\"4\" y=\"60\">Nimmi &amp; Co</text>"):
+        assert still in kept, still
+
+    # A chat background, written without the SVG namespace (as when copied from a web page)
+    res = client.post(f"/api/bots/{bot}/background", headers=u.h(),
+                      files={"file": ("bg.svg", b'<svg viewBox="0 0 8 8"><path d="M0 0h4v4z"/></svg>', "image/svg+xml")})
+    assert _stored(res.json()["bg_url"]) == ('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+                                             'viewBox="0 0 8 8"><path d="M0 0h4v4z"/></svg>')
+
+
+def test_svg_uploads_that_cant_be_made_safe_are_refused(client, make_user):
+    u = make_user()
+    bot = u.bot()
+    ns = b'xmlns="http://www.w3.org/2000/svg"'
+    for message, svg in [
+        ("nothing to show", b"<svg " + ns + b"><script>alert(1)</script><foreignObject><p>hi</p></foreignObject></svg>"),
+        ("couldn't be read", b'<!DOCTYPE s [<!ENTITY a "lol"><!ENTITY b "&a;&a;&a;&a;">]><svg ' + ns + b"><text>&b;</text></svg>"),
+        ("couldn't be read", b'<!DOCTYPE s [<!ENTITY x SYSTEM "file:///etc/passwd">]><svg ' + ns + b"><text>&x;</text></svg>"),
+        ("couldn't be read", b'<!DOCTYPE a []><!DOCTYPE s [<!ENTITY x SYSTEM "file:///etc/passwd">]><svg ' + ns + b"><text>&x;</text></svg>"),
+        ("too detailed", b"<svg " + ns + b">" + b"<g/>" * 20_001 + b'<path d="M0 0"/></svg>'),
+        ("too detailed", b"<svg " + ns + b">" + b"<g>" * 150 + b'<path d="M0 0"/>' + b"</g>" * 150 + b"</svg>"),
+        ("1 MB", b"<svg " + ns + b'><path d="' + b"M0 0 " * 250_000 + b'"/></svg>'),
+        ("PNG, JPG, WebP, GIF or SVG", b"<html><body><svg " + ns + b'><path d="M0 0"/></svg><script>alert(1)</script></body></html>'),
+    ]:
+        res = client.post(f"/api/bots/{bot}/logo", files={"file": ("logo.svg", svg, "image/svg+xml")}, headers=u.h())
+        assert res.status_code == 400 and message in res.json()["detail"], (message, res.json())
 
 
 def test_oversized_requests_and_security_headers(client):

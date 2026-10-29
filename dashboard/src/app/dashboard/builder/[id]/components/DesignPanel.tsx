@@ -7,6 +7,9 @@ import { Button, Input, PhraseInput, Segmented, Select, Textarea, cn, useToast }
 import { ChoiceRow, ColorField, Field, RangeField, Section, ToggleRow } from "./controls";
 import { FONTS, THEMES, assetUrl, themeMatches, type Visual } from "./design";
 
+// What the server accepts (it checks the file itself). An SVG is stored as a cleaned copy: no scripts or links.
+const IMAGE_TYPES = "image/png,image/jpeg,image/webp,image/gif,image/svg+xml,.svg";
+
 type Props = {
     botId: string;
     visual: Visual;
@@ -23,6 +26,8 @@ export default function DesignPanel({ botId, visual: v, set, botName, setBotName
 
     const upload = async (kind: "logo" | "background", file: File | undefined) => {
         if (!file) return;
+        const svg = file.type === "image/svg+xml" || /\.svg$/i.test(file.name);
+        if (svg && file.size > 1024 * 1024) return toast("SVG images up to 1 MB, please.");
         if (file.size > 5 * 1024 * 1024) return toast("Images up to 5 MB, please.");
         setUploading(kind);
         const form = new FormData();
@@ -71,16 +76,16 @@ export default function DesignPanel({ botId, visual: v, set, botName, setBotName
                 <Field label="Assistant name" htmlFor="bot-name">
                     <Input id="bot-name" value={botName} maxLength={60} onChange={(e) => setBotName(e.target.value)} placeholder="e.g. Green Park Homes" />
                 </Field>
-                <Field label="Avatar" hint="Shown in the chat header and on the launcher. Square images work best.">
+                <Field label="Avatar" hint="Shown in the chat header and on the launcher. PNG, JPG, WebP, GIF or SVG; square images work best.">
                     <div className="flex items-center gap-3">
                         <div className="h-12 w-12 shrink-0 rounded-full border border-line bg-stone-50 overflow-hidden flex items-center justify-center">
-                            {v.logo_url ? <img src={assetUrl(v.logo_url)} alt="" className="h-full w-full object-cover" /> : <ImageIcon size={18} className="text-stone-400" />}
+                            {v.logo_url ? <img src={assetUrl(v.logo_url)} alt="" className="h-full w-full object-cover object-top" /> : <ImageIcon size={18} className="text-stone-400" />}
                         </div>
                         <Button size="sm" onClick={() => logoInput.current?.click()} disabled={uploading === "logo"}>
                             <Upload size={14} /> {uploading === "logo" ? "Uploading…" : "Upload"}
                         </Button>
                         {v.logo_url && <Button size="sm" variant="ghost" onClick={() => set({ logo_url: "" })}>Remove</Button>}
-                        <input ref={logoInput} type="file" accept="image/*" className="hidden" onChange={(e) => { upload("logo", e.target.files?.[0]); e.target.value = ""; }} />
+                        <input ref={logoInput} type="file" accept={IMAGE_TYPES} className="hidden" onChange={(e) => { upload("logo", e.target.files?.[0]); e.target.value = ""; }} />
                     </div>
                     <Input className="mt-2" value={v.logo_url} onChange={(e) => set({ logo_url: e.target.value })} placeholder="Or paste an image link" />
                 </Field>
@@ -137,13 +142,13 @@ export default function DesignPanel({ botId, visual: v, set, botName, setBotName
                 <RangeField label="Corner roundness" value={v.border_radius} min={0} max={28} onChange={(n) => set({ border_radius: n })} />
             </Section>
 
-            <Section title="Background image" description="Optional. A subtle pattern or photo behind the messages.">
+            <Section title="Background image" description="Optional. A subtle pattern or photo behind the messages (PNG, JPG, WebP, GIF or SVG).">
                 <div className="flex gap-2">
                     <Input value={v.background_image} onChange={(e) => set({ background_image: e.target.value })} placeholder="Paste an image link" />
                     <Button size="md" onClick={() => bgInput.current?.click()} disabled={uploading === "background"}>
                         <Upload size={14} /> {uploading === "background" ? "Uploading…" : "Upload"}
                     </Button>
-                    <input ref={bgInput} type="file" accept="image/*" className="hidden" onChange={(e) => { upload("background", e.target.files?.[0]); e.target.value = ""; }} />
+                    <input ref={bgInput} type="file" accept={IMAGE_TYPES} className="hidden" onChange={(e) => { upload("background", e.target.files?.[0]); e.target.value = ""; }} />
                 </div>
                 {v.background_image && (
                     <>
@@ -158,14 +163,44 @@ export default function DesignPanel({ botId, visual: v, set, botName, setBotName
                 <ChoiceRow label="Position" value={v.position} onChange={(p) => set({ position: p })}
                            options={[{ value: "left", label: "Bottom left" }, { value: "right", label: "Bottom right" }]} />
                 <ChoiceRow label="Shape" value={v.launcher_shape} onChange={(s) => set({ launcher_shape: s })}
-                           options={([["circle", "Circle", "50%", 20], ["rounded", "Rounded", "6px", 20], ["square", "Square", "1px", 20], ["oval", "Pill", "999px", 28]] as const)
-                               .map(([value, label, r, w]) => ({ value, label, icon: <span className="block h-5 bg-stone-700" style={{ borderRadius: r, width: w }} /> }))} />
-                <Field label="Text on the launcher" htmlFor="launcher-label" hint="Optional. A short label such as “Chat with us” gets more clicks than an icon alone.">
-                    <Input id="launcher-label" value={v.launcher_label} maxLength={30} onChange={(e) => set({ launcher_label: e.target.value })} placeholder="Icon only" />
-                </Field>
-                <ToggleRow label="Filled background" checked={v.show_launcher_bg} onChange={(c) => set({ show_launcher_bg: c })} />
-                {!v.launcher_label.trim() && <ToggleRow label="Speech-bubble tail" checked={v.show_tail} onChange={(c) => set({ show_tail: c })} />}
-                <RangeField label="Icon size" value={v.logo_size} min={20} max={56} onChange={(n) => set({ logo_size: n })} />
+                           options={[
+                               ...([["circle", "Circle", "50%", 20], ["rounded", "Rounded", "6px", 20], ["square", "Square", "1px", 20], ["oval", "Pill", "999px", 28]] as const)
+                                   .map(([value, label, r, w]) => ({ value, label, icon: <span className="block h-5 bg-stone-700" style={{ borderRadius: r, width: w }} /> })),
+                               { value: "character" as const, label: "Character", icon: (
+                                   <svg viewBox="0 0 12 20" className="h-5 w-3 fill-stone-700" aria-hidden><circle cx="6" cy="3.2" r="3" /><path d="M1.5 20v-9.5a4.5 4.5 0 0 1 9 0V20z" /></svg>
+                               ) },
+                           ]} />
+                {v.launcher_shape === "character" ? (
+                    <>
+                        <Field label="Character">
+                            <Segmented label="Character" value={v.character_animation === "violet" ? "violet" : "picture"}
+                                       onChange={(c) => set({ character_animation: c === "violet" ? "violet" : "" })}
+                                       options={[{ value: "picture", label: "Your picture" }, { value: "violet", label: "Violet, animated" }]} />
+                        </Field>
+                        {v.character_animation === "violet" ? (
+                            <p className="text-[12px] leading-relaxed text-stone-500">
+                                Violet, Nimmi&apos;s animated assistant, stands in the corner. She blinks, looks at a visitor&apos;s cursor when it comes near, breathes and waves now and then, and keeps still for visitors who turn on reduced motion. The chat header shows your avatar.
+                            </p>
+                        ) : (
+                            <>
+                                <p className="text-[12px] leading-relaxed text-stone-500">
+                                    Your avatar stands at full height in the corner of your website. Upload a standing figure with a transparent background; the chat header shows the top of it.
+                                </p>
+                                {!v.logo_url && <p className="text-[12px] text-amber-700">Upload an avatar above. Until then, visitors see the round chat button.</p>}
+                            </>
+                        )}
+                        <RangeField label="Character height" value={v.character_height} min={80} max={220} onChange={(n) => set({ character_height: n })} />
+                    </>
+                ) : (
+                    <>
+                        <Field label="Text on the launcher" htmlFor="launcher-label" hint="Optional. A short label such as “Chat with us” gets more clicks than an icon alone.">
+                            <Input id="launcher-label" value={v.launcher_label} maxLength={30} onChange={(e) => set({ launcher_label: e.target.value })} placeholder="Icon only" />
+                        </Field>
+                        <ToggleRow label="Filled background" checked={v.show_launcher_bg} onChange={(c) => set({ show_launcher_bg: c })} />
+                        {!v.launcher_label.trim() && <ToggleRow label="Speech-bubble tail" checked={v.show_tail} onChange={(c) => set({ show_tail: c })} />}
+                        <RangeField label="Icon size" value={v.logo_size} min={20} max={56} onChange={(n) => set({ logo_size: n })} />
+                    </>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                     <RangeField label="From the side" value={v.right_padding} min={0} max={80} onChange={(n) => set({ right_padding: n })} />
                     <RangeField label="From the bottom" value={v.bottom_padding} min={0} max={80} onChange={(n) => set({ bottom_padding: n })} />

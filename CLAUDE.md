@@ -39,7 +39,7 @@ only on the owner's machines): @.claude/private-notes.md
     `plugins/wordpress/`: WordPress plugin source. `ops/`: runbooks (SITES_SETUP.md, backups).
   - Core modules: `models.py` (SQLAlchemy models), `database.py` (engine, pool), `auth.py` (JWT, workspaces,
     roles owner/admin/agent, rate limits), `plans.py` (free/paid limits), `secretbox.py` (encrypted
-    columns), `ai.py` (Gemini REST, model order), `utils.py` (chat answers), `vector_store.py` (Pinecone),
+    columns), `svgsafe.py` (uploaded SVG logos rebuilt from safe parts), `ai.py` (Gemini REST, model order), `utils.py` (chat answers), `vector_store.py` (Pinecone),
     `knowledge_sources.py`, `brain.py` (summaries, learned details), `assist.py` (business hours, lead score,
     unanswered questions), `realtime.py` (Socket.IO), `payments.py` / `subscriptions.py` (Razorpay), `phone.py`.
   - Many old one-off scripts at `backend/*.py` (check_*, fix_*, test_bot_*): not part of the app.
@@ -96,6 +96,13 @@ only on the owner's machines): @.claude/private-notes.md
   "Prefer a call?" call-back request, "Talk to a person" handoff, "Powered by Nimmi" (links to nimmiai.in).
   Sessions: `widget-session-ai-<visitorId>` and `widget-session-human-<visitorId>` (random id in localStorage
   is the visitor's proof).
+- Launcher (`static/nimmi-widget.js`, mirrored by the builder's `WidgetPreview.tsx`): a button (circle, rounded,
+  square, pill) or `launcher_shape: "character"`: the avatar itself, a standing figure, at `character_height`
+  (80-220 px, phones up to 120) with the greeting and chat window above it; without a picture it's the round button.
+  Round avatars use `object-top`, so a standing figure shows its face. `character_animation: "violet"` puts Violet,
+  Nimmi's animated character, there instead (`static/characters/violet/`: `violet.js` is the owner's design's
+  avatar.js adapted for a corner figure, `wave-rig.js` its WebGL arm, `character.webp`), loaded with `import()` only by
+  assistants that use her: blinks, looks at a nearby cursor, breathes, waves; still with reduced motion.
 - Live chat across processes: team replies go through `POST /api/handoffs/{id}/reply` (saved, then emitted);
   the widget also checks `GET /api/chat/live/{bot}/{session}` every 4 s and the dashboard re-reads the open chat,
   deduplicating by message id. `REALTIME_REDIS_URL` (optional) makes Socket.IO share messages between
@@ -281,6 +288,10 @@ only on the owner's machines): @.claude/private-notes.md
 - Copy claims only what the product does (no HIPAA, no invented figures). One page per search topic, no keyword stuffing:
   the keyword map (`dev-scripts/seo/keywords.py`) gives each keyword its page; `dev-scripts/seo/crawl.py` checks every
   page's title, description, canonical, H1, JSON-LD and share image (dashboard on :3000).
+- NIMMI, Nimmi's own assistant, is on every public page through `components/site/SiteAssistant.tsx`: the customers'
+  "Add to website" script, loaded `lazyOnload`, id from `NEXT_PUBLIC_SITE_ASSISTANT_ID` (unset = no assistant), never on
+  dashboard, auth, widget or demo pages. Its setup (knowledge, flow, lead capture, look, voice scripts, Schedule) is
+  `dev-scripts/site/setup_nimmi.py`, written from the pricing table and FAQs: change both together.
 
 ## Testing conventions
 

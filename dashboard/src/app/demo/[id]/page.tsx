@@ -228,7 +228,7 @@ function Avatar({ name, logo, loading }: { name: string; logo?: string; loading:
     if (loading) return <Skeleton className="h-7 w-7 rounded-full" />;
     return (
         <span className="h-7 w-7 shrink-0 rounded-full border border-line bg-stone-50 overflow-hidden flex items-center justify-center text-[12px] font-semibold text-stone-500">
-            {logo ? <img src={assetUrl(logo)} alt="" className="h-full w-full object-cover" /> : name.slice(0, 1).toUpperCase()}
+            {logo ? <img src={assetUrl(logo)} alt="" className="h-full w-full object-cover object-top" /> : name.slice(0, 1).toUpperCase()}
         </span>
     );
 }

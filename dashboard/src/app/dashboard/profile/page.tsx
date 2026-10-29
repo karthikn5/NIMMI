@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppHeader from "@/components/AppHeader";
+import AgentKeys from "@/components/agent/AgentKeys";
 import { Button, Card, Input, SettingRow, Skeleton, ToastProvider, useToast } from "@/components/ui";
 import { apiJson, clearSession, currentUserId, saveSession, type Session } from "@/lib/api";
 import { formatDate } from "@/lib/voice/api";
@@ -128,6 +129,8 @@ function ProfileView() {
                                 <Button type="submit" variant="primary" disabled={!dirty || saving || (emailChanged && !confirmPw)}>{saving ? "Saving…" : "Save changes"}</Button>
                             </div>
                         </form>
+
+                        <AgentKeys />
 
                         <form onSubmit={changePassword} className="mt-10">
                             <h2 className="text-[15px] font-semibold mb-4">{profile.has_password ? "Change password" : "Set a password"}</h2>

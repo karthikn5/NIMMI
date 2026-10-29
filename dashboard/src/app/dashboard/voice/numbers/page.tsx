@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, Link2, Lock, Plus, Upload } from "lucide-react";
 import { BalanceCard, TopUpDialog, useBalance } from "@/components/Balance";
 import { GetNumberDialog, NUMBER_KIND, countryName } from "@/components/voice/GetNumberDialog";
@@ -40,6 +40,10 @@ export default function NumbersPage() {
     const [disconnecting, setDisconnecting] = useState<PhoneAccount | null>(null);
     const accountsList = phoneAccounts.data?.accounts ?? [];
     const openConnect = (acc: PhoneAccount | null = null) => { setConnectAccount(acc); setConnectOpen(true); };
+    // ?connect=1 (Nimmi's guides link here): open the form straight away.
+    useEffect(() => {
+        if (new URLSearchParams(window.location.search).get("connect")) { setConnectAccount(null); setConnectOpen(true); }
+    }, []);
 
     const replace = (n: PhoneNumber) => numbers.setData((numbers.data ?? []).map((x) => (x.id === n.id ? n : x)));
 
@@ -62,8 +66,8 @@ export default function NumbersPage() {
                     description="Customers call these numbers to reach an assistant. Each number goes to one assistant."
                     action={
                         <div className="flex gap-2">
-                            {!phoneAccounts.error && <Button size="sm" variant="ghost" onClick={() => openConnect()}><Link2 size={14} /> Use your own number</Button>}
-                            <Button size="sm" onClick={() => setRequestOpen(true)}><Plus size={14} /> Get a number</Button>
+                            {!phoneAccounts.error && <Button size="sm" variant="ghost" data-agent="voice.use_own_number" onClick={() => openConnect()}><Link2 size={14} /> Use your own number</Button>}
+                            <Button size="sm" data-agent="voice.get_number" onClick={() => setRequestOpen(true)}><Plus size={14} /> Get a number</Button>
                         </div>
                     }
                 />
@@ -76,8 +80,8 @@ export default function NumbersPage() {
                             body="You can still test every assistant in your browser. Get a number from Nimmi, or connect one you already have on Twilio or Exotel."
                             action={
                                 <div className="flex justify-center gap-2">
-                                    <Button variant="primary" onClick={() => setRequestOpen(true)}>Get a number</Button>
-                                    {!phoneAccounts.error && <Button onClick={() => openConnect()}>Use your own number</Button>}
+                                    <Button variant="primary" data-agent="voice.get_number" onClick={() => setRequestOpen(true)}>Get a number</Button>
+                                    {!phoneAccounts.error && <Button data-agent="voice.use_own_number" onClick={() => openConnect()}>Use your own number</Button>}
                                 </div>
                             }
                         />

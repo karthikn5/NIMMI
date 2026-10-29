@@ -294,6 +294,35 @@ only on the owner's machines): @.claude/private-notes.md
   picks another, empty turns it off. Its setup (knowledge, flow, lead capture, look, voice scripts, Schedule) is
   `dev-scripts/site/setup_nimmi.py`, written from the pricing table and FAQs: change both together.
 
+## Nimmi agent (the dashboard's own assistant)
+
+- Plan, phases and results: `NIMMI_AGENT_PLAN.md` (phases 0-6 built Oct 2026, local; not pushed yet).
+- Backend `agent/`: `router.py` (`/api/agent`: messages stream server-sent events; runs replay from any process; stop;
+  threads; actions confirm/cancel/undo; jobs for the builder's cards; usage), `loop.py` (model, tools, model again: 6
+  rounds; a heartbeat reads stop_requested; also runs builder steps), `providers.py` (Gemini, OpenAI, Groq with tools;
+  AGENT_MODELS order; a model at its limit rests as the service says, up to an hour; `ask_json`; `cost_inr`),
+  `events.py` (AG-UI event names, saved in agent_events), `registry.py` (levels read / change / confirm; Change and
+  adapters for undo; confirm_action, undo_action), `screens.py` (notes per screen, AREAS, POINTS), `prompt.py`,
+  `builder.py` + `brand.py` ("create an agent for me"), `guides.py`, `coverage.py` (every route: tool, excluded with
+  a reason, or pending), `mcp.py` (POST /mcp and Nimmi keys), `tools/` (assistants, changes, confirm, build,
+  connections, voice, workspace, more, navigate).
+- Tools call route functions directly with the person's AuthContext, which skips FastAPI's dependencies: a tool must
+  declare the roles its route requires. Read tools never call an AI model or write (a test checks). Change tools return
+  a Change (exact settings before/after); confirm tools need a preview and run only on Confirm. Each area's tools come
+  on its own screens (AREAS); an unknown screen gets all.
+- Tables: agent_threads, agent_messages, agent_runs (cost_inr), agent_events, agent_actions, agent_jobs, agent_keys.
+- Dashboard: `components/agent/` (AgentProvider in `app/dashboard/layout.tsx`, AgentPanel with the Changes tab,
+  AgentToggle, AgentCards, AgentText, AgentKeys on Profile), `lib/agent/` (screens, stream, changes). `useApi` reloads
+  when Nimmi changes something (`nimmi:changed`); the builder saves unsaved edits before each message (`useAgentScreen`
+  flush). Pointable elements carry `data-agent="..."` (a test checks the names). The builder opens a tab from `?tab=`;
+  Voice > Numbers and WhatsApp > Settings open their connect form from `?connect=1`.
+- Limits: AGENT_DAILY_FREE / AGENT_DAILY_PAID per workspace in 24 hours.
+- Keys (Oct 2026): Gemini key free tier (20 requests a day); Groq free tier (8,000 tokens a minute and 200,000 a day per
+  model; an answer with a tool is 5,000-8,000); OpenAI no credits.
+- Tests: `tests/test_agent.py`. Real models: `dev-scripts/agent/model_probe.py`, `eval.py`, `build_trial.py`. Browser:
+  `dev-scripts/ui-checks/agent_ui.mjs`, `agent_changes_ui.mjs`, `agent_builder_ui.mjs`, `agent_more_ui.mjs`
+  (AGENT_PACE_MS=30000 on free tiers).
+
 ## Testing conventions
 
 - Fakes in `tests/test_pipeline.py` (FakeTransport, FakeStt, fake_tts, replier_saying); `run` fixture runs

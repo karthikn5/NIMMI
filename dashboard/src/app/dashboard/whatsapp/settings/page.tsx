@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { Button, Card, Dialog, EmptyState, Input, Notice, Select, SettingRow, Skeleton, Status, Switch, useToast } from "@/components/ui";
 import { apiJson } from "@/lib/api";
@@ -13,6 +13,8 @@ const LANGS = [["en", "English"], ["hi", "Hindi"], ["ta", "Tamil"], ["te", "Telu
 export default function WhatsAppSettingsPage() {
     const numbers = useApi<WaNumber[]>("/api/whatsapp/numbers");
     const [connecting, setConnecting] = useState(false);
+    // ?connect=1 (Nimmi's guide links here): open the form straight away.
+    useEffect(() => { if (new URLSearchParams(window.location.search).get("connect")) setConnecting(true); }, []);
 
     return (
         <div className="max-w-3xl space-y-8">
@@ -22,14 +24,14 @@ export default function WhatsAppSettingsPage() {
                         <h2 className="text-[15px] font-semibold">Your WhatsApp numbers</h2>
                         <p className="text-[13px] text-stone-500 mt-0.5">The numbers your assistant answers on.</p>
                     </div>
-                    {!!numbers.data?.length && <Button onClick={() => setConnecting(true)}>Connect another number</Button>}
+                    {!!numbers.data?.length && <Button data-agent="whatsapp.connect" onClick={() => setConnecting(true)}>Connect another number</Button>}
                 </div>
                 {numbers.loading ? <Skeleton className="h-40" /> : numbers.error ? (
                     <p className="text-sm text-signal">Couldn&apos;t load your numbers. {numbers.error}</p>
                 ) : !numbers.data?.length ? (
                     <Card>
                         <EmptyState title="No number connected" body="Connect your WhatsApp Business number and your assistant starts answering customers there."
-                                    action={<Button variant="primary" onClick={() => setConnecting(true)}>Connect a number</Button>} />
+                                    action={<Button variant="primary" data-agent="whatsapp.connect" onClick={() => setConnecting(true)}>Connect a number</Button>} />
                     </Card>
                 ) : (
                     <div className="space-y-4">

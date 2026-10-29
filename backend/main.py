@@ -37,6 +37,8 @@ import realtime  # noqa: E402
 from database import init_db  # noqa: E402
 from security import SecurityMiddleware, is_production  # noqa: E402
 from payments import router as payments_router  # noqa: E402
+from agent.router import router as agent_router  # noqa: E402
+from agent.mcp import router as mcp_router  # noqa: E402
 from routers.analytics import router as analytics_router  # noqa: E402
 from routers.auth_routes import router as auth_router  # noqa: E402
 from routers.bots import router as bots_router  # noqa: E402
@@ -113,7 +115,7 @@ app.mount("/static", StaticFiles(directory=os.path.join(_HERE, "static")), name=
 for router in (auth_router, bots_router, chat_router, handoffs_router, numbers_router, phone_accounts_router, campaigns_router,
                schedule_router, voice_router,
                integrations_router, email_center_router, analytics_router, team_router, whatsapp_router, whatsapp_webhook_router, workspace_router,
-               sites_router, plans_router):
+               sites_router, plans_router, agent_router, mcp_router):
     app.include_router(router)
 app.include_router(payments_router, prefix="/api/payments")
 

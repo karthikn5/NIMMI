@@ -712,3 +712,124 @@ class WhatsAppFile(Base):
     sends = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AgentThread(Base):
+    """A conversation with Nimmi, the dashboard's own agent (backend/agent): one person, in one workspace. Only the
+    person who wrote it can read it."""
+    __tablename__ = "agent_threads"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)  # the workspace
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)   # who is talking
+    title = Column(String(120), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class AgentMessage(Base):
+    """One turn of an agent thread, in the shape the AI models get it back: the person's message, the agent's answer
+    (with the tools it asked for), or a tool's result."""
+    __tablename__ = "agent_messages"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    thread_id = Column(String(36), ForeignKey("agent_threads.id", ondelete="CASCADE"), index=True)
+    run_id = Column(String(36), nullable=True)
+    seq = Column(Integer, nullable=False)  # order within the thread
+    role = Column(String, nullable=False)  # user, assistant, tool
+    content = Column(Text, nullable=True)
+    tool_calls = Column(JSON, nullable=True)  # assistant: [{"id", "name", "arguments"}]
+    tool_call_id = Column(String, nullable=True)  # tool: the call it answers
+    name = Column(String, nullable=True)  # tool: which tool
+    raw = Column(JSON, nullable=True)  # assistant: Gemini's own parts (thought signatures), sent back unchanged
+    screen = Column(JSON, nullable=True)  # user: the screen they were on
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class AgentRun(Base):
+    """The agent answering one message: its state, who it acts for, what it cost and how fast it was."""
+    __tablename__ = "agent_runs"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    thread_id = Column(String(36), ForeignKey("agent_threads.id", ondelete="CASCADE"), index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    owner_id = Column(String(36), nullable=False)
+    role = Column(String, nullable=False)  # the person's role in the workspace when they asked
+    state = Column(String, default="running")  # running, done, failed, stopped
+    stop_requested = Column(Boolean, default=False)
+    models = Column(String, nullable=True)  # catalog ids of the models that answered, comma-separated
+    rounds = Column(Integer, default=0)
+    tokens_in = Column(Integer, default=0)
+    tokens_out = Column(Integer, default=0)
+    first_output_ms = Column(Integer, nullable=True)  # from the message to the first words or tool step
+    cost_inr = Column(Float, nullable=True)  # what the AI cost, at the models' list prices (agent/providers.cost_inr)
+    error = Column(Text, nullable=True)
+    last_seq = Column(Integer, default=0)
+    started_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    heartbeat_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class AgentEvent(Base):
+    """What a run sent to the panel, numbered, so a reload or another server process can replay it."""
+    __tablename__ = "agent_events"
+    __table_args__ = (UniqueConstraint("run_id", "seq", name="uq_agent_event_seq"),)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String(36), ForeignKey("agent_runs.id", ondelete="CASCADE"), index=True)
+    seq = Column(Integer, nullable=False)
+    type = Column(String, nullable=False)
+    data = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class AgentAction(Base):
+    """Something Nimmi changed, or asked the person to confirm (backend/agent/registry.py): what, for whom, the exact
+    settings before and after (undo restores them, if nobody changed them again since), and its state."""
+    __tablename__ = "agent_actions"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)  # the workspace
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)   # who asked
+    thread_id = Column(String(36), nullable=True, index=True)
+    run_id = Column(String(36), nullable=True)
+    tool_call_id = Column(String, nullable=True)
+    tool = Column(String, nullable=False)
+    inputs = Column(JSON, nullable=True)  # confirm-level tools: what runs when they confirm
+    title = Column(String(200), nullable=True)  # confirm level: the card's heading
+    summary = Column(Text, nullable=False)  # in plain words, shown in the panel and the audit list
+    adapter = Column(String, nullable=True)  # how undo reads and writes the settings (registry.ADAPTERS)
+    entity_id = Column(String, nullable=True)
+    before = Column(JSON, nullable=True)
+    after = Column(JSON, nullable=True)
+    state = Column(String, default="done")  # done, undone, proposed, cancelled, expired, failed
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    decided_at = Column(DateTime(timezone=True), nullable=True)  # confirmed, cancelled or undone
+
+
+class AgentJob(Base):
+    """A longer piece of work Nimmi does in steps, waiting for the person between them (agent/builder.py): building an
+    assistant from a website. `state` keeps every step's answers and results, so it continues from any process."""
+    __tablename__ = "agent_jobs"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    thread_id = Column(String(36), nullable=True, index=True)
+    kind = Column(String, default="build")
+    step = Column(String, default="source")  # source, look, voice, done
+    status = Column(String, default="waiting")  # waiting (for the person), working, done, failed, cancelled
+    state = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class AgentKey(Base):
+    """A key that lets an AI app (Claude, ChatGPT, an editor) use Nimmi's tools over MCP as this person, in this
+    workspace (backend/agent/mcp.py). Only its hash is kept; the key itself is shown once."""
+    __tablename__ = "agent_keys"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)  # the workspace
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name = Column(String(80), nullable=False)
+    prefix = Column(String(16), nullable=False)  # the key's first characters, to tell keys apart
+    token_hash = Column(String(64), nullable=False, unique=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)

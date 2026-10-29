@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiJson } from "@/lib/api";
+import { AGENT_CHANGED } from "@/lib/agent/changes";
 
 /** Load a dashboard resource. `path` null skips loading (e.g. until a dialog opens). */
 export function useApi<T>(path: string | null) {
@@ -23,6 +24,13 @@ export function useApi<T>(path: string | null) {
     }, [path]);
 
     useEffect(() => { load(); }, [load]);
+    // Nimmi changed something: show the saved version.
+    useEffect(() => {
+        if (!path) return;
+        const again = () => { void load(); };
+        window.addEventListener(AGENT_CHANGED, again);
+        return () => window.removeEventListener(AGENT_CHANGED, again);
+    }, [path, load]);
 
     return { data, setData, loading, error, reload: load };
 }

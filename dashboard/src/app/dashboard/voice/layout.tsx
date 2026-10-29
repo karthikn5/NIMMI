@@ -70,6 +70,7 @@ export default function VoiceLayout({ children }: { children: ReactNode }) {
                                     <Link
                                         key={t.href}
                                         href={t.href}
+                                        data-agent={`voice.tab.${t.href.split("/")[3] ?? "overview"}`}
                                         aria-current={active ? "page" : undefined}
                                         className={cn(
                                             "pb-3 text-sm border-b-2 whitespace-nowrap transition-colors",
@@ -140,6 +141,7 @@ function MenuTab({ tab, active }: { tab: Tab; active: boolean }) {
         <div onMouseEnter={open} onMouseLeave={() => close(true)}>
             <div
                 ref={box}
+                data-agent={`voice.tab.${tab.href.split("/")[3] ?? "overview"}`}
                 className={cn(
                     "flex items-center gap-1 pb-3 text-sm border-b-2 whitespace-nowrap transition-colors",
                     active ? "border-plum text-ink font-medium" : "border-transparent text-stone-500 hover:text-ink",

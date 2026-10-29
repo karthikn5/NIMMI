@@ -17,6 +17,9 @@ import BehaviourPanel from "./components/BehaviourPanel";
 import LeadsPanel from "./components/LeadsPanel";
 import WidgetPreview from "./components/WidgetPreview";
 import TestChat from "./components/TestChat";
+import AgentToggle from "@/components/agent/AgentToggle";
+import { useAgentScreen } from "@/components/agent/AgentProvider";
+import { AGENT_CHANGED, type AgentChange } from "@/lib/agent/changes";
 import {
     BEHAVIOUR_DEFAULTS, VISUAL_DEFAULTS, assetUrl, fontStylesheet, normalizeBehaviour, normalizeVisual,
     type Behaviour, type Visual,
@@ -122,6 +125,12 @@ function Builder({ params }: { params: Promise<{ id: string }> }) {
     // On a phone, preview the chat as it looks on a phone.
     useEffect(() => { if (window.innerWidth < 768) setDevice("mobile"); }, []);
 
+    // A link (or Nimmi, the dashboard's agent) can open a tab: ?tab=knowledge.
+    const askedTab = searchParams.get("tab");
+    useEffect(() => {
+        if (askedTab && TABS.some((t) => t.id === askedTab)) setTab(askedTab as Tab);
+    }, [askedTab]);
+
     // Back from payment: open the install dialog.
     useEffect(() => {
         if (searchParams.get("payment") === "success") {
@@ -171,6 +180,22 @@ function Builder({ params }: { params: Promise<{ id: string }> }) {
             setSaveState("error");
         }
     }, [snapshot, id, botName, instructions, knowledge, aiProvider, aiModel, aiApiKey, visual, behaviour, flowNodes, flowEdges]);
+
+    // Nimmi, the dashboard's agent: it sees which tab and assistant are open, and unsaved edits are saved before it acts.
+    useAgentScreen({ tab, entity: { kind: "assistant", id, name: botName || undefined }, details: { saved: saveState } }, { flush: persist });
+    // It changed this assistant: show the saved version, its sources and flow included (the tabs load again).
+    const [version, setVersion] = useState(0);
+    useEffect(() => {
+        const onChange = (e: Event) => {
+            const change = (e as CustomEvent<AgentChange>).detail;
+            if (change?.kind === "assistant" && change.id === id && !change.deleted) {
+                void load();
+                setVersion((v) => v + 1);
+            }
+        };
+        window.addEventListener(AGENT_CHANGED, onChange);
+        return () => window.removeEventListener(AGENT_CHANGED, onChange);
+    }, [id, load]);
 
     useEffect(() => {
         if (loading || loadError) return;
@@ -238,7 +263,7 @@ function Builder({ params }: { params: Promise<{ id: string }> }) {
 
                 <nav aria-label="Builder sections" className="hidden md:flex items-stretch self-stretch mx-auto">
                     {TABS.map((t) => (
-                        <button key={t.id} type="button" onClick={() => setTab(t.id)} aria-current={tab === t.id ? "page" : undefined}
+                        <button key={t.id} type="button" data-agent={`builder.tab.${t.id}`} onClick={() => setTab(t.id)} aria-current={tab === t.id ? "page" : undefined}
                                 className={cn("relative px-3.5 text-[13px] transition-colors", tab === t.id ? "text-ink font-medium" : "text-stone-500 hover:text-ink")}>
                             {t.label}
                             {tab === t.id && <span className="absolute inset-x-3 bottom-0 h-0.5 rounded-full bg-plum" />}
@@ -248,11 +273,12 @@ function Builder({ params }: { params: Promise<{ id: string }> }) {
 
                 <div className="ml-auto md:ml-0 flex items-center gap-2">
                     <SaveStatus state={saveState} onRetry={persist} />
-                    <Link href={`/demo/${id}`} target="_blank"
+                    <AgentToggle />
+                    <Link href={`/demo/${id}`} target="_blank" data-agent="builder.test"
                           className="hidden sm:inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-line-strong bg-white text-[13px] font-medium text-ink hover:bg-stone-50">
                         <Play size={13} /> Test
                     </Link>
-                    <Button size="sm" variant="primary" onClick={() => setShowExport(true)}>
+                    <Button size="sm" variant="primary" onClick={() => setShowExport(true)} data-agent="builder.install">
                         <Code2 size={14} /> <span className="hidden sm:inline">Add to website</span><span className="sm:hidden">Install</span>
                     </Button>
                 </div>
@@ -261,7 +287,7 @@ function Builder({ params }: { params: Promise<{ id: string }> }) {
             {/* Tabs on small screens */}
             <nav aria-label="Builder sections" className="md:hidden flex overflow-x-auto bg-white border-b border-line px-2 [scrollbar-width:none]">
                 {TABS.map((t) => (
-                    <button key={t.id} type="button" onClick={() => setTab(t.id)} aria-current={tab === t.id ? "page" : undefined}
+                    <button key={t.id} type="button" data-agent={`builder.tab.${t.id}`} onClick={() => setTab(t.id)} aria-current={tab === t.id ? "page" : undefined}
                             className={cn("relative shrink-0 h-11 px-3 text-[13px]", tab === t.id ? "text-ink font-medium" : "text-stone-500")}>
                         {t.label}
                         {tab === t.id && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-plum" />}
@@ -269,6 +295,7 @@ function Builder({ params }: { params: Promise<{ id: string }> }) {
                 ))}
             </nav>
 
+            <div key={version} className="contents">
             {loadError ? (
                 <div className="flex-1 flex items-center justify-center p-6 text-center">
                     <div>
@@ -349,6 +376,7 @@ function Builder({ params }: { params: Promise<{ id: string }> }) {
                     </button>
                 </div>
             )}
+            </div>
 
             {showExport && (
                 <div className="fixed inset-0 z-[90]">

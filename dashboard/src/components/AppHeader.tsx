@@ -8,6 +8,7 @@ import { Check, ChevronDown } from "lucide-react";
 import { cn } from "@/components/ui";
 import { activeOwnerId, apiJson, clearSession, getWorkspace, setWorkspace } from "@/lib/api";
 import { useWaitingCount } from "@/lib/liveChat";
+import AgentToggle from "@/components/agent/AgentToggle";
 
 const nav = [
     { href: "/dashboard", label: "Assistants", exact: true },
@@ -80,6 +81,7 @@ export default function AppHeader({ userName }: { userName?: string }) {
                             <Link
                                 key={item.href}
                                 href={item.href}
+                                data-agent={`nav.${(item.href.split("/")[2] ?? "assistants").replace("-", "_")}`}
                                 aria-current={active ? "page" : undefined}
                                 className={cn(
                                     "h-11 md:h-14 inline-flex items-center gap-1.5 text-sm border-b-2 whitespace-nowrap transition-colors",
@@ -97,7 +99,9 @@ export default function AppHeader({ userName }: { userName?: string }) {
                     })}
                 </nav>
 
-                <div ref={menuRef} className="ml-auto relative">
+                <AgentToggle className="ml-auto" />
+
+                <div ref={menuRef} className="relative">
                     <button
                         onClick={() => setMenu((m) => !m)}
                         aria-expanded={menu}

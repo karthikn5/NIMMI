@@ -45,7 +45,7 @@ export default function WhatsAppLayout({ children }: { children: ReactNode }) {
                             {tabs.filter((t) => !t.managers || role !== "agent").map((t) => {
                                 const active = t.exact ? pathname === t.href : pathname.startsWith(t.href);
                                 return (
-                                    <Link key={t.href} href={t.href} aria-current={active ? "page" : undefined}
+                                    <Link key={t.href} href={t.href} data-agent={`whatsapp.tab.${t.href.split("/")[3] ?? "overview"}`} aria-current={active ? "page" : undefined}
                                           className={cn("pb-3 text-sm border-b-2 whitespace-nowrap transition-colors",
                                               active ? "border-plum text-ink font-medium" : "border-transparent text-stone-500 hover:text-ink")}>
                                         {t.label}

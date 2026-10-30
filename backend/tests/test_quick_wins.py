@@ -101,7 +101,7 @@ def test_after_hours_handoff_and_settings_validation(client, make_user):
 
 def test_voice_after_hours_takes_a_message_instead_of_transferring():
     agent = VoiceAgent(assistant_name="Nimmi", company_name="Acme", language="en-IN", transfer_enabled=True,
-                       transfer_number="+919840012345", transfer_when="they ask for a person")
+                       transfer_number="+919840012345", transfer_when="they ask for a person", team_handoff=False)
 
     class B:
         bot_name, system_prompt = "Acme", ""
@@ -109,6 +109,12 @@ def test_voice_after_hours_takes_a_message_instead_of_transferring():
     closed_prompt = llm.system_prompt(agent, B(), "", "inbound", None, after_hours="tomorrow at 9:00 AM")
     assert llm.TRANSFER in open_prompt and llm.TRANSFER not in closed_prompt
     assert "back tomorrow at 9:00 AM" in closed_prompt
+    # With the team rung in the dashboard (the default), the AI asks for a person through its tool instead: it says who
+    # can join, the team or the number, at that moment.
+    team = VoiceAgent(assistant_name="Nimmi", company_name="Acme", language="en-IN", transfer_enabled=True,
+                      transfer_number="+919840012345", transfer_when="they ask for a person")
+    team_prompt = llm.system_prompt(team, B(), "", "inbound", None)
+    assert "use ask_for_person" in team_prompt and llm.TRANSFER not in team_prompt
 
 
 def test_saved_replies(client, make_user):

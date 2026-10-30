@@ -267,6 +267,24 @@ function AgentSettings() {
                     </Card>
 
                     <Card className="px-5 py-1">
+                        <SettingRow label="Ring my team in the dashboard" hint="When a caller asks for a person, or needs one, everyone available in the dashboard sees it and can pick up the call: in the browser on Twilio numbers, or on their phone. The assistant keeps the caller company meanwhile.">
+                            <Switch checked={draft.team_handoff} onChange={(v) => set("team_handoff", v)} label="Ring my team in the dashboard" />
+                            {draft.team_handoff && (
+                                <div className="mt-4">
+                                    <label htmlFor="team_handoff_wait" className="text-[13px] text-stone-600">Wait for someone to pick up</label>
+                                    <Select id="team_handoff_wait" className="mt-1 max-w-48" value={draft.team_handoff_wait}
+                                            onChange={(e) => set("team_handoff_wait", Number(e.target.value))}>
+                                        {[15, 30, 45, 60, 90, 120].map((s) => <option key={s} value={s}>{s} seconds</option>)}
+                                    </Select>
+                                    <p className="text-xs text-stone-500 mt-1.5">
+                                        Then the transfer number below, if you set one. Otherwise the assistant tells the caller the team is busy, and a call-back appears in Schedule.
+                                    </p>
+                                </div>
+                            )}
+                        </SettingRow>
+                    </Card>
+
+                    <Card className="px-5 py-1">
                         <SettingRow label="Transfer to a person" hint="If nobody picks up, the assistant takes a message. You'll see it in Calls.">
                             <Switch checked={draft.transfer_enabled} onChange={(v) => set("transfer_enabled", v)} label="Transfer to a person" />
                             {draft.transfer_enabled && (

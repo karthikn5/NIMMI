@@ -143,6 +143,8 @@ class VoiceAgent(Base):
     voicemail_action = Column(String, nullable=True)    # off, hangup, leave_message (Twilio only)
     voicemail_message = Column(Text, nullable=True)
     transfer_mode = Column(String, nullable=True)       # cold, warm (warm: staff hear a summary first)
+    team_handoff = Column(Boolean, nullable=True)       # ring the team in the dashboard when a caller needs a person; None = on
+    team_handoff_wait = Column(Integer, nullable=True)  # seconds to wait for someone to pick up; None = 45 (voice/handoff.py)
     ai_model = Column(String, nullable=True)            # voice/ai_models.py id; None = the default model
     functions = Column(JSON, nullable=True)             # voice/functions.py: what it can do during a call (secrets sealed)
     # The columns above are the outgoing agent's. The incoming agent's own phone settings, once someone edits them
@@ -312,7 +314,57 @@ class CallLog(Base):
     campaign_id = Column(String(36), nullable=True, index=True)
     number_id = Column(String(36), nullable=True)  # our number on the call (the one they called, or we called from)
     lead = Column(String, nullable=True)          # how interested they sounded (voice/schedule.py LEAD_STATUSES)
+    live_at = Column(DateTime(timezone=True), nullable=True)  # the call's process says it's alive (every few seconds)
     next_step = Column(JSON, nullable=True)       # the follow-up the analysis suggested: {brief, on, reason, person}
+
+
+class CallHandoff(Base):
+    """A call handed to a person (LIVE_CALLS_PLAN.md): someone from the team picking it up in the dashboard (their
+    browser or their phone), or the agent's transfer number. The provider's "what next" request reads it here, so
+    whichever server process gets that request knows where the call goes."""
+    __tablename__ = "call_handoffs"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="SET NULL"), nullable=True)
+    call_id = Column(String(36), nullable=True, index=True)          # CallLog.id
+    provider = Column(String(10), nullable=True)                     # twilio, exotel, browser (a test call)
+    provider_call_id = Column(String, nullable=True, index=True)
+    caller = Column(String, nullable=True)                           # the caller's number (E.164)
+    caller_name = Column(String, nullable=True)
+    reason = Column(Text, nullable=True)                             # why they need a person, in the AI's words
+    brief = Column(Text, nullable=True)                              # a short summary for the person taking it
+    status = Column(String(12), default="ringing", index=True)       # ringing, accepted, connected, ended, missed, cancelled, failed
+    via = Column(String(10), nullable=True)                          # browser, phone, transfer (the agent's number)
+    target = Column(String, nullable=True)                           # the phone number dialled, or the browser's identity
+    accepted_by = Column(String(36), nullable=True)                  # the team member (users.id)
+    declined_by = Column(JSON, nullable=True)                        # team members who let the assistant handle it
+    expires_at = Column(DateTime(timezone=True), nullable=True)      # ringing until then
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    accepted_at = Column(DateTime(timezone=True), nullable=True)
+    connected_at = Column(DateTime(timezone=True), nullable=True)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+    talk_sec = Column(Integer, nullable=True)                        # how long the person talked with the caller
+
+
+class TwilioKey(Base):
+    """An API key Nimmi made on a Twilio account (its own or a customer's connected one), to sign the tokens a team
+    member's browser uses to pick up a call (voice/live_api.py). The secret is sealed."""
+    __tablename__ = "twilio_keys"
+    account_sid = Column(String, primary_key=True)
+    key_sid = Column(String, nullable=False)
+    secret = Column(Text, nullable=False)                            # secretbox-sealed
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class TeamPresence(Base):
+    """Who in a workspace is available to take calls: their dashboard is open (it checks in every few seconds) and
+    they haven't switched "Available for calls" off."""
+    __tablename__ = "team_presence"
+    owner_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    available = Column(Boolean, default=True)
+    phone = Column(String, nullable=True)                            # where "Call my phone" rings them (E.164)
+    seen_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class Campaign(Base):

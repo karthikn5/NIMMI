@@ -15,6 +15,7 @@ class BrowserTransport:
     Client sends binary frames of 16 kHz PCM16 mono, or JSON {"type": "hangup"}.
     Server sends binary PCM16 for playback and JSON events (agent/caller text, clear, ended).
     """
+    provider = "browser"  # whose call it is (a hand-off to a person says where it goes)
     sample_rate = 16000
 
     def __init__(self, ws: WebSocket):
@@ -63,6 +64,7 @@ class ExotelTransport:
     Exotel Voicebot applet over a bidirectional WebSocket: 8 kHz PCM16 mono,
     base64 in JSON events (connected, start, media, mark, dtmf, stop).
     """
+    provider = "exotel"  # whose call it is (a hand-off to a person says where it goes)
     sample_rate = 8000
     CHUNK = 3200  # 200 ms; Exotel wants multiples of 320 bytes
 
@@ -151,6 +153,7 @@ class TwilioTransport:
     Twilio Media Streams over a bidirectional WebSocket (<Connect><Stream>):
     8 kHz G.711 mu-law, base64 in JSON events (connected, start, media, mark, stop).
     """
+    provider = "twilio"  # whose call it is (a hand-off to a person says where it goes)
     sample_rate = 8000
 
     def __init__(self, ws: WebSocket):

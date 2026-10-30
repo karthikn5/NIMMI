@@ -194,11 +194,16 @@ def system_prompt(agent: VoiceAgent, bot: Bot, knowledge: str, direction: str, c
     in_script = ("" if lang_code == "en-IN" else
                  f"\n- Write {lang} words in {lang} script, never in English letters: the voice reads {lang} script."
                  " English words such as course names or 'fees' can stay in English.")
-    transfer = (f"If {agent.transfer_when or 'the caller asks for a person'}, say one short sentence that you'll connect them "
-                f"and end that reply with {TRANSFER}. Never write {TRANSFER} in any other reply."
-                if agent.transfer_enabled and agent.transfer_number and not after_hours else
-                "If the caller asks for a person, offer to take their name and number so the team can call back.")
-    if after_hours:
+    team = getattr(agent, "team_handoff", None) is not False  # ring the team in the dashboard (voice/handoff.py)
+    if team:
+        transfer = (f"If {agent.transfer_when or 'the caller asks for a person'}, or they need something only a person from the "
+                    "team can do, use ask_for_person; it says whether someone can join. Never just say someone will call.")
+    elif agent.transfer_enabled and agent.transfer_number and not after_hours:
+        transfer = (f"If {agent.transfer_when or 'the caller asks for a person'}, say one short sentence that you'll connect "
+                    f"them and end that reply with {TRANSFER}. Never write {TRANSFER} in any other reply.")
+    else:
+        transfer = "If the caller asks for a person, offer to take their name and number so the team can call back."
+    if after_hours and not team:
         transfer += f" The team is offline right now and back {after_hours}; say so if they ask for a person."
     reason = ""
     if direction == "outbound":

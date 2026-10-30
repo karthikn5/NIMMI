@@ -222,14 +222,14 @@ def test_twilio_answered_by_machine_or_person(client, make_user, run):
 
 
 def test_warm_transfer_whispers_a_brief(client):
-    scheduler.pending_transfers["CA9"] = "+919840012345"
-    scheduler.pending_whispers["CA9"] = "Ravi wants a 2BHK under 50 lakhs."
+    from tests.test_twilio import handed_over
+    row = handed_over(client, "CA9", "+919840012345", brief="Ravi wants a 2BHK under 50 lakhs.")
     after = client.post("/api/voice/twilio/after/tw-secret", data={"CallSid": "CA9"})
-    assert "<Number url=" in after.text and "whisper" in after.text and "+919840012345" in after.text
-    whisper = client.post("/api/voice/twilio/whisper/tw-secret?call=CA9")
-    assert "Ravi wants a 2BHK" in whisper.text and "CA9" not in scheduler.pending_whispers
+    assert "<Number url=" in after.text and f"whisper/tw-secret?call={row}" in after.text and "+919840012345" in after.text
+    whisper = client.post(f"/api/voice/twilio/whisper/tw-secret?call={row}")
+    assert "Ravi wants a 2BHK" in whisper.text
 
-    scheduler.pending_transfers["CA10"] = "+919840012345"  # cold transfer: plain dial
+    handed_over(client, "CA10", "+919840012345")  # cold transfer: plain dial
     assert "<Number" not in client.post("/api/voice/twilio/after/tw-secret", data={"CallSid": "CA10"}).text
 
 

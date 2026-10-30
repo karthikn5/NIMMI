@@ -22,14 +22,14 @@ from auth import (AuthContext, client_ip, decode_scoped_token, get_ctx, get_owne
                   rate_limit, require_manager, require_owner)
 from security import is_production, local_dev
 from database import async_session, get_db
-from backend.models import (Bot, CallbackJob, CallbackSettings, CallLog, Campaign, ComplianceSettings, Contact, Conversation,
-                            DncEntry, Meeting, PhoneNumber, VoiceAgent, VoiceScript)
+from backend.models import (Bot, CallbackJob, CallbackSettings, CallHandoff, CallLog, Campaign, ComplianceSettings, Contact,
+                            Conversation, DncEntry, Meeting, PhoneNumber, VoiceAgent, VoiceScript)
 from notify.email import send_email
 from notify.events import fire_and_forget
 from phone import callable_destination, display, extract_contact, mask, to_e164
 import assist
-from voice import (accounts, ai_models, ambience, catalog, exotel, functions, llm, memory, metering, recording, sarvam,
-                   schedule, scheduler, scripts, twilio)
+from voice import (accounts, ai_models, ambience, catalog, exotel, functions, handoff, llm, memory, metering, recording,
+                   sarvam, schedule, scheduler, scripts, twilio)
 from voice.pipeline import CallSession, CallSetup, prepare_opening
 from voice.transports import BrowserTransport, ExotelTransport, TwilioTransport
 import plans
@@ -83,6 +83,7 @@ def _agent_json(agent: VoiceAgent, bot: Bot, direction: str = "outbound") -> dic
         "pronunciations": agent.pronunciations or [],
         "voicemail_action": agent.voicemail_action or "off", "voicemail_message": agent.voicemail_message or "",
         "transfer_mode": agent.transfer_mode or "cold", "ai_model": ai_models.ai_model(agent.ai_model).id,
+        "team_handoff": agent.team_handoff is not False, "team_handoff_wait": agent.team_handoff_wait or handoff.DEFAULT_WAIT_SEC,
         "functions": functions.public(agent.functions),
     }
 
@@ -277,6 +278,8 @@ class AgentUpdate(BaseModel):
     voicemail_action: str = "off"
     voicemail_message: str = Field("", max_length=500)
     transfer_mode: str = "cold"
+    team_handoff: bool = True  # ring the team in the dashboard when a caller needs a person (voice/handoff.py)
+    team_handoff_wait: int = Field(45, ge=15, le=120)
     ai_model: Optional[str] = Field(None, max_length=40)  # voice/ai_models.py id ("auto": the default); None = unchanged
     functions: Optional[list[dict]] = Field(None, max_length=functions.MAX_FUNCTIONS + 1)  # None = unchanged
 
@@ -818,23 +821,32 @@ async def exotel_call(ws: WebSocket, secret: str):
     await _route_and_run(transport, transport.call_sid, transport.from_number, transport.to_number, scope=scope)
 
 
+def _dials(row) -> Optional[str]:
+    """The phone number a hand-off goes to (Exotel takes calls to phones only)."""
+    return to_e164(row.target) if row is not None and row.via in ("phone", "transfer") and row.target else None
+
+
 @router.get("/exotel/after-bot")
-async def exotel_after_bot(secret: str = "", CallSid: str = ""):
+async def exotel_after_bot(secret: str = "", CallSid: str = "", db: AsyncSession = Depends(get_db)):
     """Exotel Passthru: 200 = transfer (next applet dials), anything else = hang up."""
     await _exotel_scope(secret)
-    if CallSid in scheduler.pending_transfers:
+    if _dials(await handoff.latest_open(db, CallSid)):
         return PlainTextResponse("transfer")
     return Response(status_code=302)
 
 
 @router.get("/exotel/transfer-target")
-async def exotel_transfer_target(secret: str = "", CallSid: str = ""):
-    """Exotel Connect applet 'dial number from URL'."""
+async def exotel_transfer_target(secret: str = "", CallSid: str = "", db: AsyncSession = Depends(get_db)):
+    """Exotel Connect applet 'dial number from URL'. Exotel doesn't tell us when that part ends, so the hand-off
+    closes here."""
     await _exotel_scope(secret)
-    number = scheduler.pending_transfers.pop(CallSid, None)
-    e164 = to_e164(number) if number else None
+    row = await handoff.latest_open(db, CallSid)
+    e164 = _dials(row)
     if not e164:
         raise HTTPException(status_code=404, detail="No transfer pending")
+    row.status, row.connected_at, row.ended_at = "ended", handoff.now(), handoff.now()
+    await db.commit()
+    fire_and_forget(handoff.announce(row.owner_id, row.id, "ended"))
     return PlainTextResponse(e164)
 
 
@@ -938,24 +950,64 @@ async def twilio_outbound(secret: str, request: Request, job: str = "", db: Asyn
 
 
 @router.post("/twilio/whisper/{secret}")
-async def twilio_whisper(secret: str, request: Request, call: str = ""):
-    """Played to the person taking a warm transfer, before the caller is connected."""
+async def twilio_whisper(secret: str, request: Request, call: str = "", db: AsyncSession = Depends(get_db)):
+    """Played to the person taking the call on their phone, before the caller is connected."""
     await _twilio_scope(secret, request, await request.form())
-    brief = scheduler.pending_whispers.pop(call, "") if call else ""
-    return _xml(twilio.whisper_twiml(brief or "The caller is being connected now."))
+    row = await db.get(CallHandoff, call[:36]) if call else None
+    text = (row.brief if row.via == "transfer" else f"A caller needs a person: {row.reason or 'they asked for one'}.") if row else ""
+    return _xml(twilio.whisper_twiml(text or "The caller is being connected now."))
 
 
 @router.post("/twilio/after/{secret}")
-async def twilio_after(secret: str, request: Request):
-    """<Connect action>: the stream ended. Transfer if the assistant asked to, otherwise hang up."""
+async def twilio_after(secret: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """<Connect action>: the stream ended. Hand the call to the person it was handed to (voice/handoff.py), if any;
+    otherwise hang up. Read from the database: this request can reach any server process."""
     form = await request.form()
     await _twilio_scope(secret, request, form)
-    sid = str(form.get("CallSid") or "")
-    number = scheduler.pending_transfers.pop(sid, None)
-    e164 = to_e164(number) if number else None
-    if not e164:
+    row = await handoff.latest_open(db, str(form.get("CallSid") or ""))
+    if row is None:
         return _xml(twilio.hangup_twiml())
-    return _xml(twilio.dial_twiml(e164, whisper_call=sid if sid in scheduler.pending_whispers else "", hook=secret))
+    done = f"{twilio.public_base()}/api/voice/twilio/person-done/{secret}?h={row.id}"
+    if row.via == "browser":
+        twiml = twilio.client_twiml(row.target, row.id, action=done)
+    elif e164 := _dials(row):
+        whisper = row.id if row.via == "phone" or row.brief else ""
+        twiml = twilio.dial_twiml(e164, whisper_call=whisper, hook=secret, action=done)
+    else:
+        return _xml(twilio.hangup_twiml())
+    row.status, row.connected_at = "connected", handoff.now()
+    await db.commit()
+    fire_and_forget(handoff.announce(row.owner_id, row.id, "connected"))
+    return _xml(twiml)
+
+
+@router.post("/twilio/person-done/{secret}")
+async def twilio_person_done(secret: str, request: Request, h: str = "", db: AsyncSession = Depends(get_db)):
+    """<Dial action>: the person's part of the call is over (they talked), or they never answered."""
+    form = await request.form()
+    await _twilio_scope(secret, request, form)
+    status = str(form.get("DialCallStatus") or "")
+    try:
+        talked = int(form.get("DialCallDuration") or 0) if status == "completed" else 0
+    except ValueError:
+        talked = 0
+    row = await db.get(CallHandoff, h[:36]) if h else None
+    if row is not None and row.status not in ("ended", "failed"):
+        name = await handoff.name_of(db, row.accepted_by) if row.accepted_by else (row.target or "The transfer number")
+        row.status, row.talk_sec, row.ended_at = ("ended" if talked else "failed"), talked, handoff.now()
+        call = await db.get(CallLog, row.call_id) if row.call_id else None
+        if call is not None:
+            line = (f"{name} talked with the caller for {talked // 60}:{talked % 60:02d}" if talked else
+                    f"{name} couldn't be connected ({status or 'no answer'})")
+            call.transcript = [*(call.transcript or []), {"at_sec": (call.duration_sec or 0) + talked, "speaker": "system", "text": line}]
+        await db.commit()
+        fire_and_forget(handoff.announce(row.owner_id, row.id, row.status))
+        if not talked:
+            fire_and_forget(handoff.todo_for(row.owner_id, row.bot_id, row.caller, row.call_id,
+                                             row.reason or "They asked for a person.", row.caller_name))
+    if talked or row is None:
+        return _xml(twilio.hangup_twiml())
+    return _xml(twilio.say_and_hangup("Sorry, we couldn't connect you just now. Someone from our team will call you back."))
 
 
 @router.post("/twilio/status/{secret}")

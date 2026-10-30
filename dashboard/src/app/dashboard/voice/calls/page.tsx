@@ -1,11 +1,13 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Download, PhoneIncoming, PhoneOutgoing, Search } from "lucide-react";
+import { Bell, Download, Headset, Phone, PhoneIncoming, PhoneOutgoing, Search, Volume2 } from "lucide-react";
 import {
-    Button, Card, EmptyState, Input, Segmented, Select, Sheet, Skeleton, Status, cn, useToast,
+    Button, Card, EmptyState, Input, Segmented, Select, Sheet, Skeleton, Status, Switch, cn, useToast,
 } from "@/components/ui";
+import { SOUND_HINT, useCallDesk } from "@/components/voice/CallDesk";
+import { formatClock, setAvailability, useLive, type LiveCall } from "@/lib/voice/live";
 import { apiUrl } from "@/lib/api";
 import { apiSave, useApi } from "@/lib/useApi";
 import { OUTCOMES, SENTIMENT, formatDuration, formatNumber, formatWhen, languageLabel } from "@/lib/voice/api";
@@ -26,6 +28,15 @@ function Calls() {
     const openId = params.get("call");
 
     const calls = useApi<CallRecord[]>("/api/voice/calls");
+    const live = useLive();
+    // A live call that ended belongs in the list below now.
+    const liveIds = live.calls.map((c) => c.id).join(",");
+    const before = useRef(liveIds);
+    const reloadCalls = calls.reload;
+    useEffect(() => {
+        if (before.current && before.current !== liveIds) void reloadCalls();
+        before.current = liveIds;
+    }, [liveIds, reloadCalls]);
     const [direction, setDirection] = useState<"all" | "inbound" | "outbound">("all");
     const [outcome, setOutcome] = useState<"all" | CallOutcome>("all");
     const [query, setQuery] = useState("");
@@ -45,6 +56,9 @@ function Calls() {
 
     return (
         <>
+            {live.loaded && <CallAlerts available={live.me.available} />}
+            {live.calls.length > 0 && <LiveNow calls={live.calls} at={live.at} onOpen={openCall} />}
+
             <div className="flex flex-col md:flex-row md:items-center gap-3 mb-4">
                 <Segmented
                     label="Direction"
@@ -107,7 +121,7 @@ function Calls() {
                                             </span>
                                         </button>
                                         <div className="md:hidden mt-1.5 ml-6 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500">
-                                            <Status tone={OUTCOMES[c.outcome].tone}>{OUTCOMES[c.outcome].label}</Status>
+                                            {c.in_progress ? <Status tone="good">Live</Status> : <Status tone={OUTCOMES[c.outcome].tone}>{OUTCOMES[c.outcome].label}</Status>}
                                             <span>{c.bot_name}</span>
                                             <span className="tabular-nums">{formatDuration(c.duration_sec)}</span>
                                             <span>{formatWhen(c.started_at)}</span>
@@ -115,7 +129,7 @@ function Calls() {
                                     </td>
                                     <td className="hidden md:table-cell px-3 py-3 text-stone-700">{c.bot_name}</td>
                                     <td className="hidden md:table-cell px-3 py-3">
-                                        <Status tone={OUTCOMES[c.outcome].tone}>{OUTCOMES[c.outcome].label}</Status>
+                                        {c.in_progress ? <Status tone="good">Live</Status> : <Status tone={OUTCOMES[c.outcome].tone}>{OUTCOMES[c.outcome].label}</Status>}
                                         {c.successful !== null && c.successful !== undefined && (
                                             <span className={cn("block text-xs mt-0.5 ml-3", c.successful ? "text-emerald-700" : "text-stone-500")}>
                                                 {c.successful ? "Goal met" : "Goal not met"}
@@ -136,10 +150,130 @@ function Calls() {
     );
 }
 
+/** This person's part when a caller asks for a person: whether they're offered such calls, the ring, and desktop alerts
+ * (the alert card itself is on every dashboard page: CallDesk). */
+function CallAlerts({ available }: { available: boolean }) {
+    const desk = useCallDesk();
+    const [permission, setPermission] = useState<NotificationPermission | "unsupported">("unsupported");
+    useEffect(() => setPermission(typeof Notification === "undefined" ? "unsupported" : Notification.permission), []);
+    if (!desk) return null;
+    return (
+        <Card className="mb-4 px-5 py-3">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2.5">
+                <p className="flex items-center gap-2 text-[13.5px] font-medium mr-auto">
+                    <Headset size={15} className="text-plum" aria-hidden /> When a caller asks for a person
+                </p>
+                <label className="flex items-center gap-2 text-[13px] text-stone-600">
+                    <Switch checked={available} onChange={(v) => void setAvailability({ available: v })} label="Available for calls" />
+                    Available for calls
+                </label>
+                <label className="flex items-center gap-2 text-[13px] text-stone-600">
+                    <Switch checked={desk.sound} onChange={desk.setSound} label="Ring sound" disabled={!available} />
+                    Ring sound
+                </label>
+                <Button size="sm" variant="ghost" onClick={desk.testRing}><Volume2 size={14} aria-hidden /> Test ring</Button>
+                {permission === "default" && (
+                    <Button size="sm" variant="ghost" onClick={() => void Notification.requestPermission().then(setPermission)}>
+                        <Bell size={14} aria-hidden /> Turn on desktop alerts
+                    </Button>
+                )}
+            </div>
+            <p className="mt-1.5 text-[12.5px] text-stone-500">
+                {available
+                    ? "While your dashboard is open (any page), it rings and shows the caller. Pick up in the browser or on your phone."
+                    : "You won't be asked. If nobody in your team is available, the caller gets your transfer number or a call back."}
+            </p>
+            {available && desk.soundBlocked && <p className="mt-1 text-[12.5px] text-plum">{SOUND_HINT}</p>}
+        </Card>
+    );
+}
+
+/** The calls going on right now: who's on each (the assistant, a caller waiting for a person, or the team member), and
+ * a caller waiting for a person can be picked up right here (useCallDesk does it, as the alert card does). */
+function LiveNow({ calls, at, onOpen }: { calls: LiveCall[]; at: number; onOpen: (id: string) => void }) {
+    const desk = useCallDesk();
+    const live = useLive();
+    const [, tick] = useState(0);
+    useEffect(() => {
+        const timer = setInterval(() => tick((n) => n + 1), 1000);
+        return () => clearInterval(timer);
+    }, []);
+    const passed = Math.max(0, Math.floor((Date.now() - at) / 1000));
+    const state = (c: LiveCall) => ({
+        assistant: { tone: "neutral" as const, text: "With the assistant" },
+        waiting: { tone: "warn" as const, text: "Wants a person" },
+        connecting: { tone: "neutral" as const, text: c.person ? `Connecting to ${c.person}` : "Connecting" },
+        person: { tone: "good" as const, text: c.person ? `With ${c.person}` : "With the team" },
+    })[c.state];
+    return (
+        <Card className="mb-4">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 pt-4 pb-3 border-b border-line">
+                <span className="relative flex h-2.5 w-2.5" aria-hidden>
+                    <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-60 animate-ping" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-600" />
+                </span>
+                <h2 className="text-[14px] font-semibold">Live now</h2>
+                <span className="text-[13px] text-stone-500">{calls.length} {calls.length === 1 ? "call" : "calls"}</span>
+            </div>
+            <ul className="divide-y divide-line">
+                {calls.map((c) => {
+                    const s = state(c);
+                    const request = c.state === "waiting" ? live.requests.find((r) => r.id === c.handoff_id) : undefined;
+                    const last = c.lines[c.lines.length - 1];
+                    return (
+                        <li key={c.id} className={cn("px-5 py-3", c.state === "waiting" && "bg-amber-50/60")}>
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                <button type="button" onClick={() => onOpen(c.id)} className="flex items-center gap-2.5 text-left min-w-0 rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-plum">
+                                    {c.direction === "inbound"
+                                        ? <PhoneIncoming size={14} className="text-stone-400 shrink-0" aria-label="Inbound" />
+                                        : <PhoneOutgoing size={14} className="text-stone-400 shrink-0" aria-label="Outbound" />}
+                                    <span className="text-[13.5px] tabular-nums">{c.caller_name || c.caller}</span>
+                                    <span className="text-[13px] text-stone-500 truncate">{c.bot_name}</span>
+                                </button>
+                                <Status tone={s.tone}>{s.text}</Status>
+                                <span className="ml-auto text-[13px] tabular-nums text-stone-600">{formatClock(c.seconds + passed)}</span>
+                            </div>
+                            {last && (
+                                <p className="mt-1.5 ml-6 truncate text-[12.5px] text-stone-500">
+                                    <span className={last.speaker === "agent" ? "text-plum" : "text-stone-600"}>{last.speaker === "agent" ? "Assistant" : "Caller"}:</span> {last.text}
+                                </p>
+                            )}
+                            {request && desk && (
+                                <div className="mt-2.5 ml-6 flex flex-wrap items-center gap-2">
+                                    <span className="text-[12.5px] text-stone-700 mr-1">{request.reason}</span>
+                                    {request.browser && (
+                                        <Button size="sm" variant="primary" disabled={desk.busy === request.id} onClick={() => void desk.pickUp(request, "browser")}>
+                                            <Headset size={14} aria-hidden /> Pick up here
+                                        </Button>
+                                    )}
+                                    {(request.phone || request.test) && (
+                                        <Button size="sm" variant={request.browser ? "secondary" : "primary"} disabled={desk.busy === request.id}
+                                                onClick={() => void desk.pickUp(request, request.test ? "browser" : "phone")}>
+                                            <Phone size={14} aria-hidden /> {request.test ? "Pick up (test)" : "Call my phone"}
+                                        </Button>
+                                    )}
+                                    <Button size="sm" variant="ghost" onClick={() => void desk.letGo(request)}>Let the assistant handle it</Button>
+                                </div>
+                            )}
+                        </li>
+                    );
+                })}
+            </ul>
+        </Card>
+    );
+}
+
 function CallSheet({ id, onClose }: { id: string | null; onClose: () => void }) {
     const toast = useToast();
     const call = useApi<CallRecord>(id ? `/api/voice/calls/${id}` : null);
     const c = call.data && call.data.id === id ? call.data : null;
+    // While the call goes on, its transcript grows: read it again every couple of seconds.
+    const reload = call.reload;
+    useEffect(() => {
+        if (!c?.in_progress) return;
+        const timer = setInterval(() => void reload(), 2000);
+        return () => clearInterval(timer);
+    }, [c?.in_progress, reload]);
 
     const blockNumber = async () => {
         if (!c) return;
@@ -163,7 +297,7 @@ function CallSheet({ id, onClose }: { id: string | null; onClose: () => void }) 
         <Sheet
             open={!!id}
             onClose={onClose}
-            title={c ? <span className="tabular-nums">{c.caller}</span> : "Call"}
+            title={c ? <span className="tabular-nums">{c.caller}{c.in_progress && <span className="ml-2 align-middle"><Status tone="good">Live</Status></span>}</span> : "Call"}
             subtitle={c && `${c.direction === "inbound" ? "Inbound" : c.campaign_id ? "Campaign" : "Callback"} · ${c.bot_name} · ${formatWhen(c.started_at)}`}
         >
             {call.loading ? (

@@ -116,13 +116,25 @@ def say_and_hangup(text: str) -> str:
     return f'<?xml version="1.0" encoding="UTF-8"?><Response><Say>{escape(text)}</Say><Hangup/></Response>'
 
 
-def dial_twiml(e164: str, whisper_call: str = "", hook: str | None = None) -> str:
-    """Transfer the caller. With `whisper_call`, the person answering first hears a brief (warm transfer)."""
+def _dial(action: str) -> str:
+    """<Dial>, with the URL Twilio asks when the person's part of the call ends (voice/handoff.py)."""
+    return f"<Dial action={quoteattr(action)} timeout=\"25\">" if action else "<Dial>"
+
+
+def dial_twiml(e164: str, whisper_call: str = "", hook: str | None = None, action: str = "") -> str:
+    """Transfer the caller. With `whisper_call` (a hand-off's id), the person answering first hears a brief."""
     if not whisper_call:
-        return f'<?xml version="1.0" encoding="UTF-8"?><Response><Dial>{escape(e164)}</Dial></Response>'
+        return f'<?xml version="1.0" encoding="UTF-8"?><Response>{_dial(action)}{escape(e164)}</Dial></Response>'
     url = f"{public_base()}/api/voice/twilio/whisper/{hook or ws_secret()}?call={whisper_call}"
-    return (f'<?xml version="1.0" encoding="UTF-8"?><Response><Dial>'
+    return (f'<?xml version="1.0" encoding="UTF-8"?><Response>{_dial(action)}'
             f'<Number url={quoteattr(url)}>{escape(e164)}</Number></Dial></Response>')
+
+
+def client_twiml(identity: str, handoff_id: str, action: str = "") -> str:
+    """Hand the caller to a team member's browser (the Voice SDK registered as `identity`); the hand-off's id rides
+    along, so the browser knows the call is the one it accepted."""
+    return (f'<?xml version="1.0" encoding="UTF-8"?><Response>{_dial(action)}<Client><Identity>{escape(identity)}</Identity>'
+            f'<Parameter name="handoff" value={quoteattr(handoff_id)}/></Client></Dial></Response>')
 
 
 def whisper_twiml(text: str) -> str:
@@ -310,3 +322,28 @@ async def release_number(number_sid: str) -> None:
         resp = await client.delete(f"{API}/Accounts/{sid}/IncomingPhoneNumbers/{number_sid}.json")
     if resp.status_code not in (204, 404):
         raise TwilioError(_error(resp))
+
+
+# ─── A team member's browser picking up a call (voice/live_api.py) ──
+async def create_api_key(creds: Creds | None = None, name: str = "Nimmi: pick up calls in the dashboard") -> tuple[str, str]:
+    """An API key on the account (Nimmi's own, or a customer's connected one), to sign browser tokens with.
+    Twilio shows its secret only once: the caller keeps it (sealed). Returns (key SID, secret)."""
+    sid, _ = _auth(creds)
+    async with httpx.AsyncClient(timeout=20, auth=_auth(creds)) as client:
+        resp = await client.post(f"{API}/Accounts/{sid}/Keys.json", data={"FriendlyName": name})
+    if resp.status_code >= 300:
+        raise TwilioError(f"Twilio {resp.status_code}: {_error(resp)}")
+    body = resp.json()
+    return body["sid"], body["secret"]
+
+
+def access_token(account_sid: str, key_sid: str, key_secret: str, identity: str, ttl: int = 3600) -> str:
+    """A Voice SDK token that lets one browser receive calls as `identity` (Twilio's Access Token: a JWT signed with
+    an API key, with a Voice grant that allows incoming calls)."""
+    import time
+
+    import jwt
+    now = int(time.time())
+    payload = {"jti": f"{key_sid}-{now}", "iss": key_sid, "sub": account_sid, "iat": now, "exp": now + ttl,
+               "grants": {"identity": identity, "voice": {"incoming": {"allow": True}}}}
+    return jwt.encode(payload, key_secret, algorithm="HS256", headers={"cty": "twilio-fpa;v=1"})

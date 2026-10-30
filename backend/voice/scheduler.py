@@ -29,9 +29,6 @@ DELAYS = {"immediate": 0, "1m": 60, "5m": 300, "15m": 900}
 RETRY_GAP = timedelta(hours=1)
 SCHEDULE_LINES = int(os.getenv("VOICE_SCHEDULE_LINES", "2"))  # Schedule calls one assistant places at the same time
 
-# Exotel call SIDs whose assistant asked to transfer -> number to dial (read by the Passthru step).
-pending_transfers: dict[str, str] = {}
-pending_whispers: dict[str, str] = {}  # call SID -> brief for the person taking a warm transfer
 MACHINE = ("machine_end_beep", "machine_end_silence", "machine_end_other", "fax")
 _task: asyncio.Task | None = None
 
@@ -322,6 +319,8 @@ async def _loop() -> None:
                 last_summaries = datetime.utcnow()
             # Always: customers' own phone accounts work even when Nimmi has none configured.
             await expire_stale_calls()
+            from voice import handoff
+            await handoff.sweep()  # calls that died with their server process, hand-offs nobody is watching
             await dispatch_due_callbacks()
             await finish_campaigns()
             from voice import meetings

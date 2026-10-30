@@ -25,8 +25,8 @@ DIRECTIONS = ("inbound", "outbound")
 PER_DIRECTION = (
     "enabled", "language", "understand_code_mixed", "follow_caller_language", "switch_languages", "voice_id", "speaking_rate",
     "allow_interruptions", "silence_timeout_sec", "silence_reminders", "max_call_minutes", "end_call_phrases",
-    "transfer_enabled", "transfer_number", "transfer_when", "transfer_mode", "ambience", "ambience_volume", "ai_model",
-    "functions",
+    "transfer_enabled", "transfer_number", "transfer_when", "transfer_mode", "team_handoff", "team_handoff_wait", "ambience",
+    "ambience_volume", "ai_model", "functions",
 )
 # The opening for someone the assistant has spoken to before. Languages without one use the usual opening (the agent
 # still knows who they are).

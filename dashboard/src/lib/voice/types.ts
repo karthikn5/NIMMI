@@ -56,6 +56,8 @@ export interface VoiceAgentConfig {
     voicemail_action: "off" | "hangup" | "leave_message";
     voicemail_message: string;
     transfer_mode: "cold" | "warm";
+    team_handoff: boolean;             // ring the team in the dashboard when a caller needs a person
+    team_handoff_wait: number;         // seconds to wait for someone to pick up
     ai_model: string;                  // VoiceModel id
     functions: AgentFunction[];        // what it can do during a call (backend voice/functions.py)
 }

@@ -51,9 +51,26 @@ def test_incoming_webhook_routes_to_stream(client, make_user, monkeypatch):
     assert 'name="from" value="+919876543210"' in r.text
 
 
+def handed_over(client, sid, target, via="transfer", brief=None) -> str:
+    """A call handed over (voice/handoff.py), as its row in the database: whichever server process gets Twilio's next
+    request reads it there."""
+    from backend.models import CallHandoff
+    from database import async_session
+
+    async def add():
+        async with async_session() as db:
+            row = CallHandoff(provider="twilio", provider_call_id=sid, status="connecting", via=via, target=target, brief=brief)
+            db.add(row)
+            await db.commit()
+            return row.id
+    return client.portal.call(add)
+
+
 def test_after_stream_transfers_or_hangs_up(client):
-    scheduler.pending_transfers["CA1"] = "+91 98400 12345"
-    assert "<Dial>+919840012345</Dial>" in client.post("/api/voice/twilio/after/tw-secret", data={"CallSid": "CA1"}).text
+    row = handed_over(client, "CA1", "+91 98400 12345")
+    after = client.post("/api/voice/twilio/after/tw-secret", data={"CallSid": "CA1"}).text
+    assert f'action="https://example.test/api/voice/twilio/person-done/tw-secret?h={row}"' in after
+    assert ">+919840012345</Dial>" in after
     assert "<Hangup/>" in client.post("/api/voice/twilio/after/tw-secret", data={"CallSid": "CA2"}).text
 
 

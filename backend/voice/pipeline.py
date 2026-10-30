@@ -19,18 +19,19 @@ from array import array
 from collections import OrderedDict, deque
 from contextlib import aclosing
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import AsyncIterator, Awaitable, Callable, Optional, Protocol
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import update
 from sqlalchemy.future import select
 
 from database import async_session
-from backend.models import Bot, CallbackJob, CallLog, DncEntry, VoiceAgent
+from backend.models import Bot, CallbackJob, CallHandoff, CallLog, DncEntry, VoiceAgent
 import assist
 from notify.events import call_completed, fire_and_forget
 from phone import extract_contact
-from voice import ai_models, ambience, llm, memory, metering, recording, sarvam, schedule, scheduler
+from voice import ai_models, ambience, handoff, llm, memory, metering, recording, sarvam, schedule
 from voice.levels import CallerLevels
 
 logger = logging.getLogger(__name__)
@@ -474,6 +475,11 @@ class CallSession:
         self.voice = asyncio.Lock()
         if setup.tools is not None:
             setup.tools.call_id = lambda: self.call_id  # what's booked on the call points back to it
+        # A person from the team (voice/handoff.py): the hand-off asked for, and its watcher.
+        self.handoff: Optional[str] = None
+        self.handoff_task: Optional[asyncio.Task] = None
+        self.handoff_asks = 0
+        self.tools = handoff.Toolbox(setup.tools, handoff.HandoffTools(self))
 
     # ── helpers ────────────────────────────────────────────────
     def _elapsed(self) -> int:
@@ -833,7 +839,7 @@ class CallSession:
                                                  script=self.s.script, caller=self.s.caller,
                                                  phone_known=bool(self.s.caller_e164), answered=self.answered,
                                                  function_values=self._function_values(), function_log=ran,
-                                                 schedule_tools=self.s.tools, **extra)) as replies:
+                                                 schedule_tools=self.tools, **extra)) as replies:
                     async for sentence, control in replies:
                         if sentence:
                             if not said:
@@ -904,17 +910,161 @@ class CallSession:
         self.transferred = True
         self._log("system", f"Transferred to {agent.transfer_number}")
         if self.s.provider_call_id:
+            brief = None
             if (agent.transfer_mode or "cold") == "warm":
                 # Whisper a short brief to the person before they're connected (Twilio).
                 try:
                     brief = await asyncio.wait_for(llm.transfer_brief(self.s.bot, self.transcript, self.s.caller_e164), 4)
                 except Exception:
                     brief = None
-                if brief:
-                    scheduler.pending_whispers[self.s.provider_call_id] = brief
-            # The provider asks us next (Exotel Passthru / Twilio <Connect action>) whether and where to transfer.
-            scheduler.pending_transfers[self.s.provider_call_id] = agent.transfer_number
+            # The provider asks next (Exotel Passthru / Twilio <Connect action>) whether and where to transfer, and
+            # that request can reach any server process: the database says.
+            async with async_session() as db:
+                db.add(CallHandoff(owner_id=self.s.owner_id, bot_id=self.s.bot.bot_id, call_id=self.call_id,
+                                   provider=getattr(self.t, "provider", None), provider_call_id=self.s.provider_call_id,
+                                   caller=self.s.caller_e164, reason="The agent's transfer number", brief=brief,
+                                   status="connecting", via="transfer", target=agent.transfer_number,
+                                   accepted_at=handoff.now()))
+                await db.commit()
         await self.end("transfer")
+
+    # ── a person from the team (voice/handoff.py) ──────────────
+    async def ask_for_person(self, reason: str) -> str:
+        """The AI's ask_for_person: ring the team in the dashboard, else the agent's transfer number, else a call-back."""
+        agent = self.s.agent
+        if self.handoff:
+            return "You've already asked the team; someone may join any moment. Keep helping the caller meanwhile."
+        self.handoff_asks += 1
+        if handoff.team_on(agent) and self.call_id and self.handoff_asks <= 2:
+            async with async_session() as db:
+                if await handoff.available(db, self.s.owner_id):
+                    row = CallHandoff(owner_id=self.s.owner_id, bot_id=self.s.bot.bot_id, call_id=self.call_id,
+                                      provider=getattr(self.t, "provider", None), provider_call_id=self.s.provider_call_id,
+                                      caller=self.s.caller_e164, caller_name=(self.s.caller or {}).get("name") or None,
+                                      reason=reason, brief=self._brief(), status="ringing",
+                                      expires_at=handoff.now() + timedelta(seconds=handoff.wait_of(agent)))
+                    db.add(row)
+                    await db.commit()
+                    self.handoff = row.id
+        if self.handoff:
+            self._log("system", f"Asked the team for a person: {reason}")
+            fire_and_forget(handoff.announce(self.s.owner_id, self.handoff, "ringing"))
+            self.handoff_task = asyncio.create_task(self._watch_handoff(self.handoff))
+            return ("The team has been alerted and someone may join in a moment. Tell the caller, in one short sentence, "
+                    "that you're getting someone from the team and ask them to stay on the line; then keep helping them. "
+                    "Don't say they're connected: you'll be told.")
+        if agent.transfer_enabled and agent.transfer_number and not self.s.after_hours:
+            self.handoff_task = asyncio.create_task(self._transfer_after(self.reply_task))
+            return ("Nobody from the team is in the dashboard, so the call goes to the team's phone now. Tell the caller, "
+                    "in one short sentence, that you're connecting them, and nothing more.")
+        self._log("system", f"Asked for a person ({reason}); nobody could join, so a call back is in Schedule")
+        fire_and_forget(handoff.todo_for(self.s.owner_id, self.s.bot.bot_id, self.s.caller_e164, self.call_id, reason,
+                                         (self.s.caller or {}).get("name")))
+        opens = f" The office opens {self.s.after_hours}." if self.s.after_hours else ""
+        return (f"Nobody from the team can join right now.{opens} Tell the caller that, and that someone will call them "
+                "back; make sure you have their name and what it's about. (A to-do to call them back is in the team's "
+                "Schedule.)")
+
+    def _brief(self) -> str:
+        """What the person picking up reads first: the caller's last words and the assistant's (the panel shows the
+        whole transcript too)."""
+        said = [f"{'Caller' if t['speaker'] == 'caller' else 'Assistant'}: {t['text']}"
+                for t in self.transcript if t["speaker"] in ("caller", "agent")]
+        return "\n".join(said[-6:])[:1500]
+
+    async def _finish_speaking(self, stop_replying: bool) -> None:
+        """Let the agent finish its sentence. `stop_replying`: an answer still being written is dropped (the call is
+        being handed over); otherwise the whole answer is let finish."""
+        task = self.reply_task
+        current = asyncio.current_task()
+        if task is not None and task is not current and not task.done():
+            if stop_replying:
+                deadline = time.monotonic() + 8
+                while self.speaking and time.monotonic() < deadline:
+                    await asyncio.sleep(0.1)
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            else:
+                await asyncio.wait({task}, timeout=20)
+        await self._wait_for_playback()
+
+    async def _transfer_after(self, reply: Optional[asyncio.Task]) -> None:
+        """Nobody in the dashboard: once the assistant has said it's connecting them, to the agent's number."""
+        if reply is not None and reply is not asyncio.current_task():
+            await asyncio.wait({reply}, timeout=20)
+        await self._wait_for_playback()
+        await self._transfer()
+
+    async def _watch_handoff(self, handoff_id: str) -> None:
+        """While the team is rung: connect the call when someone accepts; the fallback when nobody does in time."""
+        while not self.ended.is_set():
+            await asyncio.sleep(handoff.WATCH_SEC)
+            async with async_session() as db:
+                row = await db.get(CallHandoff, handoff_id)
+            if row is None or row.status not in ("ringing", "accepted"):
+                return
+            if row.status == "accepted":
+                await self._hand_over(row)
+                return
+            if handoff.aware(row.expires_at) <= handoff.now():
+                if await handoff.settle(handoff_id, "missed", only_if=("ringing",), ended_at=handoff.now()):
+                    await self._nobody_came(row)
+                    return
+
+    async def _hand_over(self, row: CallHandoff) -> None:
+        """Someone accepted: finish the sentence being said, tell the caller, and hand them the call."""
+        async with async_session() as db:
+            name = await handoff.name_of(db, row.accepted_by)
+        await self._finish_speaking(stop_replying=True)
+        if self.s.channel != "phone":  # a test call in the browser has no phone line to hand over
+            await handoff.settle(row.id, "ended", ended_at=handoff.now())
+            fire_and_forget(handoff.announce(self.s.owner_id, row.id, "ended"))
+            self._log("system", f"{name} picked up (a test call: there's no phone line to connect)")
+            self.handoff = None
+            await self.speak(f"This is a test call, so I can't connect you. On a phone call, {name} would be talking to you now.")
+            return
+        self._log("system", f"{name} picked up {'in the dashboard' if row.via == 'browser' else 'on their phone'}")
+        self.transferred = True
+        await handoff.settle(row.id, "connecting", only_if=("accepted",))
+        fire_and_forget(handoff.announce(self.s.owner_id, row.id, "connecting"))
+        await self.speak(handoff.CONNECTING.get(self._lang(), handoff.CONNECTING["en-IN"]))
+        await self.end("handoff")
+
+    async def _nobody_came(self, row: CallHandoff) -> None:
+        """Nobody accepted in time: the agent's transfer number, else a call-back to-do, and the call goes on."""
+        fire_and_forget(handoff.announce(self.s.owner_id, row.id, "missed"))
+        agent = self.s.agent
+        await self._finish_speaking(stop_replying=False)
+        self.handoff = None
+        if agent.transfer_enabled and agent.transfer_number and not self.s.after_hours and self.s.channel == "phone":
+            await self.speak(handoff.CONNECTING.get(self._lang(), handoff.CONNECTING["en-IN"]))
+            await self._transfer()
+            return
+        busy = handoff.BUSY.get(self._lang(), handoff.BUSY["en-IN"])
+        self._log("system", "Nobody from the team picked up in time; a call back is in Schedule")
+        await self.speak(busy)
+        self.history.append({"role": "assistant", "content": busy})
+        fire_and_forget(handoff.todo_for(self.s.owner_id, self.s.bot.bot_id, self.s.caller_e164, self.call_id,
+                                         row.reason or "They asked for a person.", (self.s.caller or {}).get("name")))
+
+    async def _live(self) -> None:
+        """While the call runs: say it's alive, with the transcript so far (the Calls page shows it live; a call that
+        stops saying so died with its server and is closed by voice/handoff.sweep)."""
+        written = -1
+        while not self.ended.is_set():
+            if self.call_id:
+                values = {"live_at": handoff.now(), "duration_sec": self._elapsed()}
+                if len(self.transcript) != written:
+                    values["transcript"] = list(self.transcript)
+                try:
+                    async with async_session() as db:
+                        await db.execute(update(CallLog).where(CallLog.id == self.call_id, CallLog.outcome == "in_progress")
+                                         .values(**values))
+                        await db.commit()
+                    written = len(self.transcript) if "transcript" in values else written
+                except Exception as e:
+                    logger.warning(f"Call {self.call_id}: couldn't write that it's alive: {e}")
+            await asyncio.sleep(handoff.LIVE_SEC)
 
     async def _add_to_dnc(self) -> None:
         if not self.s.caller_e164:
@@ -1308,7 +1458,7 @@ class CallSession:
         try:
             essential = [asyncio.create_task(self._pump_audio()), asyncio.create_task(self._listen(listen_in)),
                          asyncio.create_task(self._watchdog())]
-            tasks += essential
+            tasks += essential + [asyncio.create_task(self._live())]
             await self._until_ended(essential)
         except Exception as e:
             logger.exception(f"Call {self.call_id} failed: {e}")
@@ -1316,7 +1466,8 @@ class CallSession:
             await self.t.event({"type": "error", "code": "engine", "message": "The voice engine had a problem."})
             self.ended.set()
         finally:
-            extra = [t for t in (greeting, self.reply_task, self.knowledge_task, self.opening_task, self.barge_in) if t]
+            extra = [t for t in (greeting, self.reply_task, self.knowledge_task, self.opening_task, self.barge_in,
+                                 self.handoff_task) if t and t is not asyncio.current_task()]
             for task in tasks + extra:
                 task.cancel()
             await asyncio.gather(*tasks, *extra, return_exceptions=True)
@@ -1365,6 +1516,9 @@ class CallSession:
                 return
 
     async def _finish(self) -> None:
+        if self.handoff:  # the caller left while the team was being rung
+            if await handoff.settle(self.handoff, "cancelled", only_if=("ringing",), ended_at=handoff.now()):
+                fire_and_forget(handoff.announce(self.s.owner_id, self.handoff, "cancelled"))
         exact = time.monotonic() - self.started  # billed in half-minute steps: any connected call is at least one
         duration = round(exact)
         heard_secs = self.caller_bytes / 2 / self.rate

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import AgentProvider from "@/components/agent/AgentProvider";
+import CallDeskProvider from "@/components/voice/CallDesk";
 
 // The signed-in app: never in search results (next.config.ts also sends X-Robots-Tag for it).
 export const metadata: Metadata = {
@@ -9,5 +10,5 @@ export const metadata: Metadata = {
 };
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
-    return <AgentProvider>{children}</AgentProvider>;
+    return <AgentProvider><CallDeskProvider>{children}</CallDeskProvider></AgentProvider>;
 }

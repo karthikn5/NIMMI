@@ -198,6 +198,20 @@ only on the owner's machines): @.claude/private-notes.md
   plan credits per plan name in `VOICE_PLAN_CREDITS_JSON`; `VOICE_MODEL_CREDITS_JSON` overrides a model's rate.
   `voice_wallets` keeps the old minute columns; a wallet's minutes move to credits 1:1 the first time it's read.
   Public rate card: `GET /api/voice/rates` (the website's pricing); the agent header: `/api/voice/agents/{bot}/details`.
+- Live calls and "Pick up the call" (LIVE_CALLS_PLAN.md, 30 Oct 2026): a call writes `CallLog.live_at` and its transcript
+  every 3 s (`_live`; `handoff.sweep` closes calls silent 90 s as failed). The AI's tool `ask_for_person` (it decides,
+  no word lists) rings the team when someone is available (`TeamPresence`: dashboard open in the last 45 s, "Available
+  for calls" on): a `CallHandoff` row, the dashboard's `CallDesk` card on every page; the first to accept (atomic) gets
+  it in the browser (Twilio: `<Dial><Client>`, Voice SDK token from an API key Nimmi makes on the call's account,
+  `TwilioKey`, sealed) or on their phone (Twilio, Exotel). The call's watcher hears the accept within 1 s, says
+  CONNECTING, closes the stream; `/twilio/after` and Exotel's steps read the row (any process). Nobody in
+  `team_handoff_wait` (45 s): the transfer number, else BUSY + a Schedule to-do, and the call goes on. The agent's
+  transfer number uses the same rows (the old in-memory `pending_transfers` lost 3 transfers in 4 on live's four
+  processes). `team_handoff` off = the old `[TRANSFER]` marker. The ring (`CallDesk.tsx`): India's double ring made with
+  Web Audio on the audio clock (a background tab slows timers, not audio); browsers play it only after a click on the
+  page (the first one anywhere wakes it; until then the card says so); one tab per computer rings (Web Locks); Ring sound
+  and Test ring are on Calls, with "Available for calls". Tests: `tests/test_live_calls.py`; browser:
+  `dev-scripts/ui-checks/live_calls_ui.mjs`, `live_ring_ui.mjs` (measures the sound inside the page).
 - Outbound: `scheduler.py` dials call-backs and campaigns; answering-machine detection only when the agent's
   voicemail action isn't "off" (it adds 2-4 s before the call connects).
 - Logs to read: "opening started X s after the call connected", "reply timing: ...", "Voice reply from <model>",

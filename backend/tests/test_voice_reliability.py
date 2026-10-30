@@ -523,7 +523,7 @@ def test_a_goodbye_still_hangs_up(monkeypatch):
 
 def test_the_model_is_told_exactly_when_to_hang_up():
     agent = llm.VoiceAgent(language="en-IN", assistant_name="Nimmi", company_name="Kdbot", greeting="",
-                           transfer_enabled=True, transfer_number="+919876543210")
+                           transfer_enabled=True, transfer_number="+919876543210", team_handoff=False)
     prompt = llm.system_prompt(agent, llm.Bot(bot_name="Desk"), "", "inbound", None)
     assert "on its own" not in prompt  # "then write [END_CALL] on its own": read as "after every answer"
     assert f"Never write {llm.END_CALL} in any other reply, and never after a question" in prompt

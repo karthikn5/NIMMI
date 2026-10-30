@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy.future import select
 
 from database import async_session
-from backend.models import (CallbackJob, CallLog, Contact, DncEntry, Meeting, NotificationLog, PhoneNumber,
+from backend.models import (CallbackJob, CallLog, Campaign, Contact, DncEntry, Meeting, NotificationLog, PhoneNumber,
                             ScheduleSettings, VoiceAgent, WorkspaceSettings)
 from voice import functions, llm, meetings, schedule, scheduler, twilio
 from voice import router as voice_router
@@ -85,6 +85,12 @@ def _call(owner, bot, **values) -> CallLog:
 
 def _local(day: date, hhmm: str) -> datetime:
     return schedule.local_time(day.isoformat(), hhmm, IST)
+
+
+def _midday_yesterday() -> datetime:
+    """A call's start that keeps "their hour" well inside the calling hours, whenever the tests run (a call minutes ago,
+    run after 23:44, put their hour past the last one allowed)."""
+    return _local(datetime.now(IST).date() - timedelta(days=1), "12:00").astimezone(timezone.utc).replace(tzinfo=None)
 
 
 # ─── settings and times ──────────────────────────────────────────
@@ -384,7 +390,8 @@ def test_after_a_call_the_lead_is_rated_and_a_follow_up_planned_at_their_hour(ru
     bot = u.bot()
     _save(run, u.id, bot, follow_ups={"rules": {"hot": {"count": 3, "every": 2}}})
     _add(run, _contact(u.id, bot))
-    first = _add(run, _call(u.id, bot, lead="hot", next_step={"brief": "Ask whether they chose the Gold plan.", "reason": "Wants to join"}))
+    first = _add(run, _call(u.id, bot, lead="hot", next_step={"brief": "Ask whether they chose the Gold plan.", "reason": "Wants to join"},
+                            started_at=_midday_yesterday()))
     run(schedule.after_call, first.id)
     contact = _contact_now(run, bot)
     assert (contact.lead_status, contact.lead_reason, contact.lead_set_by) == ("hot", "Wants to join", None)
@@ -708,7 +715,8 @@ def test_call_me_back_on_a_day_books_a_call_back_that_day(run, make_user):
     _save(run, u.id, bot, follow_ups={"enabled": False})
     _add(run, _contact(u.id, bot))
     day = datetime.now(IST).date() + timedelta(days=4)
-    call = _add(run, _call(u.id, bot, lead="warm", next_step={"on": day.isoformat(), "brief": "Ask what they decided."}))
+    call = _add(run, _call(u.id, bot, lead="warm", next_step={"on": day.isoformat(), "brief": "Ask what they decided."},
+                           started_at=_midday_yesterday()))
     run(schedule.after_call, call.id)
     [job] = _jobs(run, bot, kind="callback")
     due = schedule.utc(job.next_attempt_at).astimezone(IST)
@@ -746,3 +754,148 @@ def test_a_meeting_the_agent_agreed_to_but_didnt_book_is_requested_after_the_cal
     assert [j.status for j in _jobs(run, bot, kind="follow_up")] == ["cancelled"]  # a meeting is coming: no follow-up
     run(schedule.after_call, call.id)  # the same call again: nothing more
     assert len(run(made)) == 1
+
+
+# ─── calls not made yet ───────────────────────────────────────────
+def _missed_confirmation(run, u, bot, status="queued"):
+    """Live, 30 Oct 2026: a confirmed meeting's call found the line busy two minutes ago; another try in half an hour."""
+    day = datetime.now(IST).date() + timedelta(days=1)
+    meeting = _add(run, Meeting(user_id=u.id, bot_id=bot, e164=NUMBER, name="Peter", kind="online", status="confirmed",
+                                starts_at=schedule.stored(_local(day, "10:30")), minutes=30))
+    job = _add(run, CallbackJob(user_id=u.id, bot_id=bot, e164=NUMBER, kind="meeting", status=status,
+                                variables={"about": "confirmed"}, meeting_id=meeting.id, attempts=1, provider_call_id="CA_busy",
+                                last_error="twilio: busy", consent_source="Asked for a meeting on a call",
+                                next_attempt_at=datetime.utcnow() + timedelta(minutes=30)))
+    _add(run, _call(u.id, bot, direction="outbound", outcome="no_answer", provider_call_id="CA_busy",
+                    summary="Call busy. Attempt 1.", started_at=datetime.utcnow() - timedelta(minutes=2)))
+    return meeting, job
+
+
+def _returning_the_call(run, u, bot, monkeypatch, handled: str):
+    """They ring back and say a call came from this number. The agent answers from what it was told (the real
+    analysis runs, on a model that says `handled`); returns what was said, the analysis prompt and the call."""
+    from tests.test_live_calls import hangs_up_after
+    from tests.test_pipeline import Ev, FakeStt, FakeTransport, _setup, fake_tts
+    from voice.pipeline import CallSession
+    prompts = []
+
+    async def complete(bot_, system, user, max_tokens=600, urgent=False):
+        prompts.append(system)
+        return ('{"summary": "Peter returned a missed call and heard his meeting is confirmed.", "fields": {}, '
+                f'"lead": "warm", "handled": {handled}}}')
+    monkeypatch.setattr(llm, "_complete", complete)
+
+    async def agent_says(bot_, agent, history, text, direction, consent, schedule_tools=None, **_):
+        rules = schedule_tools.rules() if schedule_tools is not None else ""
+        told = "didn't reach them" in rules and "is confirmed" in rules and "the line was busy" in rules
+        yield ("We called to tell you your meeting tomorrow at 10:30 am is confirmed." if told else
+               "How can I help you today?"), None
+
+    async def scenario():
+        setup = await _setup(u.id, bot)
+        setup.tools = await schedule.tools_for(u.id, bot, NUMBER, "num-1")
+        t = FakeTransport()
+        session = CallSession(setup, t, stt_factory=lambda *a: FakeStt([Ev("transcript", "A call came from this number.")]),
+                              tts=fake_tts, replier=agent_says, summarizer=llm.summarize)
+
+        async def feed():
+            await asyncio.sleep(0.05)
+            for _ in range(3):
+                await t.inbox.put(b"\x00\x00" * 160)
+                await asyncio.sleep(0.05)
+        tasks = [asyncio.create_task(feed()), asyncio.create_task(hangs_up_after("How can I help you today?")(session)),
+                 asyncio.create_task(hangs_up_after("is confirmed")(session))]
+        try:
+            call_id = await asyncio.wait_for(session.run(), timeout=20)
+        finally:
+            for task in tasks:
+                task.cancel()
+        await asyncio.sleep(0.5)  # what follows the call is planned in the background
+        async with async_session() as db:
+            return t.said(), await db.get(CallLog, call_id)
+    said, log = run(scenario)
+    return said, prompts, log
+
+
+def test_someone_returning_a_missed_call_hears_why_and_the_call_isnt_made_again(run, make_user, monkeypatch):
+    """Live, 30 Oct 2026 (GBOT): the meeting's confirmation call found the line busy; the person rang straight back and
+    said four times that a call had come from this number, and the agent, never told about it, kept asking how it could
+    help, then booked a call-back when they said "I called back". Half an hour later the retry rang to tell them again."""
+    u = make_user()
+    bot = u.bot()
+    _save(run, u.id, bot)
+    meeting, job = _missed_confirmation(run, u, bot)
+    said, prompts, log = _returning_the_call(run, u, bot, monkeypatch, '["call_1", "call_7"]')
+    assert "We called to tell you your meeting tomorrow at 10:30 am is confirmed." in said
+    assert "- call_1: to tell them their online meeting" in prompts[0] and '"handled"' in prompts[0]
+    assert log.next_step["handled"] == [job.id]  # an id the analysis made up is left out
+    done = _get(run, CallbackJob, job.id)
+    assert (done.status, done.call_id) == ("done", log.id) and done.last_error.startswith("Taken care of on their call on")
+
+
+def test_a_missed_call_the_conversation_didnt_cover_is_still_made(run, make_user, monkeypatch):
+    u = make_user()
+    bot = u.bot()
+    _save(run, u.id, bot)
+    meeting, job = _missed_confirmation(run, u, bot)
+    said, prompts, log = _returning_the_call(run, u, bot, monkeypatch, "[]")
+    assert not (log.next_step or {}).get("handled")
+    kept = _get(run, CallbackJob, job.id)
+    assert (kept.status, kept.attempts) == ("queued", 1)
+
+
+def test_what_a_call_is_told_about_calls_tried_or_due(run, make_user):
+    u = make_user()
+    bot = u.bot()
+    _save(run, u.id, bot)
+    meeting, job = _missed_confirmation(run, u, bot)
+
+    async def tools(**kw):
+        return await schedule.tools_for(u.id, bot, NUMBER, "num-1", **kw)
+    rules = run(tools).rules()
+    assert "Calls you made to this caller that didn't reach them" in rules
+    assert "(the line was busy): to tell them their online meeting with" in rules and "tomorrow at 10:30 am is confirmed" in rules
+    assert "Another try is planned today at" in rules or "Another try is planned tomorrow at" in rules
+    assert "Returning your call is not asking to be called back." in rules
+    assert run(tools, skip=job.id).open == []  # the call being made now isn't one they're returning
+
+    # "I called back" isn't a call-back request: the first one asked for while they may be returning a call goes back to
+    # the agent (tell them what the call was about); asked for again, it's booked.
+    returning = run(tools)
+
+    async def book(about):
+        return await returning.run("schedule_callback", {"when": "in 30 minutes", "about": about})
+    assert run(book, "call back").startswith("Wait: they may be returning the call you made.")
+    assert run(book, "MBA fees").startswith("Booked:")
+    assert [j.purpose for j in _jobs(run, bot, kind="callback")] == ["MBA fees"]
+
+    # A missed campaign call is explained too, with every Schedule switch off (no functions, only what it was for).
+    other = "+919800000077"
+    campaign = _add(run, Campaign(user_id=u.id, bot_id=bot, name="Diwali offer", purpose="Tell {{name}} about 20% off the Gold plan"))
+    _add(run, CallbackJob(user_id=u.id, bot_id=bot, e164=other, campaign_id=campaign.id, status="failed", attempts=2,
+                          provider_call_id="CA_nobody", last_error="twilio: no-answer", consent_source="Campaign",
+                          variables={"name": "Ravi"}),
+         _call(u.id, bot, caller_e164=other, direction="outbound", outcome="no_answer", provider_call_id="CA_nobody",
+               started_at=datetime.utcnow() - timedelta(hours=3)))
+    _save(run, u.id, bot, callbacks={"enabled": False}, follow_ups={"enabled": False}, meetings={"enabled": False})
+
+    async def campaign_tools():
+        return await schedule.tools_for(u.id, bot, other, "num-1")
+    quiet = run(campaign_tools)
+    assert quiet.specs() == [] and "(no answer): the Diwali offer campaign: Tell Ravi about 20% off the Gold plan." in quiet.rules()
+    assert "Another try" not in quiet.rules()  # it gave up
+
+
+def test_the_analysis_names_only_the_calls_it_was_given(run, monkeypatch):
+    prompts = []
+
+    async def complete(bot, system, user, max_tokens=600, urgent=False):
+        prompts.append(system)
+        return '{"summary": "x", "handled": "call_2"}'
+    monkeypatch.setattr(llm, "_complete", complete)
+    transcript = [{"speaker": "caller", "text": "You called me?"}, {"speaker": "agent", "text": "Yes, about your meeting."}]
+    given = [{"id": "call_1", "about": "the call back they asked for"}, {"id": "call_2", "about": "to tell them it's confirmed"}]
+    assert run(llm.summarize, llm.Bot(bot_name="Desk"), transcript, None, "Asia/Kolkata", given)["handled"] == ["call_2"]
+    assert "- call_2: to tell them it's confirmed" in prompts[0]
+    assert run(llm.summarize, llm.Bot(bot_name="Desk"), transcript, None)["handled"] == []
+    assert '"handled"' not in prompts[1] and "HANDLED" not in prompts[1] and 'never "today" or "tomorrow"' in prompts[1]

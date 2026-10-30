@@ -1534,16 +1534,20 @@ class CallSession:
         elif self.opted_out:
             outcome, summary = "opted_out", "Caller asked not to be contacted again. Added to the do-not-call list."
         else:
-            zone = {"zone_name": str(self.s.tools.tz)} if self.s.tools is not None and self.summarizer is llm.summarize else {}
-            result = await self.summarizer(self.s.bot, self.transcript, self.s.agent, **zone) if self.caller_spoke else {}
+            tools = self.s.tools
+            extra = ({"zone_name": str(tools.tz), "open_calls": [{"id": o.label, "about": o.about} for o in tools.open]}
+                     if tools is not None and self.summarizer is llm.summarize else {})
+            result = await self.summarizer(self.s.bot, self.transcript, self.s.agent, **extra) if self.caller_spoke else {}
             summary, fields = result.get("summary", ""), result.get("fields", {})
             successful, sentiment, lead = result.get("successful"), result.get("sentiment"), result.get("lead")
+            # Calls tried or planned for them that this one took care of: they aren't made (voice/schedule.py).
+            handled = [o.id for o in (tools.open if tools is not None else []) if o.label in (result.get("handled") or [])]
             # What the next call should do (voice/schedule.py plans it after the call).
             next_step = {k: v for k, v in (("brief", result.get("follow_up")), ("on", result.get("follow_up_on")),
                                            ("call_back_at", result.get("call_back_at")), ("reason", result.get("lead_reason")),
                                            ("person", result.get("wants_callback")), ("meeting_at", result.get("meeting_at")),
                                            ("meeting_kind", result.get("meeting_kind")),
-                                           ("meeting_about", result.get("meeting_about"))) if v} or None
+                                           ("meeting_about", result.get("meeting_about")), ("handled", handled)) if v} or None
             contact = extract_contact(fields)
             if self.transferred:
                 outcome = "transferred"

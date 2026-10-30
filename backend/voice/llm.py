@@ -83,9 +83,10 @@ FALLBACK_ERRORS = {
 
 # A sentence ends at . ! ? or । followed by a space, or at ! ? । followed straight by a letter (models
 # writing Tamil or Hindi sometimes leave out the space: "என்ன?ஹ்ம்ம்"), or straight before a [TRANSFER] or
-# [END_CALL] marker ("என்ன?[END_CALL]", as gpt-oss writes it). "1.5" and "nimmiai.in" don't split, nor
-# does an ellipsis ("Hmm... let me check" is one sentence, not a filler spoken on its own).
-_SENTENCE_END = re.compile(r"(?<=[.!?।])(?<!\.\.)\s+|(?<=[!?।])(?=[^\W\d_])|(?<=[.!?।])(?=\[)")
+# [END_CALL] marker ("என்ன?[END_CALL]", as gpt-oss writes it) or an aside in brackets or stars ("முடியுமா?(Waiting
+# for user response)", live, Oct 2026). "1.5" and "nimmiai.in" don't split, nor does an ellipsis ("Hmm... let me
+# check" is one sentence, not a filler spoken on its own).
+_SENTENCE_END = re.compile(r"(?<=[.!?।])(?<!\.\.)\s+|(?<=[!?।])(?=[^\W\d_])|(?<=[.!?।])(?=[\[(*_`])")
 
 # Measured (Oct 2026): Groq answers in 0.1-0.5 s; Gemini Flash-Lite over REST in ~1.8 s; the old
 # google-generativeai SDK took ~30 s, so it isn't used. Each Groq model has its own per-minute
@@ -754,8 +755,21 @@ def plain_words(text: str) -> list[str]:
     return "".join(c if c.isalnum() or c == "'" or unicodedata.category(c).startswith("M") else " " for c in text).split()
 
 
+# An aside in brackets or stars that opens a sentence, "(Waiting for user response)" or "*pauses*", is the model
+# describing what it does, not something to say. Oct 2026, live: a caller heard "Waiting for user response" read out.
+_ASIDE = re.compile(r"^\s*(?:\[[^\]]*\]|\([^)]*\)|\*[^*]*\*|_[^_]*_|`[^`]*`)\s*[.!?।]?\s*")
+
+
 def _clean_for_speech(text: str) -> str:
-    text = re.sub(r"[*_#`>\[\]()]", "", text.replace(TRANSFER, "").replace(END_CALL, ""))
+    text = text.replace(TRANSFER, "").replace(END_CALL, "")
+    while True:  # asides and filler sounds that open it, in any order
+        opened = _LEADING_FILLERS.sub("", text.lstrip(" ,;:-"))
+        if (aside := _ASIDE.match(opened)) and aside.end():
+            opened = opened[aside.end():]
+        if opened == text:
+            break
+        text = opened
+    text = re.sub(r"[*_#`>\[\]()]", "", text)
     text = re.sub(r"\s+", " ", _ELLIPSIS.sub(", ", text)).strip()
     text = _LEADING_FILLERS.sub("", text).strip(" ,;:-")
     if " ".join(plain_words(text)) in _EMPTY_REACTIONS:
@@ -898,7 +912,8 @@ async def _no_such_function(name: str) -> str:
 
 SUMMARY_PROMPT = """Read this phone call transcript between a business's assistant and a caller.
 Return only JSON with these keys:
-"summary": one or two plain sentences on what the caller wanted and what was agreed,
+"summary": one or two plain sentences on what the caller wanted and what was agreed, naming days as dates (Saturday
+31 October), never "today" or "tomorrow" (it's read on later days),
 "fields": FIELDS_SPEC,
 "successful": true or false, SUCCESS_SPEC,
 "sentiment": "positive", "neutral" or "negative": how the caller felt by the end of the call,
@@ -914,9 +929,9 @@ else "",
 "call_back_at": if the assistant agreed to call them back at a set time, that time as YYYY-MM-DD HH:MM, else null,
 "meeting_at": if the caller agreed on this call to meet the team at a set time, that time as YYYY-MM-DD HH:MM, else null,
 "meeting_kind": "online", "in_person" or "phone", if they said which kind of meeting, else null,
-"meeting_about": what they want to discuss at that meeting, in a few words, else "".
+"meeting_about": what they want to discuss at that meeting, in a few words, else ""HANDLED_KEY.
 The call ended NOW_TEXT.
-Only use what was actually said. Never guess.
+Only use what was actually said. Never guess.HANDLED_LIST
 """
 LEADS = ("hot", "warm", "cold", "not_interested", "new")
 
@@ -1006,12 +1021,14 @@ def _lines(transcript: list[dict]) -> str:
 
 
 async def summarize(bot: Bot, transcript: list[dict], agent: Optional[VoiceAgent] = None,
-                    zone_name: str = "Asia/Kolkata") -> dict:
+                    zone_name: str = "Asia/Kolkata", open_calls: Optional[list[dict]] = None) -> dict:
     """Post-call analysis: summary, the agent's fields (typed), whether the goal was met, sentiment, and how interested
-    they are with what a follow-up should do (voice/schedule.py). `zone_name`: the business's time zone, for dates."""
+    they are with what a follow-up should do (voice/schedule.py). `zone_name`: the business's time zone, for dates.
+    `open_calls`: calls tried or planned for this person ({id, about}, voice/schedule.py open_calls); `handled` says
+    which of them this call took care of."""
     empty = {"summary": "", "fields": {}, "successful": None, "sentiment": None, "wants_callback": False, "lead": None,
              "lead_reason": "", "follow_up": "", "follow_up_on": None, "call_back_at": None, "meeting_at": None,
-             "meeting_kind": None, "meeting_about": ""}
+             "meeting_kind": None, "meeting_about": "", "handled": []}
     lines = _lines(transcript)
     if not lines.strip():
         return empty
@@ -1020,8 +1037,14 @@ async def summarize(bot: Bot, transcript: list[dict], agent: Optional[VoiceAgent
                     "whether the caller's need was handled or a clear next step was agreed")
     from voice.schedule import zone_of
     ended = datetime.now(zone_of(zone_name))
+    known = {str(c["id"]): c["about"] for c in open_calls or []}
+    handled_key = (',\n"handled": the ids of the earlier calls listed below that this conversation took care of (the caller '
+                   'now knows what that call was going to tell them, or got what it was for), else []') if known else ""
+    handled_list = ("\nCalls the business had tried or planned to make to them:\n" +
+                    "\n".join(f"- {k}: {v}" for k, v in known.items())) if known else ""
     prompt = (SUMMARY_PROMPT.replace("FIELDS_SPEC", _fields_spec(agent)).replace("SUCCESS_SPEC", success_spec)
-              .replace("NOW_TEXT", f"on {ended:%A} {ended.day} {ended:%B %Y} at {ended:%H:%M} ({zone_name})"))
+              .replace("NOW_TEXT", f"on {ended:%A} {ended.day} {ended:%B %Y} at {ended:%H:%M} ({zone_name})")
+              .replace("HANDLED_KEY", handled_key).replace("HANDLED_LIST", handled_list))
     try:
         raw = await _complete(bot, prompt, lines)
         match = re.search(r"\{.*\}", raw or "", re.S)
@@ -1044,6 +1067,8 @@ async def summarize(bot: Bot, transcript: list[dict], agent: Optional[VoiceAgent
         call_back = str(data.get("call_back_at") or "").strip().replace("T", " ")
         meeting_at = str(data.get("meeting_at") or "").strip().replace("T", " ")
         meeting_kind = str(data.get("meeting_kind") or "").strip().lower().replace(" ", "_").replace("-", "_")
+        handled = data.get("handled") or []
+        handled = [str(h).strip() for h in (handled if isinstance(handled, list) else [handled])]
         return {
             "summary": str(data.get("summary") or "")[:600], "fields": fields,
             "successful": successful if isinstance(successful, bool) else None,
@@ -1057,6 +1082,7 @@ async def summarize(bot: Bot, transcript: list[dict], agent: Optional[VoiceAgent
             "meeting_at": meeting_at[:16] if re.match(r"^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}", meeting_at) else None,
             "meeting_kind": meeting_kind if meeting_kind in ("online", "in_person", "phone") else None,
             "meeting_about": str(data.get("meeting_about") or "").strip()[:300],
+            "handled": [h for h in dict.fromkeys(handled) if h in known],
         }
     except Exception as e:
         logger.warning(f"Call summary failed: {e}")

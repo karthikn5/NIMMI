@@ -2,7 +2,7 @@
 import asyncio
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.future import select
 
@@ -166,6 +166,15 @@ def test_a_shorter_name_on_a_later_call_doesnt_replace_the_full_one(client, make
             assert run(_contact, bot).name == "Arjun Kumar"
     contact = run(_contact, bot)
     assert contact.name == "Arjun Kumar Raja" and contact.calls == 4  # a fuller name is taken
+
+
+def test_earlier_calls_are_placed_as_today_or_yesterday():
+    """Live, 30 Oct 2026: told only "30 Oct", the agent said a caller who had called an hour before had asked
+    "yesterday"."""
+    now = datetime(2026, 10, 30, 11, 0, tzinfo=timezone.utc)  # 4:30 pm in India
+    assert memory._day(datetime(2026, 10, 30, 10, 40), now) == "today at 4:10 pm"  # SQLite keeps UTC without a zone
+    assert memory._day(datetime(2026, 10, 29, 12, 30, tzinfo=timezone.utc), now) == "yesterday at 6 pm"
+    assert memory._day(datetime(2026, 10, 27, 5, 0, tzinfo=timezone.utc), now) == "27 Oct"
 
 
 def test_calls_from_before_contacts_existed_are_remembered_too(client, make_user, run):

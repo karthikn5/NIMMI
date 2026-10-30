@@ -144,7 +144,8 @@ only on the owner's machines): @.claude/private-notes.md
   Gemini on a call gets an 8 s limit, not the chat's 30 s.
   `reply_sentences` splits sentences (also "?word" without a space or a glued-on "[END_CALL]", never at "..."),
   ends the turn at a question, and drops filler sounds/empty reactions ("Hmm,", "ஓ, அப்படியா!") in
-  `_clean_for_speech`. The prompt must never give filler examples: models copy them into every reply (seen on real
+  `_clean_for_speech`, with an aside in brackets or stars that opens a sentence ("(Waiting for user response)", read out
+  on a live call, Oct 2026). The prompt must never give filler examples: models copy them into every reply (seen on real
   calls, Oct 2026). A question never ends or transfers the call: the gpt-oss fallbacks glue `[END_CALL]` onto
   questions ("என்ன?[END_CALL]"), which hung up live calls mid-conversation (Oct 2026). The prompt says exactly when
   to write the markers; "write [END_CALL] on its own" was read as "after every reply".
@@ -185,7 +186,9 @@ only on the owner's machines): @.claude/private-notes.md
 - Caller memory (`voice/memory.py`): a `Contact` per assistant and number (never shared between assistants, as
   one account can run several businesses). It's updated after every phone call (`remember_call`, fired from
   `_finish`); a shorter name never replaces a fuller one. At call start `context_for` gives the name, details,
-  team notes and the last 5 call summaries, including calls from before contacts existed. A known caller gets the
+  team notes and the last 5 call summaries ("today at 4:10 pm", "yesterday at 6 pm", else the date: with only "30 Oct"
+  the agent said "yesterday" about an hour-old call; summaries name dates, never "tomorrow"), including calls from
+  before contacts existed. A known caller gets the
   known-caller opening; on Twilio it's made while the phone rings (`_prepare_known_opening`). Email and number are
   never put in the prompt. "Forget" sets `remember_from`; Compliance > Erase deletes the contact. The assistant's
   "Remember callers" switch (`remember_callers`, None = on) stops both reading and saving; contacts already saved stay.
@@ -247,6 +250,15 @@ only on the owner's machines): @.claude/private-notes.md
   hour they last picked up), replacing the last plan. None while a call-back, to-do or meeting waits, after a transfer,
   past `max_total`, with Remember callers off, or more than `stop_after_days` (7) after their last conversation (TRAI 2025:
   consent for an enquiry lasts 7 days). A test call's follow-up waits in `review`.
+- Calls not made yet (`schedule.open_calls`; live, 30 Oct 2026: a meeting's confirmation call found the line busy, the
+  person rang straight back asking why they'd been called, the agent didn't know and booked a call-back on "I called
+  back", and the retry rang later to say what they'd heard meanwhile): every call is told the calls tried for this person
+  in the last 3 days that didn't reach them (what each was for, when, the next try) and the ones they expect (a
+  call-back, a meeting call); not untried follow-ups or campaign calls, test calls, or the call being made. It works with
+  every Schedule switch off (missed campaign calls). The analysis gets them too and says which the conversation took
+  care of (`handled`): those are done ("Taken care of on their call on ...", linked to that call) and never dialled.
+  While they may be returning a missed call, the first call-back the model asks for goes back to it (explain the call
+  first): GPT-OSS 20B booked one on "I called back" even when told.
 - Meetings: requested -> the team approves (link or default link, host) -> confirmation call + written confirmation
   (WhatsApp inside the 24-hour window, else the approved template `Hi {{1}}, about your meeting with {{2}}: {{3}}. {{4}}`;
   email with an .ics invite) -> day-before reminder and the joining details `link_minutes` before (`meetings.process_due`,
@@ -256,7 +268,7 @@ only on the owner's machines): @.claude/private-notes.md
 - Real-model checks (Oct 2026): call-backs booked right on GPT-OSS 120B and Gemini 3.6 Flash (Tamil too); meetings
   reliable on Gemini 3.6 Flash, about 1 in 3 on GPT-OSS 120B (the after-call recovery covers the rest).
 - Tests: `tests/test_voice_schedule.py`. Real models: `dev-scripts/voice/schedule_probe.py` (books under a test number and
-  removes it); sample data for the dashboard: `schedule_seed.py` (`--clean`); UI: `dev-scripts/ui-checks/schedule_ui.mjs`.
+  removes it), `missed_call_probe.py` (someone returning a missed call); sample data for the dashboard: `schedule_seed.py` (`--clean`); UI: `dev-scripts/ui-checks/schedule_ui.mjs`.
 
 ## WhatsApp
 

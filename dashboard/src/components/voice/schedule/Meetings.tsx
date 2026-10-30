@@ -107,7 +107,7 @@ function timeline(m: MeetingDetail): Event[] {
         if (!c.due_at) continue;
         events.push({
             at: c.due_at, text: `${CALL_LABELS[c.about ?? ""] ?? "Call"}: ${ITEM_STATUS[c.status].label.toLowerCase()}`,
-            note: c.status === "cancelled" || c.status === "failed" ? c.last_error : null,
+            note: c.status === "done" || c.status === "cancelled" || c.status === "failed" ? c.last_error : null,
             tone: ITEM_STATUS[c.status].tone === "plum" ? "neutral" : ITEM_STATUS[c.status].tone as Event["tone"],
             href: c.call_id ? `/dashboard/voice/calls?call=${c.call_id}` : undefined,
         });

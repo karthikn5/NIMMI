@@ -91,7 +91,7 @@ needs a person (they ask for one, or what they need takes a person), a notice po
 3. A real test needs a phone call: you call the test number on live (or "Call me"), ask for a person, and pick up in
    the browser. Twilio charges a few cents.
 
-## 7. Status (30 Oct 2026, local, not committed)
+## 7. Status (30 Oct 2026, pushed in beed98d)
 
 Built: phases 1 to 3.
 - Backend: `voice/handoff.py` (the tool, availability, rows, phrases in 11 languages, the sweep), `voice/live_api.py`,

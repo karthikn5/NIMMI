@@ -735,7 +735,7 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
         assist.workspace(owner_id),
         _first(select(VoiceScript).where(VoiceScript.bot_id == bot_id, VoiceScript.direction == direction)),
         memory.context_for(bot_id, caller),
-        schedule.tools_for(owner_id, bot_id, caller, number_id, name=job.name if job else None),
+        schedule.tools_for(owner_id, bot_id, caller, number_id, name=job.name if job else None, skip=job.id if job else None),
         schedule.plan_inputs(job) if scheduled else _nothing(),
     )
     purpose = campaign.purpose if campaign else None

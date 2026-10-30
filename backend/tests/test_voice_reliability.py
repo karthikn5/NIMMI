@@ -52,6 +52,16 @@ def _answer(monkeypatch, pieces, language):
     return asyncio.run(collect())
 
 
+def test_stage_directions_are_never_read_out(monkeypatch):
+    """Live, 30 Oct 2026: the model glued "(Waiting for user response)" to its question, the brackets were dropped and the
+    caller heard "...email address கொடுக்க முடியுமா? Waiting for user response"."""
+    assert _answer(monkeypatch, ["மெயில் அனுப்ப உங்கள் email address கொடுக்க முடியுமா?(Waiting for user response)"],
+                   "ta-IN") == ["மெயில் அனுப்ப உங்கள் email address கொடுக்க முடியுமா?"]
+    assert _answer(monkeypatch, ["Sure. ", "(Waiting for user response) ", "The fee is 20,000 rupees (with GST)."],
+                   "en-IN") == ["Sure.", "The fee is 20,000 rupees with GST."]
+    assert _answer(monkeypatch, ["*pauses* ", "Your seat is booked."], "en-IN") == ["Your seat is booked."]
+
+
 def test_filler_sounds_and_empty_reactions_are_never_spoken(monkeypatch):
     """Real calls opened nearly every answer with "ஓ, அப்படியா!" ("Oh, is that so!") or "ஹ்ம்ம்...", each spoken on
     its own as an odd noise. Whatever the model writes, the answer starts at the answer."""

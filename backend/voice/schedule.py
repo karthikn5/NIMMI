@@ -489,6 +489,7 @@ async def _after_call(db: AsyncSession, call_id: str) -> None:
             await next_follow_up(db, source, settings)  # picked up but said nothing, or a machine: the next one
         return
     step = call.next_step or {}
+    await _mark_handled(db, call, settings, step.get("handled") or [])
     contact = await contact_of(db, call.bot_id, call.caller_e164)
     if contact is not None and call.lead in FOLLOWED_UP + ("not_interested",):
         rate(contact, call.lead, step.get("reason"))
@@ -927,20 +928,143 @@ def apply_plan(call_agent: VoiceAgent, plan: CallPlan) -> None:
         call_agent.greeting = plan.greeting
 
 
+# ─── calls not made yet ───────────────────────────────────────────
+# Oct 2026, live: a meeting's confirmation call found the line busy; the person rang straight back and asked four times
+# why they'd been called, and the agent, never told about the call, kept asking how it could help (then booked a call-back
+# when they said "I called back"). Later the planned retry rang to say what they had heard meanwhile. So a call knows what
+# was tried or is due for this person, and the after-call analysis says which of those the conversation took care of.
+OPEN_FOR = timedelta(days=3)  # an unanswered call they may still be returning
+OPEN_MOST = 5
+
+
+@dataclass
+class OpenCall:
+    """A call planned or tried for this person that hasn't reached them yet."""
+    id: str                               # the CallbackJob
+    label: str                            # how the after-call analysis names it ("call_1")
+    about: str                            # what it's for, in words the agent can say
+    tried_at: Optional[datetime] = None   # its last try, unanswered
+    missed: str = ""                      # why that try didn't reach them
+    next_at: Optional[datetime] = None    # when it's due (again)
+
+
+def _missed(last_error: Optional[str]) -> str:
+    status = (last_error or "").rpartition(":")[2].strip().lower()
+    return {"busy": "the line was busy", "no-answer": "no answer"}.get(status, "")
+
+
+def about_call(job: CallbackJob, settings: dict, meeting: Optional[Meeting] = None, campaign=None, business: str = "us",
+               channels: Optional[dict] = None, now: Optional[datetime] = None) -> Optional[str]:
+    """What a planned call is for, in a few words the agent can tell the person; None when it no longer makes sense."""
+    tz, now = zone(settings), now or now_utc()
+    purpose = (job.purpose or "").strip()
+    if job.kind == "callback":
+        return f"the call back they asked for{f' (about: {purpose})' if purpose and purpose.lower() != 'unknown' else ''}"
+    if job.kind == "follow_up":
+        return f"a follow-up on their earlier conversation with {business}: {purpose or 'whether they have questions or want to go ahead'}"
+    if job.kind in ("meeting", "no_show"):
+        kind = meeting_call(job, meeting, now) if job.kind == "meeting" else (
+            "no_show" if meeting is not None and meeting.status == "no_show" else None)
+        if meeting is None or kind is None:
+            return None
+        when, label = when_text(utc(meeting.starts_at), tz, now), MEETING_LABELS.get(meeting.kind, "")
+        if kind == "meeting_confirmed":
+            from voice import meetings
+            return (f"to tell them their {label} meeting with {business} {when} is confirmed, and that "
+                    f"{meetings.how_they_join(meeting, settings, channels)}")
+        if kind == "meeting_proposed":
+            return (f"to offer {when} for the meeting they asked for, as their time wasn't free; if it works, book exactly "
+                    "that time with book_meeting")
+        if kind == "meeting_declined":
+            return f"to tell them the team can't make the meeting time they asked for ({when}), and help them choose another"
+        return f"they missed their {label} meeting {when}: to ask if all is well and offer another time"
+    if job.campaign_id:
+        from voice.llm import fill
+        goal = fill((campaign.purpose or "") if campaign else "", job.variables)
+        return f"the {(campaign.name if campaign else '') or 'call'} campaign{f': {goal}' if goal else ''}"
+    return "the call they asked for on the website chat"
+
+
+async def open_calls(db: AsyncSession, bot_id: str, e164: Optional[str], settings: dict, skip: Optional[str] = None,
+                     now: Optional[datetime] = None) -> list[OpenCall]:
+    """Calls tried for this person in the last few days that didn't reach them, and calls they're expecting (a call-back,
+    a meeting call). Not follow-ups or campaign calls that haven't been tried (the person doesn't know of them), not test
+    calls, and not `skip` (the call being made now)."""
+    if not e164:
+        return []
+    now = now or now_utc()
+    jobs = (await db.execute(select(CallbackJob).where(
+        CallbackJob.bot_id == bot_id, CallbackJob.e164 == e164, CallbackJob.status.in_(("queued", "failed")),
+        CallbackJob.created_at >= stored(now - timedelta(days=30))).order_by(CallbackJob.created_at.desc()))).scalars().all()
+    out: list[OpenCall] = []
+    business = None
+    for job in jobs:
+        if job.id == skip or job.kind == "person" or (job.consent_source or "").startswith(TEST_CALL):
+            continue
+        tried = None
+        if job.attempts and job.provider_call_id:
+            tried = (await db.execute(select(CallLog.started_at).where(
+                CallLog.provider_call_id == job.provider_call_id, CallLog.outcome == "no_answer"))).scalars().first()
+        if tried is None and (job.status == "failed" or job.kind == "follow_up" or job.campaign_id):
+            continue  # never tried, or given up without a call: nothing they'd be returning
+        if tried is not None and utc(tried) < now - OPEN_FOR:
+            continue
+        meeting = await db.get(Meeting, job.meeting_id) if job.meeting_id else None
+        campaign = None
+        if job.campaign_id:
+            from backend.models import Campaign
+            campaign = await db.get(Campaign, job.campaign_id)
+        channels = None
+        if meeting is not None and job.kind == "meeting":
+            from voice import meetings
+            channels = await meetings.channels_for(db, meeting, settings)
+        if business is None:
+            from voice import meetings
+            business = await meetings._business(db, bot_id)
+        about = about_call(job, settings, meeting, campaign, business, channels, now)
+        if about is None:
+            continue
+        out.append(OpenCall(id=job.id, label=f"call_{len(out) + 1}", about=about, tried_at=utc(tried) if tried else None,
+                            missed=_missed(job.last_error) if tried else "",
+                            next_at=utc(job.next_attempt_at) if job.status == "queued" else None))
+        if len(out) == OPEN_MOST:
+            break
+    return out
+
+
+async def _mark_handled(db: AsyncSession, call: CallLog, settings: dict, ids: list) -> None:
+    """Calls planned or tried earlier that this conversation took care of (the after-call analysis says which): done,
+    so they aren't made."""
+    if not ids:
+        return
+    local = (utc(call.started_at) or now_utc()).astimezone(zone(settings))
+    jobs = (await db.execute(select(CallbackJob).where(
+        CallbackJob.id.in_(ids), CallbackJob.bot_id == call.bot_id, CallbackJob.e164 == call.caller_e164,
+        CallbackJob.status.in_(("queued", "failed"))))).scalars().all()
+    for job in jobs:
+        job.status, job.call_id = "done", call.id
+        job.last_error = f"Taken care of on their call on {local.day} {local:%b} at {_clock(local)}"
+        logger.info(f"Call {call.id} took care of {job.kind or 'call'} {job.id}: it won't be made")
+
+
 # ─── during a call ────────────────────────────────────────────────
 class CallTools:
     """The Schedule functions an agent has on one call: book or cancel a call-back, see free meeting times, ask for,
-    move or cancel a meeting. Made when the call starts, with what's already waiting for this caller; each function's
-    description carries the current time, so "tomorrow at 11" can become a date."""
+    move or cancel a meeting. Made when the call starts, with what's already waiting for this caller and the calls tried
+    or due for them (`open_calls`); each function's description carries the current time, so "tomorrow at 11" can
+    become a date."""
 
     def __init__(self, settings: dict, *, owner_id: str, bot_id: str, e164: Optional[str], number_id: Optional[str],
-                 test: bool = False, upcoming: Optional[dict] = None, name: Optional[str] = None, call_id=None):
+                 test: bool = False, upcoming: Optional[dict] = None, name: Optional[str] = None, call_id=None,
+                 open_calls: Optional[list[OpenCall]] = None):
         self.settings, self.tz = settings, zone(settings)
         self.owner_id, self.bot_id, self.e164, self.number_id = owner_id, bot_id, e164, number_id
         self.test = test or not e164  # a browser test: nothing is booked
         self.upcoming = dict(upcoming or {})
         self.name = name
         self.call_id = call_id or (lambda: None)
+        self.open = list(open_calls or [])
+        self.checked_return = False  # a call-back asked for while they may be returning a missed call: checked once
 
     @property
     def callbacks(self) -> bool:
@@ -964,9 +1088,9 @@ class CallTools:
             hours = self.settings["callbacks"]["hours"]
             out.append({"name": "schedule_callback", "description": (
                 "Book a call back to this caller when they ask to be called later or agree to it ('call me after 10 "
-                f"minutes', 'call me tomorrow at 11'). {today} Call-backs go out between {hours_text(hours)}; for a "
-                "time outside them it books nothing and tells you the nearest time to offer. Then tell them when "
-                "you'll call."),
+                f"minutes', 'call me tomorrow at 11'). Not for someone returning a call you made: answer them. {today} "
+                f"Call-backs go out between {hours_text(hours)}; for a time outside them it books nothing and tells you "
+                "the nearest time to offer. Then tell them when you'll call."),
                 "parameters": {"type": "object", "properties": {
                     "when": {"type": "string", "description": "'in 10 minutes' or 'in 2 hours' for a delay; 'YYYY-MM-DD HH:MM' "
                              "(24 hours) for a set time"},
@@ -1008,9 +1132,7 @@ class CallTools:
 
     def rules(self) -> str:
         """For the instructions: when to use them, and what's already waiting for this caller."""
-        if not (self.callbacks or self.meetings):
-            return ""
-        lines = []
+        lines: list[str] = []
         if self.callbacks:
             lines.append("- If the caller is busy or asks you to call later, book it straight away with schedule_callback "
                          "(it checks the calling hours and tells you the nearest time when theirs is outside them), then "
@@ -1026,15 +1148,35 @@ class CallTools:
                          "confirmed on this number. Never offer a time you haven't checked, and never say a meeting is "
                          "booked until book_meeting says so.")
         tz, now = self.tz, now_utc()
-        meeting, callback = self.upcoming.get("meeting"), self.upcoming.get("callback")
+        meeting, callback = (self.upcoming.get("meeting"), self.upcoming.get("callback")) if self.callbacks or self.meetings else (None, None)
         if meeting is not None:
             state = {"requested": "waiting for the team to confirm it", "proposed": "the team proposed this time",
                      "confirmed": "confirmed"}.get(meeting.status, meeting.status)
             lines.append(f"- This caller has a {MEETING_LABELS.get(meeting.kind, '')} meeting {when_text(utc(meeting.starts_at), tz, now)} "
                          f"({state}). If they ask, tell them; they can move it or cancel it.")
-        if callback is not None:
+        if callback is not None and callback.id not in {o.id for o in self.open}:
             lines.append(f"- You're due to call this caller back {when_text(utc(callback.next_attempt_at), tz, now)}.")
-        return "\n" + "\n".join(lines)
+        lines += self._open_lines()
+        return "\n" + "\n".join(lines) if lines else ""
+
+    def _open_lines(self) -> list[str]:
+        """The calls tried or due for this caller, and what to do about them on this call."""
+        tz, now = self.tz, now_utc()
+        missed = [o for o in self.open if o.tried_at]
+        due = [o for o in self.open if not o.tried_at and o.next_at]
+        lines = []
+        if missed:
+            lines.append("- Calls you made to this caller that didn't reach them (they may be returning one):")
+            for o in missed:
+                again = f" Another try is planned {when_text(o.next_at, tz, now)}." if o.next_at else ""
+                lines.append(f"  - {when_text(o.tried_at, tz, now)}{f' ({o.missed})' if o.missed else ''}: {o.about}.{again}")
+            lines.append("  If they say they had a call from this number, or ask why you called, tell them at once what it was "
+                         "about and take care of it. Returning your call is not asking to be called back. If they called "
+                         "about something else, still tell them before the call ends.")
+        if due:
+            lines.append("- Calls you're due to make to this caller. If what one is for comes up, take care of it now:")
+            lines += [f"  - {when_text(o.next_at, tz, now)}: {o.about}." for o in due]
+        return lines
 
     async def run(self, name: str, args: dict) -> str:
         """Never raises: what comes back is for the model to read."""
@@ -1056,6 +1198,12 @@ class CallTools:
         return f"There's no function called {name}. Answer without it."
 
     async def _callback(self, args: dict) -> str:
+        if any(o.tried_at for o in self.open) and not self.checked_return:
+            # Live, Oct 2026: someone saying "I called back" (returning a missed call) got a call-back about "unknown".
+            # The first one asked for on such a call goes back to the agent; asked for again, it's booked.
+            self.checked_return = True
+            return ("Wait: they may be returning the call you made. Tell them what it was about first. If they still want "
+                    "a call back after that, book it then.")
         at, problem = callback_time(args, self.settings)
         if at is None:
             return problem
@@ -1094,18 +1242,21 @@ class CallTools:
 
 
 async def tools_for(owner_id: str, bot_id: str, e164: Optional[str], number_id: Optional[str], *, test: bool = False,
-                    name: Optional[str] = None, call_id=None) -> Optional[CallTools]:
-    """The Schedule functions for a call starting now, or None when the assistant has none switched on."""
+                    name: Optional[str] = None, call_id=None, skip: Optional[str] = None) -> Optional[CallTools]:
+    """The Schedule functions for a call starting now, and the calls tried or due for this caller (`skip`: the call
+    being made now); None when the assistant has no functions switched on and nothing is waiting."""
     async with async_session() as db:
         settings = await settings_for(bot_id, db)
-        if not (settings["callbacks"]["enabled"] or settings["meetings"]["enabled"]):
+        waiting = await open_calls(db, bot_id, e164, settings, skip=skip) if e164 and not test else []
+        if not (settings["callbacks"]["enabled"] or settings["meetings"]["enabled"] or waiting):
             return None
         upcoming = {}
         if e164:
             upcoming = {"meeting": await upcoming_meeting(db, bot_id, e164),
                         "callback": await waiting_job(db, bot_id, e164, "callback")}
     return CallTools(settings, owner_id=owner_id, bot_id=bot_id, e164=e164, number_id=number_id, test=test,
-                     upcoming={k: v for k, v in upcoming.items() if v is not None}, name=name, call_id=call_id)
+                     upcoming={k: v for k, v in upcoming.items() if v is not None}, name=name, call_id=call_id,
+                     open_calls=waiting)
 
 
 # ─── overview counts ──────────────────────────────────────────────

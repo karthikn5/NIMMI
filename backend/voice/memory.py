@@ -28,11 +28,18 @@ NOTHING_SAID = ("no_answer", "voicemail", "in_progress")
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
-def _day(at: Optional[datetime]) -> str:
-    """The call's date as the business sees it (stored in UTC; SQLite keeps it without a zone)."""
+def _day(at: Optional[datetime], now: Optional[datetime] = None) -> str:
+    """When a call or chat was, as the business sees it: "today at 4:10 pm", "yesterday at 6 pm", else "28 Oct" (stored
+    in UTC; SQLite keeps it without a zone). Oct 2026, live: given only "30 Oct", the agent told someone who had called an
+    hour before that they'd asked "yesterday"."""
     if at is None:
         return ""
-    return (at if at.tzinfo else at.replace(tzinfo=timezone.utc)).astimezone(IST).strftime("%d %b").lstrip("0")
+    local = (at if at.tzinfo else at.replace(tzinfo=timezone.utc)).astimezone(IST)
+    today = (now or datetime.now(timezone.utc)).astimezone(IST).date()
+    if local.date() in (today, today - timedelta(days=1)):
+        clock = f"{local.hour % 12 or 12}{f':{local.minute:02d}' if local.minute else ''} {'am' if local.hour < 12 else 'pm'}"
+        return f"{'today' if local.date() == today else 'yesterday'} at {clock}"
+    return local.strftime("%d %b").lstrip("0")
 
 
 def first_name(name: Optional[str]) -> Optional[str]:

@@ -14,7 +14,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 PLANS = {
-    "1 Month Plan": {"price": 1, "days": 30},
+    "1 Month Plan": {"price": 999, "days": 30},
     "6 Month Plan": {"price": 499, "days": 180},
     "12 Month Plan": {"price": 999, "days": 365},
 }

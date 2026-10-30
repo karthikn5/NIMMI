@@ -15,7 +15,7 @@ import type { VoiceModels } from "@/lib/voice/types";
 
 const PLANS = [
     {
-        name: "1 Month Plan", label: "1 month", price: 1, originalPrice: 299, perMonth: "₹1 a month",
+        name: "1 Month Plan", label: "1 month", price: 999, originalPrice: 0, perMonth: "₹999 a month",
         description: "Try Nimmi AI on one assistant.",
         features: ["Full access for 1 assistant", "Unlimited conversations", "Train on PDFs and text", "Export code unlocked", "Standard response time"],
     },
@@ -162,7 +162,7 @@ function Billing() {
                                 </div>
                                 <p className="mt-3">
                                     <span className="text-3xl font-semibold tracking-tight tabular-nums">{inr(plan.price)}</span>
-                                    <span className="ml-2 text-sm text-stone-400 line-through tabular-nums">{inr(plan.originalPrice)}</span>
+                                    {plan.originalPrice > plan.price && <span className="ml-2 text-sm text-stone-400 line-through tabular-nums">{inr(plan.originalPrice)}</span>}
                                 </p>
                                 <p className="text-xs text-stone-500 mt-1">{plan.perMonth}</p>
                                 <p className="text-[13px] text-stone-600 mt-3">{plan.description}</p>

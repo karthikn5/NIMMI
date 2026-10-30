@@ -171,9 +171,12 @@ async def get_payment_history(ctx: AuthContext = Depends(require_manager), db: A
     topups = (await db.execute(
         select(VoiceTopup).where(VoiceTopup.user_id == ctx.owner_id, VoiceTopup.status == "paid")
     )).scalars().all()
+    # The plan a payment bought is on its subscription (same order); two plans can cost the same.
+    bought = dict((await db.execute(select(Subscription.razorpay_order_id, Subscription.plan_name).where(
+        Subscription.user_id == ctx.owner_id, Subscription.razorpay_order_id.is_not(None)))).all())
     history = []
     for tx in txs:
-        plan_name = next((n for n, m in PLANS.items() if m["price"] == tx.amount), "Plan payment")
+        plan_name = bought.get(tx.razorpay_order_id) or next((n for n, m in PLANS.items() if m["price"] == tx.amount), "Plan payment")
         history.append({"plan_name": plan_name, "amount": tx.amount, "date": tx.created_at.strftime("%b %d, %Y, %I:%M %p"),
                         "iso": tx.created_at.isoformat(), "status": tx.status, "bot_id": tx.bot_id,
                         "transaction_id": tx.razorpay_payment_id or tx.id[:12]})

@@ -12,7 +12,7 @@ import type { PanelProps, TestChannel } from "@/components/integrations/shared";
 import { apiJson, currentUserId } from "@/lib/api";
 import type { IntegrationSettings, LogRow } from "@/lib/integrations";
 import { useApi, useDraft } from "@/lib/useApi";
-import { PaidOnly, useLimits } from "@/lib/plan";
+import { PlanNeeded, useLimits } from "@/lib/plan";
 
 type Tab = "email" | "whatsapp" | "webhook" | "leadsquared" | "activity";
 type Tone = "good" | "neutral" | "warn" | "bad";
@@ -47,12 +47,16 @@ function status(tab: Tab, s: IntegrationSettings, log: LogRow[] | null): { label
 
 function IntegrationsPlan() {
     const limits = useLimits();
-    if (!limits || limits.integrations) return null;
+    const has = limits?.includes;
+    if (!has || has.integrations) return null;
     return (
         <div className="mt-6 -mb-2">
-            <PaidOnly feature="Integrations">
-                Email alerts, WhatsApp, webhooks and LeadSquared can be set up once one of your assistants is on a plan.
-            </PaidOnly>
+            {!has.email_alerts ? (
+                <PlanNeeded feature="email_alerts">
+                    Lead alerts and emails to customers come with Growth; webhooks, LeadSquared and Google Sheets with Pro.
+                    Choose a plan for one of your assistants on the Billing page.
+                </PlanNeeded>
+            ) : <PlanNeeded feature="integrations" />}
         </div>
     );
 }

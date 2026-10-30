@@ -96,6 +96,14 @@ class Transaction(Base):
     plan_name = Column(String, nullable=True)   # what it paid for ("Growth monthly", "Pro yearly, the days left")
 
 
+class AiReplyUsage(Base):
+    """AI replies an assistant wrote in a month (website chat and WhatsApp), against its plan's allowance (plans.py)."""
+    __tablename__ = "ai_reply_usage"
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), primary_key=True)
+    month = Column(String(7), primary_key=True)    # "2026-11", India time
+    replies = Column(Integer, default=0, nullable=False)
+
+
 class BillingPlan(Base):
     """The Razorpay plan made for one of ours at one price (a Razorpay plan can't change: a new price is a new plan)."""
     __tablename__ = "billing_plans"

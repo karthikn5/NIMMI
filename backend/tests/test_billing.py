@@ -395,3 +395,20 @@ def test_the_website_and_billing_charge_the_same_prices():
     site = {tier: int(monthly) for tier, monthly in re.findall(r'id: "(\w+)", name: "\w+", monthly: (\d+)', ts)}
     assert site == {tier: v["monthly"] for tier, v in subscriptions.TIERS.items()}
     assert f"YEARLY_PAYS_FOR = {subscriptions.PERIODS['yearly']['pays_for']};" in ts
+
+
+def test_each_payment_has_a_receipt_for_its_own_workspace_only(client, make_user, monkeypatch):
+    fake = _razorpay(monkeypatch)
+    u, other = make_user(), make_user()
+    bot = u.bot("Front Desk")
+    _buy(client, u, fake, bot, "growth", "yearly", payment_id="pay_receipt1")
+    [paid] = client.get("/api/payments/history", headers=u.h()).json()
+    got = client.get(f"/api/payments/receipt/{paid['transaction_id']}", headers=u.h())
+    assert got.status_code == 200
+    receipt = got.json()
+    assert (receipt["item"], receipt["assistant"], receipt["amount"], receipt["payment_id"]) == (
+        "Growth yearly", "Front Desk", 24990, "pay_receipt1")
+    assert receipt["number"].startswith("NIM-") and receipt["billed_to"]["email"] == u.email
+    assert receipt["seller"]["name"] == "Nimmi AI"
+    assert client.get("/api/payments/receipt/pay_receipt1", headers=other.h()).status_code == 404
+    assert client.get("/api/payments/receipt/pay_unknown", headers=u.h()).status_code == 404

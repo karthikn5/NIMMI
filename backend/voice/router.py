@@ -304,6 +304,8 @@ async def update_agent(bot_id: str, data: AgentUpdate, direction: Optional[str] 
     if data.voicemail_action not in ("off", "hangup", "leave_message") or data.transfer_mode not in ("cold", "warm"):
         raise HTTPException(status_code=400, detail="Unknown option")
     agent, exists = await _agent_for(bot, ctx.owner_id, db)
+    if data.transfer_enabled and not scripts.for_direction(agent, direction).transfer_enabled:
+        await plans.require_feature(db, bot.bot_id, "transfers")  # turning on the transfer number: Pro
     if data.ai_model is not None:
         data.ai_model = ai_models.DEFAULT if data.ai_model == "auto" else data.ai_model
         chosen = ai_models.AI_MODELS_BY_ID.get(data.ai_model)
@@ -691,6 +693,12 @@ async def _prepare_known_opening(bot_id: str, caller: Optional[str]) -> None:
         logger.warning(f"Preparing a known caller's opening failed (the call will make it): {e}")
 
 
+async def _included(bot_id: str):
+    """What the assistant's plan includes (plans.py), on its own connection beside the call's other lookups."""
+    async with async_session() as db:
+        return await plans.includes(db, bot_id)
+
+
 async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[str], to_raw: Optional[str],
                          job_id: Optional[str] = None, voicemail: bool = False, scope=accounts.NIMMI) -> None:
     """
@@ -727,7 +735,7 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
     # waiting in silence, and each lookup is a round trip to the database.
     campaign_id = job.campaign_id if job else None
     scheduled = job is not None and job.kind in schedule.CALL_KINDS  # a call-back, follow-up or meeting call
-    bot, agent, campaign, compliance, settings, script_row, caller_memory, tools, inputs = await asyncio.gather(
+    bot, agent, campaign, compliance, settings, script_row, caller_memory, tools, inputs, included = await asyncio.gather(
         _first(select(Bot).where(Bot.bot_id == bot_id)),
         _first(select(VoiceAgent).where(VoiceAgent.bot_id == bot_id)),
         _first(select(Campaign).where(Campaign.id == campaign_id)) if campaign_id else _nothing(),
@@ -737,6 +745,7 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
         memory.context_for(bot_id, caller),
         schedule.tools_for(owner_id, bot_id, caller, number_id, name=job.name if job else None, skip=job.id if job else None),
         schedule.plan_inputs(job) if scheduled else _nothing(),
+        _included(bot_id),
     )
     purpose = campaign.purpose if campaign else None
     if campaign and not number_id:
@@ -752,6 +761,8 @@ async def _route_and_run(transport, call_sid: Optional[str], from_raw: Optional[
     if not bot or not agent or not (agent.enabled or is_test):
         await transport.hangup("done")
         return
+    if not included.transfers:  # Pro: transfers and picking up calls (the agent is this call's copy)
+        agent.transfer_enabled, agent.team_handoff = False, False
     if scheduled:  # what it's for, its own opening, and the language they spoke last time
         plan = schedule.plan_for(job, *inputs, agent, caller_memory, agent.company_name or bot.bot_name)
         schedule.apply_plan(agent, plan)

@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import AppHeader from "@/components/AppHeader";
 import { ToastProvider, cn } from "@/components/ui";
 import { currentUserId } from "@/lib/api";
-import { PaidOnly, useLimits } from "@/lib/plan";
+import { PlanNeeded, useLimits } from "@/lib/plan";
 import { useRole } from "@/lib/whatsapp";
 
 const tabs = [
@@ -56,10 +56,11 @@ export default function WhatsAppLayout({ children }: { children: ReactNode }) {
                     </div>
                 </div>
                 <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 pb-24">
-                    {limits && !limits.integrations && (
-                        <PaidOnly feature="WhatsApp">
-                            Look around and get your files ready. Connecting a number and answering on WhatsApp needs a plan for one of your assistants.
-                        </PaidOnly>
+                    {limits?.includes && !limits.includes.whatsapp && (
+                        <PlanNeeded feature="whatsapp">
+                            Look around and get your files ready. Connecting a number and answering on WhatsApp come with Growth or
+                            Pro for one of your assistants.
+                        </PlanNeeded>
                     )}
                     {ready ? children : null}
                 </main>

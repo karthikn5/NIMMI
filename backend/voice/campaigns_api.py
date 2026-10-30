@@ -136,6 +136,7 @@ async def create_campaign(data: CampaignCreate, ctx: AuthContext = Depends(requi
     if not data.consent:
         raise HTTPException(status_code=400, detail="Confirm that everyone on the list agreed to be called")
     bot = await get_owned_bot(data.bot_id, ctx, db)
+    await plans.require_feature(db, bot.bot_id, "campaigns")  # Pro
     agent = (await db.execute(select(VoiceAgent).where(VoiceAgent.bot_id == bot.bot_id))).scalars().first()
     if not agent or not agent.voice_id:
         raise HTTPException(status_code=400, detail="Set up this assistant's voice first (Voice, then Agents)")
@@ -231,6 +232,7 @@ async def campaign_action(campaign_id: str, action: str, ctx: AuthContext = Depe
     if action == "pause" and campaign.status == "running":
         campaign.status = "paused"
     elif action == "resume" and campaign.status == "paused":
+        await plans.require_feature(db, campaign.bot_id, "campaigns")
         campaign.status = "running"
     elif action == "cancel" and campaign.status in ("running", "paused"):
         campaign.status, campaign.completed_at = "cancelled", datetime.utcnow()

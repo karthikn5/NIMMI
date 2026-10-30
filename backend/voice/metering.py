@@ -24,16 +24,25 @@ def _naive(dt):
 
 
 async def _plan_allowance(db: AsyncSession, owner_id: str) -> float:
-    """Sum of monthly voice credits included in the owner's active bot plans."""
-    if not PLAN_CREDITS:
-        return 0
+    """Sum of monthly call credits included in the owner's assistants' plans: Pro's 300 each (plans.py), and any an
+    earlier plan was given by name (VOICE_PLAN_CREDITS_JSON)."""
+    import plans
     bots = (await db.execute(select(Bot.bot_id).where(Bot.user_id == owner_id))).scalars().all()
     total = 0.0
     for bot_id in bots:
         sub = await active_subscription(bot_id, db)
         if sub:
-            total += float(PLAN_CREDITS.get(sub.plan_name, 0))
+            total += plans.includes_of(sub).call_credits + float(PLAN_CREDITS.get(sub.plan_name, 0))
     return total
+
+
+async def refresh_allowance(db: AsyncSession, owner_id: str) -> None:
+    """A plan with call credits started (or got more): its credits now, not at the wallet's next monthly cycle."""
+    wallet = await get_wallet(db, owner_id)
+    allowance = await _plan_allowance(db, owner_id)
+    if allowance > (wallet.plan_credits or 0):
+        wallet.plan_credits = allowance
+        await db.commit()
 
 
 async def get_wallet(db: AsyncSession, owner_id: str) -> VoiceWallet:

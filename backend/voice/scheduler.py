@@ -18,6 +18,7 @@ from database import async_session
 from backend.models import (Campaign, CallbackJob, CallbackSettings, CallLog, ComplianceSettings, Contact, DncEntry,
                             PhoneNumber, VoiceAgent)
 import balance
+import plans
 from phone import callable_destination
 from voice import accounts, ai_models, exotel, metering, recording, schedule, twilio
 from voice.catalog import NUMBER_GRACE_DAYS
@@ -74,6 +75,9 @@ async def dispatch_due_callbacks() -> None:
                     job.status, job.last_error = "cancelled", "Campaign deleted"
                     continue
                 campaigns[campaign.id] = campaign
+                if not (await plans.includes(db, campaign.bot_id)).campaigns:
+                    campaign.status = "paused"  # its assistant left Pro: it waits (resuming needs Pro again)
+                    continue
                 if campaign.id not in in_flight:
                     in_flight[campaign.id] = (await db.execute(select(func.count()).select_from(CallbackJob).where(
                         CallbackJob.campaign_id == campaign.id, CallbackJob.status == "calling"))).scalar() or 0
@@ -99,6 +103,9 @@ async def dispatch_due_callbacks() -> None:
                 settings = (await db.execute(select(CallbackSettings).where(CallbackSettings.user_id == job.user_id))).scalars().first()
                 if not settings or not settings.enabled:
                     job.status, job.last_error = "cancelled", "Callbacks turned off"
+                    continue
+                if not (await plans.includes(db, job.bot_id)).schedule:
+                    job.status, job.last_error = "cancelled", "Call-backs come with the Pro plan"
                     continue
                 window, from_id, max_attempts = (settings.window_start, settings.window_end), settings.from_number_id, settings.max_attempts
             blocked = (await db.execute(

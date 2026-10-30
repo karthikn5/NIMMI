@@ -19,6 +19,7 @@ from backend.models import Bot, Conversation, Message
 from netsafe import UnsafeUrl, assert_public_url, safe_client
 import assist
 import behaviour
+import plans
 from notify.events import handoff_requested, fire_and_forget, lead_captured
 from phone import extract_contact
 from realtime import notify_owner
@@ -164,18 +165,18 @@ async def _request_handoff(bot: Bot, conv: Conversation, message: str) -> None:
     })
 
 
-async def _pre_ai(chat: ChatMessage, bot: Bot, db: AsyncSession):
+async def _pre_ai(chat: ChatMessage, bot: Bot, db: AsyncSession, live_chat: bool = True):
     """
-    Shared checks before calling the AI: human takeover and handoff keywords.
-    Returns (conversation, replies_or_None, extra_fields). The visual flow runs in the widget itself
-    (it asks the questions and saves the answers), so it isn't run again here.
+    Shared checks before calling the AI: human takeover and handoff keywords (on a plan with live chat; otherwise the
+    assistant answers, and can take their details for the team). Returns (conversation, replies_or_None, extra_fields).
+    The visual flow runs in the widget itself (it asks the questions and saves the answers), so it isn't run again here.
     """
     conv = await _conversation(bot, chat.visitor_session_id, db)
     if conv and conv.handoff_status == "human":
         return conv, ["A human agent is currently handling this chat."], {"handoff_status": "human"}
 
-    asked = asks_for_person(chat.message)
-    upset = not asked and await assist.should_escalate(bot.user_id, chat.message)
+    asked = live_chat and asks_for_person(chat.message)
+    upset = live_chat and not asked and await assist.should_escalate(bot.user_id, chat.message)
     if asked or upset:
         if not conv:
             conv = Conversation(bot_id=bot.bot_id, visitor_session_id=chat.visitor_session_id)
@@ -223,15 +224,21 @@ async def chat_message(chat: ChatMessage, request: Request, ctx: Optional[AuthCo
     if not await _plan_ok(bot, bool(chat.is_demo), ctx, db):
         return {"answer": EXPIRED_TEXT, "bot_id": chat.bot_id, "expired": True}
 
-    conv, replies, extra = await _pre_ai(chat, bot, db)
+    testing = bool(chat.is_demo) and _demo_allowed(bot, ctx)  # the business trying it: no reply counted
+    conv, replies, extra = await _pre_ai(chat, bot, db, (await plans.includes(db, bot.bot_id)).live_chat)
     if replies is not None:
         reply = "\n".join(replies)
         await _save_turn(conv.conversation_id, chat.message, reply)
         return {"answer": reply, "bot_id": chat.bot_id, **extra}
+    if not testing and not await plans.can_reply(db, bot.bot_id):
+        await _save_turn(conv.conversation_id, chat.message, plans.REPLIES_USED_UP)
+        return {"answer": plans.REPLIES_USED_UP, "bot_id": chat.bot_id}
 
     system, messages = await _brief(bot, conv, chat)
     answer = await asyncio.to_thread(generate_ai_response, system, "", messages[-1]["content"], history=messages[:-1],
                                      provider=bot.ai_provider, model_name=bot.ai_model, api_key=bot.ai_api_key)
+    if not testing:
+        fire_and_forget(plans.count_reply(bot.bot_id))
     await _save_turn(conv.conversation_id, chat.message, answer)
     _after_answer(bot, conv.conversation_id, chat.message, answer)
     fire_and_forget(brain.learn_details(conv.conversation_id, bot, chat.message, _last_assistant(chat.history)))
@@ -269,7 +276,8 @@ async def chat_message_stream(chat: ChatMessage, request: Request, ctx: Optional
     if not await _plan_ok(bot, bool(chat.is_demo), ctx, db):
         return single("Subscription Expired: This bot is currently inactive. Please renew your subscription.")
 
-    conv, replies, _ = await _pre_ai(chat, bot, db)
+    testing = bool(chat.is_demo) and _demo_allowed(bot, ctx)  # the business trying it: no reply counted
+    conv, replies, _ = await _pre_ai(chat, bot, db, (await plans.includes(db, bot.bot_id)).live_chat)
     if replies is not None:
         await _save_turn(conv.conversation_id, chat.message, "\n".join(replies))
 
@@ -278,6 +286,9 @@ async def chat_message_stream(chat: ChatMessage, request: Request, ctx: Optional
                 yield _sse(line)
             yield "data: [DONE]\n\n"
         return StreamingResponse(flow_gen(), media_type="text/event-stream")
+    if not testing and not await plans.can_reply(db, bot.bot_id):
+        await _save_turn(conv.conversation_id, chat.message, plans.REPLIES_USED_UP)
+        return single(plans.REPLIES_USED_UP)
 
     system, messages = await _brief(bot, conv, chat)
     conversation_id = conv.conversation_id
@@ -305,6 +316,8 @@ async def chat_message_stream(chat: ChatMessage, request: Request, ctx: Optional
             parts.append(chunk)
             yield _sse(chunk)
         yield "data: [DONE]\n\n"
+        if not testing:
+            fire_and_forget(plans.count_reply(bot.bot_id))
         try:
             await _save_turn(conversation_id, chat.message, "".join(parts))
         except Exception as e:
@@ -378,6 +391,11 @@ async def ai_custom_prompt(data: AIPromptRequest, request: Request, ctx: Optiona
     allowed = {str(d.get(k) or "").strip() for d in _flow_nodes(bot, "aiPrompt") for k in ("prompt", "systemPrompt")} - {""}
     if data.prompt.strip() not in allowed:
         raise HTTPException(status_code=403, detail="This prompt isn't part of the assistant's flow")
+    testing = _demo_allowed(bot, ctx)
+    if not testing and not await plans.can_reply(db, bot.bot_id):
+        return {"answer": plans.REPLIES_USED_UP}
+    if not testing:
+        fire_and_forget(plans.count_reply(bot.bot_id))
     try:
         answer = await asyncio.to_thread(
             generate_ai_response, "Execute the following specific prompt based on the context.",
@@ -480,6 +498,8 @@ async def manual_handoff(request: ManualHandoffRequest, http: Request, db: Async
     """The widget's 'talk to a person' button."""
     _limit(http, "handoff", request.bot_id, 6)
     bot = await _load_bot(request.bot_id, db)
+    if not (await plans.includes(db, bot.bot_id)).live_chat:
+        raise HTTPException(status_code=403, detail="Live chat isn't on for this assistant")
     conv = await _conversation(bot, request.visitor_session_id, db)
     if not conv:
         conv = Conversation(bot_id=bot.bot_id, visitor_session_id=request.visitor_session_id)

@@ -9,6 +9,7 @@ import { BalanceCard, useBalance } from "@/components/Balance";
 import { Button, Card, Dialog, EmptyState, SectionHeader, Segmented, Select, Skeleton, Status, ToastProvider, cn, useToast } from "@/components/ui";
 import { apiJson, currentUserId } from "@/lib/api";
 import { RANK, TIERS, YEARLY_PAYS_FOR, inr, perMonth, priceOf, type Period, type Tier, type TierId } from "@/lib/plans";
+import { useLimits } from "@/lib/plan";
 import { payAndVerify } from "@/lib/razorpay";
 import { formatNumber } from "@/lib/voice/api";
 import { RatesTable } from "@/components/voice/RatesTable";
@@ -55,6 +56,7 @@ function Billing() {
     const [stopping, setStopping] = useState<Assistant | null>(null);
     const [busy, setBusy] = useState(false);
     const wallet = useBalance();
+    const limits = useLimits();
 
     const load = useCallback(async () => {
         try {
@@ -187,7 +189,7 @@ function Billing() {
                             <ul>
                                 {overview.assistants.map((a) => (
                                     <AssistantRow key={a.bot_id} a={a} name={names(a)} onPick={() => pick(a)} onStop={() => setStopping(a)}
-                                                  onCard={() => updateCard(a)} />
+                                                  onCard={() => updateCard(a)} usage={limits?.assistant_plans?.[a.bot_id]} />
                                 ))}
                             </ul>
                         )}
@@ -279,7 +281,8 @@ function Billing() {
                                         <th className="font-normal px-3 py-3">Item</th>
                                         <th className="font-normal px-3 py-3">Assistant</th>
                                         <th className="font-normal px-3 py-3 text-right">Amount</th>
-                                        <th className="font-normal px-5 py-3 text-right">Payment ID</th>
+                                        <th className="font-normal px-3 py-3 text-right">Payment ID</th>
+                                        <th className="font-normal px-5 py-3 text-right"><span className="sr-only">Receipt</span></th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -291,7 +294,11 @@ function Billing() {
                                                 {overview?.assistants.find((a) => a.bot_id === p.bot_id)?.name ?? "–"}
                                             </td>
                                             <td className="px-3 py-3 text-right tabular-nums">{inr(p.amount)}</td>
-                                            <td className="hidden sm:table-cell px-5 py-3 text-right text-xs text-stone-400 font-mono">{p.transaction_id}</td>
+                                            <td className="hidden sm:table-cell px-3 py-3 text-right text-xs text-stone-400 font-mono">{p.transaction_id}</td>
+                                            <td className="px-5 py-3 text-right">
+                                                <Link href={`/dashboard/billing/receipt/${encodeURIComponent(p.transaction_id)}`}
+                                                      className="text-[13px] text-plum hover:underline underline-offset-4">Receipt</Link>
+                                            </td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -351,11 +358,14 @@ function Billing() {
     );
 }
 
-function AssistantRow({ a, name, onPick, onStop, onCard }: {
+function AssistantRow({ a, name, onPick, onStop, onCard, usage }: {
     a: Assistant; name: string; onPick: () => void; onStop: () => void; onCard: () => void;
+    usage?: { replies: number | null; replies_used: number };
 }) {
     const c = a.current;
     const soon = c && !c.renews && daysLeft(c.ends) <= 7;
+    const allowed = c ? usage?.replies ?? null : null;  // AI replies its plan includes this month (earlier plans: no limit)
+    const used = usage?.replies_used ?? 0;
     return (
         <li className="flex flex-col gap-2 sm:grid sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_auto] sm:gap-x-5 sm:items-center px-5 py-3.5 border-t border-line first:border-t-0">
             <div className="min-w-0">
@@ -369,6 +379,12 @@ function AssistantRow({ a, name, onPick, onStop, onCard }: {
                     : c.state === "renews" ? <Status tone="good">Renews on {day(c.ends)}</Status>
                     : <Status tone={soon ? "warn" : "good"}>Ends on {day(c.ends)}</Status>}
                 {a.next && <p className="text-xs text-stone-500 mt-1">Then {a.next.label} from {day(a.next.starts ?? a.next.ends)}</p>}
+                {allowed !== null && (
+                    <p className={cn("text-xs mt-1 tabular-nums", used >= allowed ? "text-signal" : used >= allowed * 0.8 ? "text-amber-700" : "text-stone-500")}>
+                        {used >= allowed ? `All ${allowed.toLocaleString("en-IN")} AI replies used this month: it answers again on the 1st, or at once with a bigger plan`
+                            : `${used.toLocaleString("en-IN")} of ${allowed.toLocaleString("en-IN")} AI replies this month`}
+                    </p>
+                )}
             </div>
             <div className="flex flex-wrap gap-2 sm:justify-end">
                 {c && (c.state === "payment_failed" || c.state === "halted") && <Button size="sm" variant="primary" onClick={onCard}>Update payment method</Button>}

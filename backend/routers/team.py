@@ -10,6 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+import plans
 from auth import AuthContext, get_ctx, require_owner
 from database import get_db
 from backend.models import TeamMember, User
@@ -65,6 +66,7 @@ async def invite(req: InviteRequest, ctx: AuthContext = Depends(require_owner), 
     count = (await db.execute(select(func.count()).select_from(TeamMember).where(TeamMember.owner_id == ctx.owner_id))).scalar_one()
     if count >= 25:
         raise HTTPException(status_code=400, detail="Teams can have up to 25 people")
+    await plans.require_seat(db, ctx.owner_id)  # Starter 1 seat, Growth 3, Pro 5 (the owner's included)
 
     user = (await db.execute(select(User).where(func.lower(User.email) == email))).scalars().first()
     token = secrets.token_urlsafe(24)

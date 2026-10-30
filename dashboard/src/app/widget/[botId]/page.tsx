@@ -567,7 +567,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                             {mode === "human" ? "Chatting with our team" : (visual.subtitle || "Usually replies instantly")}
                         </span>
                     </div>
-                    {visual.show_human_toggle !== false && (
+                    {visual.show_human_toggle !== false && botConfig?.live_chat !== false && (
                         <div role="radiogroup" aria-label="Chat with" className="flex items-center p-0.5 rounded-full border border-current/30 bg-current/10 shrink-0">
                             {(["ai", "human"] as const).map((m) => (
                                 <button key={m} type="button" role="radio" aria-checked={mode === m} onClick={() => handleModeToggle(m)}

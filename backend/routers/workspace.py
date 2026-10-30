@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 import assist
+import plans
 from auth import AuthContext, get_ctx, get_owned_bot, require_manager
 from database import get_db
 from backend.models import Bot, KnowledgeGap, SavedReply, WorkspaceSettings
@@ -29,11 +30,13 @@ async def _settings(owner_id: str, db: AsyncSession) -> WorkspaceSettings:
     return s or WorkspaceSettings(user_id=owner_id)
 
 
-def _settings_json(s: WorkspaceSettings) -> dict:
+def _settings_json(s: WorkspaceSettings, hours_included: bool = True) -> dict:
+    """The saved settings, and whether the hours apply now (they come with Pro: without it, always open)."""
     hours = assist.hours_config(s)
-    open_now = assist.is_open(hours)
-    return {"business_hours": hours, "escalate_upset": s.escalate_upset is not False,
-            "open_now": open_now, "next_open": None if open_now else assist.next_open(hours)}
+    applied = {**hours, "enabled": hours["enabled"] and hours_included}
+    open_now = assist.is_open(applied)
+    return {"business_hours": hours, "escalate_upset": s.escalate_upset is not False, "hours_included": hours_included,
+            "open_now": open_now, "next_open": None if open_now else assist.next_open(applied)}
 
 
 class DayHours(BaseModel):
@@ -56,7 +59,7 @@ class SettingsIn(BaseModel):
 
 @router.get("/workspace/settings")
 async def get_settings(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depends(get_db)):
-    return _settings_json(await _settings(ctx.owner_id, db))
+    return _settings_json(await _settings(ctx.owner_id, db), (await plans.workspace_includes(db, ctx.owner_id)).business_hours)
 
 
 @router.put("/workspace/settings")
@@ -75,12 +78,14 @@ async def update_settings(data: SettingsIn, ctx: AuthContext = Depends(require_m
     if data.business_hours.enabled and not any(d["open"] for d in days.values()):
         raise HTTPException(status_code=400, detail="Open at least one day a week")
     s = await _settings(ctx.owner_id, db)
+    if data.business_hours.enabled and not (s.business_hours or {}).get("enabled"):
+        await plans.require_workspace_feature(db, ctx.owner_id, "business_hours")  # Pro
     s.business_hours = {"enabled": data.business_hours.enabled, "days": days, "holidays": holidays,
                         "away_message": data.business_hours.away_message.strip() or assist.DEFAULT_HOURS["away_message"]}
     s.escalate_upset = data.escalate_upset
     db.add(s)
     await db.commit()
-    return _settings_json(s)
+    return _settings_json(s, (await plans.workspace_includes(db, ctx.owner_id)).business_hours)
 
 
 # ─── Saved replies ────────────────────────────────────────────────

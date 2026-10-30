@@ -166,9 +166,17 @@ def next_open(hours: dict, now: Optional[datetime] = None) -> str:
 
 
 async def workspace(owner_id: str) -> WorkspaceSettings:
+    """The workspace's settings as they apply now: business hours only on a plan with them (Pro, plans.py); without
+    it the business counts as always open, and the hours stay saved for when it has one."""
+    import plans
     async with async_session() as db:
         s = (await db.execute(select(WorkspaceSettings).where(WorkspaceSettings.user_id == owner_id))).scalars().first()
-    return s or WorkspaceSettings(user_id=owner_id)
+        hours_on = (s is not None and (s.business_hours or {}).get("enabled")
+                    and (await plans.workspace_includes(db, owner_id)).business_hours)
+    s = s or WorkspaceSettings(user_id=owner_id)
+    if (s.business_hours or {}).get("enabled") and not hours_on:
+        s.business_hours = {**s.business_hours, "enabled": False}  # this copy only: the session is closed, nothing saved
+    return s
 
 
 async def away_reply(owner_id: str) -> Optional[str]:

@@ -83,9 +83,17 @@ only on the owner's machines): @.claude/private-notes.md
 
 ## Product rules
 
-- Plans (`plans.py`): free = 1 assistant + 1 website, no custom domain, voice calls paid with credits (10 free);
-  integrations and custom domains need paid. A workspace is paid while any of its assistants has an active
-  subscription (or one the owner paid for). `ENFORCE_PLAN_LIMITS` is off in tests.
+- Plans (`plans.py`): free = 1 assistant + 1 website, no custom domain, voice calls paid with credits (10 free). A
+  workspace is paid while any of its assistants has an active subscription (or one the owner paid for). What each plan
+  includes (`Includes`, BILLING_PLAN.md phase 2): Starter = website chat, 2,000 AI replies a month, 1 seat; Growth +
+  WhatsApp, live chat, email alerts and follow-ups, 10,000 replies, 3 seats; Pro + 300 call credits a month, Schedule,
+  campaigns, webhooks/LeadSquared/Sheets, business hours, transfers and "Pick up the call", 25,000 replies, 5 seats;
+  earlier 1/6/12 Month plans everything with no reply limit. Per assistant (`includes`); seats, integrations and business
+  hours by the workspace's best plan (`workspace_includes`). Checked where things run (WhatsApp answering, the widget's
+  Person switch and call-back offer, the dialler, call setup, alerts and webhooks, `assist.workspace`) and on save
+  (402 "X comes with the Y plan"; `PlanNeeded` in the dashboard). AI replies (chat, the flow's AI step, WhatsApp) count
+  per assistant per calendar month in `ai_reply_usage`; the business's own tries don't. `ENFORCE_PLAN_LIMITS` is off
+  in tests (then everything is included); `tests/test_plan_features.py` turns it on.
 - Billing (BILLING_PLAN.md, `subscriptions.py`, `payments.py`): Starter ₹999, Growth ₹2,499, Pro ₹6,999 a month per
   assistant, yearly at 10 months' price (the website's `dashboard/src/lib/plans.ts`; a test keeps the two equal). Monthly
   = a Razorpay subscription that renews itself (first month charged at checkout; `subscription.*` webhooks extend the plan
@@ -96,8 +104,10 @@ only on the owner's machines): @.claude/private-notes.md
   everything until they end. `payments.maintenance` (scheduler, every 10 min): a renewing plan at its end asks Razorpay
   where its subscription is (so a customer charged while the webhook was missing keeps the assistant), reminders 7, 3 and
   1 day before a plan that doesn't renew ends, the ended email, Razorpay subscriptions still to cancel. If Razorpay
-  won't make a subscription (feature off, or any refusal), that month is a single payment. Tests: `tests/test_billing.py`;
-  browser: `dev-scripts/ui-checks/billing_ui.mjs` with `billing_seed.py`.
+  won't make a subscription (feature off, or any refusal), that month is a single payment. Each payment has a receipt
+  (`/api/payments/receipt/{id}`, `/dashboard/billing/receipt/[id]`): not a tax invoice until the business has a GSTIN.
+  Tests: `tests/test_billing.py`, `tests/test_plan_features.py`; browser: `dev-scripts/ui-checks/billing_ui.mjs` with
+  `billing_seed.py`, `plan_features_ui.mjs` with `plan_features_seed.py`.
 - Workspaces: owner plus team members (admin/agent); requests act on `ctx.owner_id`; the `X-Workspace` header picks one.
 - Encrypted secrets (customer AI keys, phone account tokens): `secretbox` MultiFernet over ENCRYPTION_KEY
   (+ JWT_SECRET, + `ENCRYPTION_OLD_KEYS` decrypt-only); columns store `enc:v1:...`.

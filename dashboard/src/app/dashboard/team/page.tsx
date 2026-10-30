@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Copy } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
-import { Button, Card, Dialog, EmptyState, Input, SectionHeader, Select, Skeleton, Status, ToastProvider, useToast } from "@/components/ui";
+import { Button, Card, Dialog, EmptyState, Input, Notice, SectionHeader, Select, Skeleton, Status, ToastProvider, useToast } from "@/components/ui";
+import { useLimits } from "@/lib/plan";
 import { apiJson, currentUserId } from "@/lib/api";
 import { apiSave, useApi } from "@/lib/useApi";
 
@@ -22,6 +24,10 @@ function Team() {
     const router = useRouter();
     const toast = useToast();
     const members = useApi<Member[]>("/api/team/members");
+    const limits = useLimits();
+    const seats = limits?.includes?.seats;
+    const used = limits?.used.seats ?? 1;
+    const full = seats !== undefined && used >= seats;
     const [email, setEmail] = useState("");
     const [role, setRole] = useState<"admin" | "agent">("agent");
     const [busy, setBusy] = useState(false);
@@ -79,7 +85,16 @@ function Team() {
                 </dl>
 
                 <section className="mt-8">
-                    <SectionHeader title="Invite someone" />
+                    <SectionHeader title="Invite someone"
+                                   description={seats !== undefined ? `${used} of ${seats} team ${seats === 1 ? "seat" : "seats"} used, yours included.` : undefined} />
+                    {full && (
+                        <Notice title="Your plan's seats are all used"
+                                action={seats < 5 ? <Link href="/dashboard/billing" className="inline-flex items-center h-8 px-3 rounded-md bg-plum text-white text-[13px] font-medium hover:bg-plum-hover">Choose a plan</Link> : undefined}>
+                            {seats < 3 ? "Growth includes 3 seats and Pro 5: choose one for an assistant on the Billing page."
+                                : seats < 5 ? "Pro includes 5 seats: choose it for an assistant on the Billing page."
+                                : "For more, write to support.nimmi@gmail.com."}
+                        </Notice>
+                    )}
                     <Card className="p-5">
                         <form onSubmit={invite} className="flex flex-col sm:flex-row gap-3">
                             <Input type="email" required placeholder="name@company.com" aria-label="Email" value={email} onChange={(e) => setEmail(e.target.value)} />

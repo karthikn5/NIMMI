@@ -126,13 +126,15 @@ class ConnectIn(BaseModel):
 @router.post("/numbers")
 async def connect_number(data: ConnectIn, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
     """Connect a number from the business's own Meta app (until one-click connect, through Meta, is available)."""
-    await plans.require(db, ctx.owner_id, "integrations")
+    await plans.require_workspace_feature(db, ctx.owner_id, "whatsapp")
     rate_limit(f"wa-connect:{ctx.owner_id}", 10, 600)
     pid, waba = data.phone_number_id.strip(), data.waba_id.strip()
     if not pid.isdigit() or (waba and not waba.isdigit()):
         raise HTTPException(status_code=400, detail="The phone number ID and WhatsApp account ID are long numbers from "
                                                     "API Setup in your Meta app.")
     bot_id = await _own_bot(db, data.bot_id, ctx)
+    if bot_id:
+        await plans.require_feature(db, bot_id, "whatsapp")
     n = (await db.execute(select(WhatsAppNumber).where(WhatsAppNumber.phone_number_id == pid))).scalars().first()
     if n is not None and n.user_id != ctx.owner_id and n.status != "disconnected":
         raise HTTPException(status_code=409, detail="That WhatsApp number is already connected to another workspace")
@@ -175,6 +177,8 @@ async def update_number(number_id: str, data: NumberUpdate, ctx: AuthContext = D
     n = await _number(db, number_id, ctx)
     if data.bot_id is not None:
         n.bot_id = await _own_bot(db, data.bot_id, ctx)
+        if n.bot_id:
+            await plans.require_feature(db, n.bot_id, "whatsapp")
     if data.ai_enabled is not None:
         n.ai_enabled = data.ai_enabled
     if data.settings is not None:
@@ -516,7 +520,7 @@ async def list_files(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Dep
 async def upload_file(file: UploadFile = File(...), name: str = Form(""), when_to_send: str = Form(""),
                       caption: str = Form(""), bot_id: str = Form(""), ctx: AuthContext = Depends(require_manager),
                       db: AsyncSession = Depends(get_db)):
-    await plans.require(db, ctx.owner_id, "integrations")
+    await plans.require_workspace_feature(db, ctx.owner_id, "whatsapp")
     rate_limit(f"wa-file:{ctx.owner_id}", 30, 600)
     filename = os.path.basename(file.filename or "file")[:240]
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
@@ -599,7 +603,7 @@ async def get_confirmations(ctx: AuthContext = Depends(require_manager), db: Asy
 @router.put("/confirmations")
 async def set_confirmations(data: ConfirmationsIn, ctx: AuthContext = Depends(require_manager),
                             db: AsyncSession = Depends(get_db)):
-    await plans.require(db, ctx.owner_id, "integrations")
+    await plans.require_workspace_feature(db, ctx.owner_id, "whatsapp")
     template = data.template.strip()
     if data.enabled and not template:
         raise HTTPException(status_code=400, detail="Enter the name of your approved WhatsApp template")

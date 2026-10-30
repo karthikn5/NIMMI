@@ -95,8 +95,14 @@ class IntegrationUpdate(BaseModel):
 
 @router.put("")
 async def update_settings(data: IntegrationUpdate, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
-    await plans.require(db, ctx.owner_id, "integrations")
+    await plans.require_workspace_feature(db, ctx.owner_id, "email_alerts")  # alerts and follow-ups: Growth
     s, owner = await _load(ctx.owner_id, db)
+    adding = ((data.webhook_url.strip() and data.webhook_url.strip() != (s.webhook_url or ""))
+              or (data.leadsquared_enabled and not s.leadsquared_enabled))
+    if adding:  # webhooks and LeadSquared: Pro (what's already set stays, and stops sending without Pro)
+        await plans.require_workspace_feature(db, ctx.owner_id, "integrations")
+    if data.whatsapp_enabled and not s.whatsapp_enabled:
+        await plans.require_workspace_feature(db, ctx.owner_id, "whatsapp")
     if data.webhook_url:
         try:
             await assert_public_url(data.webhook_url)
@@ -162,7 +168,7 @@ class TestRequest(BaseModel):
 
 @router.post("/test")
 async def send_test(req: TestRequest, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
-    await plans.require(db, ctx.owner_id, "integrations")
+    await plans.require_workspace_feature(db, ctx.owner_id, "email_alerts")
     s, owner = await _load(ctx.owner_id, db)
     sample = {"name": "Test Lead", "phone": "+919876543210", "email": "test@example.com", "bot": "Test assistant",
               "summary": "This is a test from Nimmi AI.", "fields": {"Name": "Test Lead"}, "source": "test"}

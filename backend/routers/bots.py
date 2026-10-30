@@ -207,6 +207,7 @@ async def get_bot_config(bot_id: str, ctx: Optional[AuthContext] = Depends(get_o
     is_member = ctx is not None and (ctx.owner_id == bot.user_id or local_dev())
     callbacks = (await db.execute(select(CallbackSettings.enabled).where(CallbackSettings.user_id == bot.user_id))).scalar_one_or_none()
     voice_on = (await db.execute(select(VoiceAgent.enabled).where(VoiceAgent.bot_id == bot.bot_id))).scalar_one_or_none()
+    included = plans.includes_of(sub) if plans.enforced() else plans.EARLIER
 
     config = {
         "bot_id": bot.bot_id,
@@ -214,8 +215,10 @@ async def get_bot_config(bot_id: str, ctx: Optional[AuthContext] = Depends(get_o
         "visual_config": bot.visual_config,
         "flow_data": bot.flow_data,
         "is_active": bot.is_active,
-        # The widget offers "call me back" only when the business has callbacks and voice turned on.
-        "callbacks_enabled": bool(callbacks and voice_on and sub is not None),
+        # The widget offers "call me back" only when the business has callbacks and voice turned on, on a plan with
+        # call-backs (Pro); and "Talk to a person" only on a plan with live chat (plans.py).
+        "callbacks_enabled": bool(callbacks and voice_on and sub is not None and included.schedule),
+        "live_chat": included.live_chat,
         "is_exported": (sub is not None) or bot.export_unlocked,
         "subscription": {
             "active": sub is not None,

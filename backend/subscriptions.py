@@ -243,6 +243,9 @@ async def apply_purchase(db: AsyncSession, notes: dict, *, payment_id: Optional[
             raise
         return Applied(made, new=False)
     logger.info(f"Bot {bot_id}: {label(tier, period)} ({action}) from {start:%Y-%m-%d} until {until:%Y-%m-%d}")
+    if start <= now:  # a plan with call credits (Pro) brings them now
+        from voice.metering import refresh_allowance
+        await refresh_allowance(db, user_id)
     return Applied(row, stop)
 
 

@@ -3,6 +3,7 @@
 import { Suspense } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Button, EmptyState, Notice, Segmented, Select, Skeleton } from "@/components/ui";
+import { PlanNeeded, useLimits } from "@/lib/plan";
 import { useApi } from "@/lib/useApi";
 import type { ScheduleSettingsView, VoiceAgentSummary } from "@/lib/voice/types";
 import { CallsPanel } from "@/components/voice/schedule/Calls";
@@ -37,6 +38,8 @@ function Schedule() {
     const setup = useApi<ScheduleSettingsView>(tab === "overview" && settingsBot ? `/api/voice/schedule/settings/${settingsBot}` : null);
     const off = tab === "overview" && setup.data && !setup.data.settings.callbacks.enabled && !setup.data.settings.follow_ups.enabled
         && !setup.data.settings.meetings.enabled;
+    const limits = useLimits();
+    const proNeeded = settingsBot ? limits?.assistant_plans?.[settingsBot]?.schedule === false : limits?.includes?.schedule === false;
 
     const go = (changes: Record<string, string | null>) => {
         const next = new URLSearchParams(params.toString());
@@ -66,6 +69,11 @@ function Schedule() {
                     </Select>
                 )}
             </div>
+            {proNeeded && (
+                <PlanNeeded feature="schedule" botId={settingsBot || undefined} className="mb-5">
+                    {many ? "This assistant's" : "Your assistant's"} call-backs, follow-up calls and meeting calls come with Pro. Choose it on the Billing page.
+                </PlanNeeded>
+            )}
 
             <div className="mb-6 overflow-x-auto">
                 <Segmented label="Schedule sections" value={tab} options={TABS}

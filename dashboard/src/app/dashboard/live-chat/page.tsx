@@ -10,6 +10,7 @@ import { apiJson, currentUserId, getToken } from "@/lib/api";
 import { liveSocket, refreshWaiting } from "@/lib/liveChat";
 import { useApi } from "@/lib/useApi";
 import { formatWhen } from "@/lib/voice/api";
+import { PlanNeeded, useLimits } from "@/lib/plan";
 
 type Lead = { score: number; label: "hot" | "warm" | "cold"; reasons: string[] };
 type Handoff = {
@@ -46,6 +47,7 @@ export default function LiveChatPage() {
 function LiveChat() {
     const router = useRouter();
     const toast = useToast();
+    const limits = useLimits();
     const [handoffs, setHandoffs] = useState<Handoff[] | null>(null);
     const [selected, setSelected] = useState<Handoff | null>(null);
     const [messages, setMessages] = useState<Msg[]>([]);
@@ -213,12 +215,17 @@ function LiveChat() {
                     <div className="flex items-center gap-3">
                         {ws && (
                             <Status tone={ws.open_now ? "good" : "warn"}>
-                                {ws.business_hours.enabled ? (ws.open_now ? "Open now" : `Closed, back ${ws.next_open}`) : "Always open"}
+                                {ws.business_hours.enabled && ws.hours_included !== false ? (ws.open_now ? "Open now" : `Closed, back ${ws.next_open}`) : "Always open"}
                             </Status>
                         )}
                         <Button size="sm" onClick={() => setShowSettings(true)}><Settings size={14} /> Settings</Button>
                     </div>
                 </div>
+                {limits?.includes && !limits.includes.live_chat && (
+                    <PlanNeeded feature="live_chat" className="mb-4">
+                        Customers can ask for a person on assistants with Growth or Pro. Choose one for an assistant on the Billing page.
+                    </PlanNeeded>
+                )}
 
                 <div className="flex-1 min-h-[560px] grid md:grid-cols-[300px_minmax(0,1fr)] bg-white border border-line rounded-lg overflow-hidden">
                     {/* Inbox */}

@@ -29,11 +29,11 @@ import ai
 import assist
 import behaviour
 import brain
+import plans
 from backend.models import Conversation, Message, WhatsAppChat, WhatsAppFile, WhatsAppMessage, WhatsAppNumber
 from database import async_session
 from notify.events import fire_and_forget, handoff_requested
 from realtime import notify_owner
-from subscriptions import active_subscription
 from utils import FlowEngine, generate_ai_response
 from whatsapp import chats, graph, memory, numbers, outbound, settings, understand
 
@@ -163,13 +163,14 @@ async def _answer(chat_id: str) -> None:
         await db.commit()
         if conv.handoff_status == "human":
             return  # a team member has it
-        paid = await active_subscription(bot.bot_id, db) is not None
+        paid = (await plans.includes(db, bot.bot_id)).whatsapp  # Growth and Pro (plans.py)
+        replies_left = await plans.can_reply(db, bot.bot_id)
     cfg = settings.clean(number.settings)
     pending = [w for w, _ in rows]
     last_wamid = pending[-1].wamid
     started = time.monotonic()
     await (graph.typing if cfg["typing"] else graph.mark_read)(number.phone_number_id, number.access_token, last_wamid)
-    if not paid:  # same rule as the website widget: it answers only while its plan is active
+    if not paid:  # like the website widget, it answers only on a plan, and WhatsApp needs Growth or Pro
         await outbound.send_text(number, chat, NOT_AVAILABLE, sent_by="ai")
         await _done(chat.id, pending)
         return
@@ -192,10 +193,15 @@ async def _answer(chat_id: str) -> None:
         await _done(chat.id, pending)
         return
 
+    if not replies_left:  # its AI replies for the month are used up (plans.py): the team answers from the Inbox
+        await outbound.send_text(number, chat, plans.REPLIES_USED_UP, sent_by="ai")
+        await _done(chat.id, pending)
+        return
     reply, last_asked = await _write(number, chat, conv, bot, cfg, rows, turn)
     if await _newer(chat.id, pending) and not _late(pending):
         return  # they wrote again: the next answer covers everything they said
     await _deliver(number, chat, cfg, reply, last_wamid, started)
+    fire_and_forget(plans.count_reply(bot.bot_id))
     await _done(chat.id, pending)
     if reply.handoff:
         await _flag_handoff(chat, conv, bot, said)

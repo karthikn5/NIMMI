@@ -15,6 +15,7 @@ import {
 } from "@/components/ui";
 import { Suspense, useRef } from "react";
 import { apiUrl } from "@/lib/api";
+import { PlanNeeded, useLimits } from "@/lib/plan";
 import { useApi, useDraft } from "@/lib/useApi";
 import { DIRECTIONS, LANGUAGES, directionOf, getDisclosureText } from "@/lib/voice/api";
 import type { AgentDetails, AgentDirection, Voice, VoiceAgentConfig, VoiceAgentSummary, VoiceModels, VoiceScript } from "@/lib/voice/types";
@@ -35,6 +36,8 @@ function AgentSettings() {
     const voices = useApi<Voice[]>("/api/voice/voices");
     const models = useApi<VoiceModels>("/api/voice/models");
     const details = useApi<AgentDetails>(`/api/voice/agents/${botId}/details?direction=${direction}`);
+    const limits = useLimits();
+    const transfersLocked = limits?.assistant_plans?.[botId]?.transfers === false;
     const { draft, setDraft, dirty, saving, save, discard } = useDraft(config, `/api/voice/agents/${botId}?direction=${direction}`);
     const player = useRef<HTMLAudioElement | null>(null);
     const number = listed.data?.find((a) => a.bot_id === botId)?.phone_number ?? null;
@@ -266,6 +269,12 @@ function AgentSettings() {
                         </SettingRow>
                     </Card>
 
+                    {transfersLocked && (
+                        <PlanNeeded feature="transfers" botId={botId} className="mb-0">
+                            Ringing your team and transferring calls come with Pro. Until then, when a caller asks for a person, the
+                            assistant offers to take their details for your team.
+                        </PlanNeeded>
+                    )}
                     <Card className="px-5 py-1">
                         <SettingRow label="Ring my team in the dashboard" hint="When a caller asks for a person, or needs one, everyone available in the dashboard sees it and can pick up the call: in the browser on Twilio numbers, or on their phone. The assistant keeps the caller company meanwhile.">
                             <Switch checked={draft.team_handoff} onChange={(v) => set("team_handoff", v)} label="Ring my team in the dashboard" />

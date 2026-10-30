@@ -400,6 +400,40 @@ async def get_payment_history(ctx: AuthContext = Depends(require_manager), db: A
     return history
 
 
+SELLER = {"name": "Nimmi AI", "website": "nimmiai.in", "email": os.getenv("BILLING_EMAIL", "support.nimmi@gmail.com")}
+
+
+@router.get("/receipt/{payment_ref}")
+async def receipt(payment_ref: str, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    """A receipt for one payment in the history (a plan, or call credits), by the ID the history shows. A receipt, not
+    a tax invoice: the business isn't registered for GST yet."""
+    ref = payment_ref.strip()[:64]
+
+    def mine(model):
+        return select(model).where(model.user_id == ctx.owner_id, model.razorpay_payment_id == ref)
+    tx = (await db.execute(mine(Transaction).where(Transaction.status == "success"))).scalars().first()
+    if tx is None and len(ref) == 12:  # a payment with no Razorpay ID shows the start of its own
+        tx = (await db.execute(select(Transaction).where(Transaction.user_id == ctx.owner_id, Transaction.status == "success",
+                                                         Transaction.id.startswith(ref)))).scalars().first()
+    topup = None if tx is not None else (await db.execute(mine(VoiceTopup).where(VoiceTopup.status == "paid"))).scalars().first()
+    if tx is None and topup is None:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    owner = await db.get(User, ctx.owner_id)
+    if tx is not None:
+        bot = await db.get(Bot, tx.bot_id) if tx.bot_id else None
+        item = tx.plan_name or (await db.execute(select(Subscription.plan_name).where(
+            Subscription.razorpay_order_id == tx.razorpay_order_id))).scalar() or "Plan payment"
+        row_id, amount, paid_at, assistant = tx.id, tx.amount, tx.created_at, bot.bot_name if bot else None
+    else:
+        row_id, amount, paid_at, assistant = topup.id, topup.amount, topup.created_at, None
+        item = f"{topup.minutes:,} call credits"
+    local = naive(paid_at).replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=5, minutes=30)))  # India
+    return {"number": f"NIM-{local:%Y%m%d}-{row_id[:6].upper()}", "date": naive(paid_at).isoformat(), "item": item,
+            "assistant": assistant, "amount": amount, "currency": "INR", "payment_id": ref,
+            "billed_to": {"name": (owner.name or "") if owner else "", "email": owner.email if owner else ""},
+            "seller": SELLER}
+
+
 # ─── Razorpay's webhook ───────────────────────────────────────────
 @router.post("/webhook")
 async def razorpay_webhook(request: Request, db: AsyncSession = Depends(get_db)):

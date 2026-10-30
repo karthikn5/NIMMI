@@ -91,6 +91,8 @@ async def lead_captured(conversation_id: str) -> None:
             return
         owner = (await db.execute(select(User).where(User.id == bot.user_id))).scalars().first()
         settings = await _settings(db, bot.user_id)
+        import plans  # what the assistant's plan includes, and the workspace's best (integrations)
+        included, shared = await plans.includes(db, bot.bot_id), await plans.workspace_includes(db, bot.user_id)
     contact = extract_contact(conv.captured_data)
     if not (contact.get("phone") or contact.get("email")):
         return  # not a lead until there's a way to reach them
@@ -98,25 +100,25 @@ async def lead_captured(conversation_id: str) -> None:
     fields = dict(conv.captured_data)
     lead = {**contact, "bot": bot.bot_name, "fields": fields, "conversation_id": conversation_id, "source": "chat"}
 
-    if settings.email_alerts and owner:
+    if settings.email_alerts and owner and included.email_alerts:
         channel = "WhatsApp" if (conv.visitor_session_id or "").startswith("wa:") else "chat"
         await _once(bot.user_id, "lead_email", conversation_id, lambda: _email_team(
             recipients(settings, owner.email), f"New lead from {bot.bot_name}",
             f"{bot.bot_name} captured a new lead in {channel}.\n\n{_lines(fields)}\n\n"
             f"See all leads: {email.dashboard_url()}/dashboard/builder/{bot.bot_id}"))
 
-    # Automatic email to the customer (if they gave an email and the automation is on).
-    await automations.schedule(bot.user_id, "chat_lead", conversation_id, contact.get("email"), {
+    # Automatic email to the customer (if they gave an email and the automation is on, on a plan with follow-ups).
+    await (automations.schedule if included.email_alerts else _skip)(bot.user_id, "chat_lead", conversation_id, contact.get("email"), {
         **{automations.field_key(k): v for k, v in fields.items()}, "details": automations.details_text(fields),
         "name": contact.get("name"), "email": contact.get("email"), "phone": display(contact.get("phone")) if contact.get("phone") else "",
         "business": _business(settings, bot), "assistant": bot.bot_name, "summary": "",
     })
 
-    if settings.webhook_url:
+    if settings.webhook_url and shared.integrations:
         await _once(bot.user_id, "lead_webhook", conversation_id,
                     lambda: _none(channels.post_webhook(settings.webhook_url, settings.webhook_secret, "lead.captured", lead)))
 
-    if settings.leadsquared_enabled and settings.leadsquared_host:
+    if settings.leadsquared_enabled and settings.leadsquared_host and shared.integrations:
         await _once(bot.user_id, "lead_leadsquared", conversation_id,
                     lambda: _none(channels.push_leadsquared(settings.leadsquared_host, settings.leadsquared_access_key,
                                                             settings.leadsquared_secret_key, lead)))
@@ -133,6 +135,8 @@ async def call_completed(call_id: str) -> None:
         blocked = bool(call.caller_e164) and (await db.execute(
             select(DncEntry.id).where(DncEntry.user_id == call.user_id, DncEntry.e164 == call.caller_e164)
         )).scalar_one_or_none() is not None
+        import plans
+        included, shared = await plans.includes(db, call.bot_id), await plans.workspace_includes(db, call.user_id)
 
     if call.channel == "browser":
         return  # test calls don't notify anyone
@@ -148,7 +152,7 @@ async def call_completed(call_id: str) -> None:
 
     wants_call_email = call.outcome == "lead_captured" and settings.email_alerts or \
         call.outcome in ("transferred", "answered") and settings.alert_calls is not False
-    if owner and wants_call_email:
+    if owner and wants_call_email and included.email_alerts:
         await _once(call.user_id, "call_email", call.id, lambda: _email_team(
             recipients(settings, owner.email),
             f"{'New lead' if call.outcome == 'lead_captured' else 'Call'} from {display(call.caller_e164)} ({bot_name})",
@@ -163,20 +167,21 @@ async def call_completed(call_id: str) -> None:
         "business": _business(settings, bot), "assistant": bot_name, "summary": call.summary or "",
         "details": automations.details_text(captured),
     }
-    if not (call.successful and await automations.schedule(call.user_id, "goal_met", call.id, contact.get("email"), values)):
+    if included.email_alerts and not (
+            call.successful and await automations.schedule(call.user_id, "goal_met", call.id, contact.get("email"), values)):
         await automations.schedule(call.user_id, "call_lead", call.id, contact.get("email"), values)
 
-    if settings.webhook_url:
+    if settings.webhook_url and shared.integrations:
         await _once(call.user_id, "call_webhook", call.id,
                     lambda: _none(channels.post_webhook(settings.webhook_url, settings.webhook_secret, "call.completed", payload)))
 
-    if settings.leadsquared_enabled and settings.leadsquared_host and call.outcome == "lead_captured":
+    if settings.leadsquared_enabled and settings.leadsquared_host and call.outcome == "lead_captured" and shared.integrations:
         await _once(call.user_id, "call_leadsquared", call.id,
                     lambda: _none(channels.push_leadsquared(settings.leadsquared_host, settings.leadsquared_access_key,
                                                             settings.leadsquared_secret_key, payload)))
 
     if (settings.whatsapp_enabled and settings.whatsapp_template and call.caller_e164
-            and call.outcome == "lead_captured" and not blocked):
+            and call.outcome == "lead_captured" and not blocked and included.whatsapp):
         async def send_whatsapp():
             # The workspace's own WhatsApp number when connected, else the server's.
             from whatsapp.numbers import workspace_number
@@ -246,6 +251,11 @@ async def handoff_closed(conversation_id: str) -> None:
         "business": _business(settings, bot), "assistant": bot.bot_name, "summary": "",
         "details": automations.details_text(captured),
     })
+
+
+async def _skip(*_, **__) -> bool:
+    """In place of a follow-up email the plan doesn't include."""
+    return False
 
 
 async def _none(coro: Awaitable) -> None:

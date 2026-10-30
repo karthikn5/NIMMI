@@ -493,6 +493,9 @@ async def _after_call(db: AsyncSession, call_id: str) -> None:
     contact = await contact_of(db, call.bot_id, call.caller_e164)
     if contact is not None and call.lead in FOLLOWED_UP + ("not_interested",):
         rate(contact, call.lead, step.get("reason"))
+    import plans
+    if not (await plans.includes(db, call.bot_id)).schedule:
+        return  # call-backs, meetings and follow-ups come with Pro
     await _agreed_callback(db, call, settings, step)
     await _agreed_meeting(db, call, settings, step)
     if call.outcome == "transferred":  # a person has them now: nothing more from the assistant
@@ -765,6 +768,9 @@ async def dial_check(db: AsyncSession, job: CallbackJob, now: Optional[datetime]
     now = now or now_utc()
     if await on_dnc(db, job.user_id, job.e164):
         return DialCheck(stop=("cancelled", "Number is on the do-not-call list"))
+    import plans
+    if not (await plans.includes(db, job.bot_id)).schedule:
+        return DialCheck(stop=("cancelled", "Call-backs and follow-up calls come with the Pro plan"))
     settings = await settings_for(job.bot_id, db)
     tz, off = zone(settings), ()
     hours, days = settings["callbacks"]["hours"], DAYS
@@ -1247,6 +1253,10 @@ async def tools_for(owner_id: str, bot_id: str, e164: Optional[str], number_id: 
     being made now); None when the assistant has no functions switched on and nothing is waiting."""
     async with async_session() as db:
         settings = await settings_for(bot_id, db)
+        import plans
+        if not (await plans.includes(db, bot_id)).schedule:  # Pro: without it, no call-backs or meetings on calls
+            settings = {**settings, "callbacks": {**settings["callbacks"], "enabled": False},
+                        "meetings": {**settings["meetings"], "enabled": False}}
         waiting = await open_calls(db, bot_id, e164, settings, skip=skip) if e164 and not test else []
         if not (settings["callbacks"]["enabled"] or settings["meetings"]["enabled"] or waiting):
             return None

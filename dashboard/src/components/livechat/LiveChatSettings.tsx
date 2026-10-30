@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Plus, Trash2, X } from "lucide-react";
 import { Button, Input, Sheet, Skeleton, Status, Switch, Textarea, cn, useToast } from "@/components/ui";
+import { PlanNeeded } from "@/lib/plan";
 import { apiSave, useApi } from "@/lib/useApi";
 
 export type Day = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
@@ -12,7 +13,7 @@ export type Hours = {
     holidays: string[];
     away_message: string;
 };
-export type WorkspaceSettings = { business_hours: Hours; escalate_upset: boolean; open_now: boolean; next_open: string | null };
+export type WorkspaceSettings = { business_hours: Hours; escalate_upset: boolean; open_now: boolean; next_open: string | null; hours_included?: boolean };
 export type SavedReply = { id: string; title: string; body: string };
 
 const DAYS: [Day, string][] = [["mon", "Monday"], ["tue", "Tuesday"], ["wed", "Wednesday"], ["thu", "Thursday"],
@@ -49,6 +50,11 @@ export function LiveChatSettings({ open, onClose, onSaved, replies, onRepliesCha
             {!draft || !hours ? <div className="p-6"><Skeleton className="h-96" /></div> : (
                 <div className="divide-y divide-line">
                     <section className="px-6 py-5">
+                        {draft.hours_included === false && (
+                            <PlanNeeded feature="business_hours" className="mb-4">
+                                Your hours are kept, and apply once one of your assistants is on Pro. Until then you&apos;re always open.
+                            </PlanNeeded>
+                        )}
                         <div className="flex items-start justify-between gap-4">
                             <div>
                                 <h3 className="text-sm font-medium">Business hours</h3>

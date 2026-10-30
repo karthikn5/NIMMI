@@ -10,6 +10,7 @@ import {
 import { CampaignProgress, CAMPAIGN_STATUS } from "@/components/voice/CampaignBits";
 import { parseCsv } from "@/lib/csv";
 import { readXlsx, toCsv } from "@/lib/xlsx";
+import { PlanNeeded, useLimits } from "@/lib/plan";
 import { apiSave, useApi } from "@/lib/useApi";
 import { formatDate } from "@/lib/voice/api";
 import type { CampaignSummary, PhoneNumber, VoiceAgentSummary } from "@/lib/voice/types";
@@ -17,6 +18,7 @@ import type { CampaignSummary, PhoneNumber, VoiceAgentSummary } from "@/lib/voic
 export default function CampaignsPage() {
     const campaigns = useApi<CampaignSummary[]>("/api/voice/campaigns");
     const [creating, setCreating] = useState(false);
+    const limits = useLimits();
 
     return (
         <>
@@ -25,6 +27,7 @@ export default function CampaignsPage() {
                 description="Call a list of people who agreed to hear from you: follow-ups, reminders, renewals. Your assistant calls each person inside your calling hours and records what it finds out."
                 action={<Button size="sm" variant="primary" onClick={() => setCreating(true)}><Plus size={14} /> New campaign</Button>}
             />
+            {limits?.includes && !limits.includes.campaigns && <PlanNeeded feature="campaigns" />}
             <Card>
                 {campaigns.loading ? (
                     <div className="p-5 space-y-3"><Skeleton className="h-14" /><Skeleton className="h-14" /></div>

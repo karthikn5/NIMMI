@@ -185,7 +185,7 @@ class BroadcastIn(AudienceIn):
 
 @router.post("/broadcasts")
 async def send_broadcast(data: BroadcastIn, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
-    await plans.require(db, ctx.owner_id, "integrations")
+    await plans.require_workspace_feature(db, ctx.owner_id, "email_alerts")  # emails to customers: Growth
     if not (data.subject.strip() and data.body.strip()):
         raise HTTPException(status_code=400, detail="Add a subject and message")
     if not data.consent:

@@ -69,7 +69,7 @@ real automatic renewal, and the ₹1 price fixed at once (pushed in ce5bf33).
    replies, Pro's call credits; upgrade prompts where something is locked.
 3. Receipts (Razorpay invoices for subscription charges), GST once the business is registered.
 
-## 6. Status (30 Oct 2026, local, not committed)
+## 6. Status (31 Oct 2026, pushed in f914c8d)
 
 Phase 1 built:
 - Backend: `subscriptions.py` (catalog, `plans_of`, `plan_purchase`, `apply_purchase` once per payment,
@@ -90,4 +90,29 @@ Phase 1 built:
   change, phone width).
 - Not checked: a real Razorpay subscription (live keys only; test-mode keys would allow it without money).
 
-Phase 2 (what each plan includes, enforced) is next.
+Phase 2 built (31 Oct 2026): what each plan includes, enforced (`plans.py` `Includes`, the
+website's lists read as below; `ENFORCE_PLAN_LIMITS` is on in production, off in most tests).
+- Starter: website chat, 2,000 AI replies a month, 1 team seat. Growth: + WhatsApp (answering, connecting a number, its
+  Files and confirmations), live chat ("Talk to a person" in the widget, hand-overs when a visitor asks or is upset), email
+  alerts and follow-up emails to customers (lead and call alerts, automations, broadcasts), 10,000 replies, 3 seats. Pro:
+  + 300 call credits a month (at once on purchase, then each wallet cycle), Schedule (call-backs, follow-ups, meeting
+  calls, the widget's call-back offer), campaigns, webhooks, LeadSquared and Google Sheets, business hours (without Pro
+  the business is always open; saved hours are kept), transfers and "Pick up the call", 25,000 replies, 5 seats.
+- Earlier plans: everything, no reply limit, until they end. No plan: build and test (the widget answers only on a plan).
+- Phone calls work on every plan with credits. Lead scores show only inside Growth and Pro screens (live chat,
+  automations, campaigns, Schedule), so they follow those.
+- AI replies: website chat (also the flow's AI step) and WhatsApp count, per assistant per calendar month (India time,
+  `ai_reply_usage`); the business's own tries in the builder don't. Used up: a polite "our team will get back to you",
+  until the 1st or a bigger plan. Emails to the owner at 80% and when used up (once each).
+- What a workspace shares (seats, integrations, business hours) follows its best plan. Seats already filled stay.
+- A plan ending turns its features off where they run: WhatsApp stops answering, Schedule calls aren't dialled, a running
+  campaign pauses (resuming needs Pro), alerts and webhooks stop.
+- Dashboard: `PlanNeeded` notes (WhatsApp, Integrations, Live chat and its business hours, Schedule, Campaigns, the
+  agent's transfers), seats used on Team, AI replies used per assistant on Billing.
+- Checked: `tests/test_plan_features.py` (9); browser `plan_features_ui.mjs` 13 of 13 (the widget's Person switch, AI
+  replies on Billing, a receipt, the transfers note, a free workspace's notes).
+
+Phase 3 built: a receipt for each payment in the history (`GET /api/payments/receipt/{id}`, `/dashboard/billing/receipt/[id]`,
+print or save as PDF): Nimmi AI, nimmiai.in, the support email (BILLING_EMAIL), billed to the owner, the item, the
+assistant, the amount, the Razorpay payment ID; "a payment receipt, not a tax invoice. No GST was charged." A tax invoice
+(GSTIN, legal name, address, GST split) waits for the business's GST registration.

@@ -18,6 +18,7 @@ from backend.models import (Bot, CallbackJob, CallLog, Contact, Meeting, Notific
 from database import get_db
 from notify.events import fire_and_forget
 from phone import display
+import plans
 from voice import meetings, schedule
 from voice.schedule import ScheduleError, now_utc, stored, utc, zone
 
@@ -501,6 +502,8 @@ async def put_settings(bot_id: str, data: dict, ctx: AuthContext = Depends(requi
         settings = schedule.check(data)
     except ScheduleError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    if any(settings[part]["enabled"] for part in ("callbacks", "follow_ups", "meetings")):
+        await plans.require_feature(db, bot.bot_id, "schedule")  # Pro; turning them off always works
     if settings["from_number_id"]:
         number = await db.get(PhoneNumber, settings["from_number_id"])
         if not number or number.user_id != ctx.owner_id or number.status != "active":

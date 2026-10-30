@@ -73,11 +73,7 @@ def meta(monkeypatch, tmp_path):
     monkeypatch.setattr(graph, "typing", fake.typing_)
     monkeypatch.setattr(replies, "PACE", 0)
     monkeypatch.setattr(storage, "LOCAL_DIR", str(tmp_path / "wa"))
-    monkeypatch.setenv("WHATSAPP_APP_SECRET", SECRET)
-
-    async def has_plan(bot_id, db):
-        return object()
-    monkeypatch.setattr(replies, "active_subscription", has_plan)
+    monkeypatch.setenv("WHATSAPP_APP_SECRET", SECRET)  # (plan limits are off in tests: every assistant has WhatsApp)
 
     def ai(system, context, query, **kw):
         fake.prompts.append({"system": system, "said": query, "history": kw.get("history") or []})
@@ -444,12 +440,14 @@ def test_a_number_moved_to_another_workspace_keeps_the_chats_apart(client, make_
 
 
 def test_expired_plan_does_not_answer_with_ai(client, make_user, meta, run, monkeypatch):
-    async def no_plan(bot_id, db):
-        return None
-    monkeypatch.setattr(replies, "active_subscription", no_plan)
+    import plans
+
+    async def no_plan(db, bot_id):
+        return plans.NO_PLAN
     u = make_user()
     pid = _pid()
     connect(client, u, u.bot(), pid)
+    monkeypatch.setattr(plans, "includes", no_plan)  # the plan ended after the number was connected
     post(client, body(pid, text_msg("hi", sender=_sender())))
     assert run(wait_for(lambda: len(meta.sent) == 1))
     assert meta.texts() == [replies.NOT_AVAILABLE] and meta.prompts == []

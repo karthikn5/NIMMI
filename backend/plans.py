@@ -54,11 +54,13 @@ FEATURE_NAMES = {"voice": "Voice calls", "integrations": "Integrations", "custom
 
 
 async def is_paid(db: AsyncSession, owner_id: str) -> bool:
-    """Paid while an active plan covers one of the workspace's assistants, or one it paid for itself."""
+    """Paid while an active plan covers one of the workspace's assistants, or one it paid for itself (one set to
+    start later doesn't count yet)."""
+    from subscriptions import naive
     now = datetime.utcnow()
-    ends = (await db.execute(select(Subscription.end_date).outerjoin(Bot, Bot.bot_id == Subscription.bot_id).where(
-        or_(Bot.user_id == owner_id, Subscription.user_id == owner_id), Subscription.status == "active"))).scalars().all()
-    return any(end and end.replace(tzinfo=None) > now for end in ends)
+    spans = (await db.execute(select(Subscription.start_date, Subscription.end_date).outerjoin(Bot, Bot.bot_id == Subscription.bot_id).where(
+        or_(Bot.user_id == owner_id, Subscription.user_id == owner_id), Subscription.status == "active"))).all()
+    return any(end and naive(end) > now and (start is None or naive(start) <= now) for start, end in spans)
 
 
 async def limits(db: AsyncSession, owner_id: str) -> Limits:

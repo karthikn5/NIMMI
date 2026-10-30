@@ -112,8 +112,10 @@ SCREENS: dict[str, dict] = {
     "analytics": {"title": "Analytics", "path": "/dashboard/analytics", "about": (
         "Chats, leads, hand-overs and calls over the last 7 to 90 days, per day and per assistant.")},
     "billing": {"title": "Billing", "path": "/dashboard/billing", "about": (
-        "Plans for each assistant (Choose a plan), voice credits and their packs, call rates, the Nimmi balance, and "
-        "payment history. Owners only.")},
+        "Each assistant's plan: Starter, Growth or Pro, monthly (renews by itself) or yearly (12 months for the price "
+        "of 10); choosing, upgrading (starts now, paying the difference for the days left) or changing it (from the end "
+        "of the period), stopping renewal, updating the card after a failed payment. Then call credits, call rates, the "
+        "Nimmi balance and payment history. Owners only.")},
     "profile": {"title": "Profile", "path": "/dashboard/profile", "about": (
         "Their name and email, changing their password, and signing out of all other devices.")},
     "team": {"title": "Team", "path": "/dashboard/team", "about": (

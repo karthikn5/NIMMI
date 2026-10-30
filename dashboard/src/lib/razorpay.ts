@@ -1,8 +1,10 @@
-/** Razorpay Checkout: open the payment sheet for a server-created order, then verify on the server. */
+/** Razorpay Checkout: open the payment sheet for a server-created order or subscription, then verify on the server. */
 import { apiJson } from "@/lib/api";
 
 type Order = { order_id: string; amount: number; currency: string; key_id: string };
-type Paid = { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string };
+/** A plan that renews by itself (BILLING_PLAN.md); `card_change`: replace the card a renewing plan is charged to. */
+type Recurring = { subscription_id: string; key_id: string; card_change?: boolean };
+type Paid = { razorpay_payment_id: string; razorpay_signature: string; razorpay_order_id?: string; razorpay_subscription_id?: string };
 
 declare global {
     interface Window { Razorpay?: new (options: Record<string, unknown>) => { open: () => void } }
@@ -23,17 +25,19 @@ function loadCheckout(): Promise<void> {
 }
 
 /**
- * Opens Checkout for `order` and verifies the result with the backend.
- * Resolves with the server's verify response, or null if the person closed the sheet.
+ * Opens Checkout for `checkout` and verifies the result with the backend.
+ * Resolves with the server's verify response, or null if the person closed the sheet. A card change has nothing to
+ * verify: Razorpay keeps the new card for the plan's next charge.
  */
-export async function payAndVerify<T = { message: string }>(order: Order, opts: { description: string; email?: string; name?: string }): Promise<T | null> {
+export async function payAndVerify<T = { message: string }>(checkout: Order | Recurring, opts: { description: string; email?: string; name?: string }): Promise<T | null> {
     await loadCheckout();
+    const what = "subscription_id" in checkout
+        ? { subscription_id: checkout.subscription_id, ...(checkout.card_change ? { subscription_card_change: true } : {}) }
+        : { amount: checkout.amount, currency: checkout.currency, order_id: checkout.order_id };
     const paid = await new Promise<Paid | null>((resolve) => {
         const rzp = new window.Razorpay!({
-            key: order.key_id,
-            amount: order.amount,
-            currency: order.currency,
-            order_id: order.order_id,
+            key: checkout.key_id,
+            ...what,
             name: "Nimmi AI",
             description: opts.description,
             prefill: { email: opts.email, name: opts.name },
@@ -44,5 +48,6 @@ export async function payAndVerify<T = { message: string }>(order: Order, opts: 
         rzp.open();
     });
     if (!paid) return null;
+    if ("subscription_id" in checkout && checkout.card_change) return { message: "Payment method updated. The next charge uses it." } as T;
     return apiJson<T>("/api/payments/verify", { method: "POST", json: paid });
 }

@@ -69,15 +69,18 @@ class Subscription(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"))
     bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), nullable=True)
-    plan_name = Column(String, nullable=False) # 1 Month, 6 Months, 12 Months
+    plan_name = Column(String, nullable=False) # "Growth monthly"; earlier plans: "1 Month Plan", "6 Month Plan", "12 Month Plan"
     credits_granted = Column(Integer, default=1)
     price_paid = Column(Integer, nullable=False)
-    start_date = Column(DateTime(timezone=True), server_default=func.now())
+    start_date = Column(DateTime(timezone=True), server_default=func.now())  # a plan set to start later: in the future
     end_date = Column(DateTime(timezone=True), nullable=False)
-    auto_renewal = Column(Boolean, default=True)
+    auto_renewal = Column(Boolean, default=True)  # a monthly plan renewing through its Razorpay subscription
     razorpay_subscription_id = Column(String, nullable=True)
     razorpay_order_id = Column(String, nullable=True)
-    status = Column(String, default="active") # active, expired, cancelled
+    status = Column(String, default="active") # active; renewed / replaced (by a newer row); cancelled
+    tier = Column(String, nullable=True)        # starter, growth, pro (BILLING_PLAN.md); None: an earlier plan, everything included
+    period = Column(String, nullable=True)      # monthly, yearly
+    rzp_status = Column(String, nullable=True)  # its Razorpay subscription: active, pending, halted, cancelled, cancel_failed
 
 class Transaction(Base):
     __tablename__ = "transactions"
@@ -89,6 +92,15 @@ class Transaction(Base):
     razorpay_order_id = Column(String, nullable=True)
     razorpay_payment_id = Column(String, nullable=True)
     status = Column(String, default="pending") # pending, success, failed
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    plan_name = Column(String, nullable=True)   # what it paid for ("Growth monthly", "Pro yearly, the days left")
+
+
+class BillingPlan(Base):
+    """The Razorpay plan made for one of ours at one price (a Razorpay plan can't change: a new price is a new plan)."""
+    __tablename__ = "billing_plans"
+    key = Column(String, primary_key=True)      # "growth:monthly:2499"
+    razorpay_plan_id = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

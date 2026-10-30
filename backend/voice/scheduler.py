@@ -308,6 +308,7 @@ async def _loop() -> None:
     last_recycle = datetime.min
     last_sites = datetime.min
     last_summaries = datetime.min
+    last_billing = datetime.min
     while True:
         try:
             from notify import automations
@@ -336,6 +337,10 @@ async def _loop() -> None:
                 import recycle
                 await recycle.purge_expired()  # deleted assistants are kept 30 days
                 last_recycle = datetime.utcnow()
+            if datetime.utcnow() - last_billing > timedelta(minutes=10):
+                import payments
+                await payments.maintenance()  # plan reminders and endings, Razorpay subscriptions still to stop
+                last_billing = datetime.utcnow()
             if datetime.utcnow() - last_sites > timedelta(minutes=2):
                 from sites import deploy as site_deploys
                 await site_deploys.maintenance()  # interrupted deploys, custom domains waiting on DNS, deleted sites

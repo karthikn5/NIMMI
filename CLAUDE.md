@@ -86,6 +86,18 @@ only on the owner's machines): @.claude/private-notes.md
 - Plans (`plans.py`): free = 1 assistant + 1 website, no custom domain, voice calls paid with credits (10 free);
   integrations and custom domains need paid. A workspace is paid while any of its assistants has an active
   subscription (or one the owner paid for). `ENFORCE_PLAN_LIMITS` is off in tests.
+- Billing (BILLING_PLAN.md, `subscriptions.py`, `payments.py`): Starter ₹999, Growth ₹2,499, Pro ₹6,999 a month per
+  assistant, yearly at 10 months' price (the website's `dashboard/src/lib/plans.ts`; a test keeps the two equal). Monthly
+  = a Razorpay subscription that renews itself (first month charged at checkout; `subscription.*` webhooks extend the plan
+  or report a failed charge); yearly = one order a year, with reminders (RBI: automatic debits over ₹15,000 need an OTP).
+  An upgrade starts now, paying the difference for the days left; other changes start at the period's end (a plan row
+  with a future `start_date`; `plans_of` gives the plan now and the next). Each payment applies once (a NotificationLog
+  claim saved with it). The 1/6/12 Month plans (sold until 30 Oct 2026; the 1-month one cost ₹1 on live 12-30 Oct) keep
+  everything until they end. `payments.maintenance` (scheduler, every 10 min): a renewing plan at its end asks Razorpay
+  where its subscription is (so a customer charged while the webhook was missing keeps the assistant), reminders 7, 3 and
+  1 day before a plan that doesn't renew ends, the ended email, Razorpay subscriptions still to cancel. If Razorpay
+  won't make a subscription (feature off, or any refusal), that month is a single payment. Tests: `tests/test_billing.py`;
+  browser: `dev-scripts/ui-checks/billing_ui.mjs` with `billing_seed.py`.
 - Workspaces: owner plus team members (admin/agent); requests act on `ctx.owner_id`; the `X-Workspace` header picks one.
 - Encrypted secrets (customer AI keys, phone account tokens): `secretbox` MultiFernet over ENCRYPTION_KEY
   (+ JWT_SECRET, + `ENCRYPTION_OLD_KEYS` decrypt-only); columns store `enc:v1:...`.

@@ -24,7 +24,7 @@ import templates
 from backend.models import Bot, CallbackSettings, Conversation, DeletedItem, Subscription, UserUsage, VoiceAgent
 import recycle
 from netsafe import UnsafeUrl, assert_public_url
-from subscriptions import active_subscription
+from subscriptions import active_subscription, label as plan_label, naive
 from utils import extract_text_from_pdf, extract_text_from_txt
 from vector_store import chunk_text, get_bot_vector_count, replace_knowledge
 import plans
@@ -172,8 +172,9 @@ async def list_bots(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depe
 
     now = datetime.utcnow()
     active: dict = {}
-    for s in subs:
-        if s.end_date.replace(tzinfo=None) > now and s.bot_id not in active:
+    for s in subs:  # the plan on now (not one set to start later)
+        started = s.start_date is None or naive(s.start_date) <= now
+        if started and naive(s.end_date) > now and s.bot_id not in active:
             active[s.bot_id] = s
 
     out = []
@@ -183,9 +184,9 @@ async def list_bots(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depe
             "id": bot.bot_id,
             "name": bot.bot_name,
             "status": "Active" if sub else "Expired",
-            "plan": sub.plan_name if sub else "None",
+            "plan": plan_label(sub.tier, sub.period, sub.plan_name) if sub else "None",
             "expiry": sub.end_date.strftime("%b %d, %Y") if sub else "-",
-            "days_remaining": (sub.end_date.replace(tzinfo=None) - now).days if sub else 0,
+            "days_remaining": (naive(sub.end_date) - now).days if sub else 0,
         })
     return out
 

@@ -14,12 +14,13 @@ BASE = {
 
 
 def _capture(monkeypatch):
+    """Every email, Nimmi's own and customers' (send_email goes through deliver too)."""
     sent = []
 
-    async def fake_send(to, subject, text, html_body=None, reply_to=None, from_name=None, unsubscribe_url=None, **_):
-        sent.append({"to": to, "subject": subject, "text": text, "html": html_body, "reply_to": reply_to, "from": from_name})
-        return True
-    monkeypatch.setattr(email, "send_email", fake_send)
+    async def fake_deliver(to, subject, text, html_body=None, *, reply_to=None, from_name=None, unsubscribe_url=None, **more):
+        sent.append({"to": to, "subject": subject, "text": text, "html": html_body, "reply_to": reply_to, "from": from_name, **more})
+        return email.Delivery(True, id=f"re_{len(sent)}")
+    monkeypatch.setattr(email, "deliver", fake_deliver)
     return sent
 
 
@@ -107,7 +108,9 @@ def test_call_follow_up_waits_for_its_delay_and_honours_unsubscribe(client, make
     # The unsubscribe link in that email works, and stops later emails.
     link = sent[0]["text"].split("Unsubscribe: ")[1].strip()
     page = client.get(link[link.index("/api/"):])
-    assert page.status_code == 200 and "unsubscribed" in page.text
+    assert page.status_code == 200 and "Unsubscribe from all emails" in page.text  # a visit only shows the choices
+    done = client.post(link[link.index("/api/"):], data={"action": "all"})
+    assert done.status_code == 200 and "unsubscribed" in done.text
     run(call, "Ravi@Example.com")
 
     async def jobs():

@@ -3,7 +3,9 @@ import re
 import secrets
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from urllib.parse import parse_qs
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +16,7 @@ from database import get_db
 from backend.models import IntegrationSettings, NotificationLog, User
 from phone import to_e164
 from netsafe import UnsafeUrl, assert_public_url
+from mail import senders, suppress
 from notify import automations, channels, email
 from notify.events import recipients
 from whatsapp.numbers import workspace_number
@@ -233,32 +236,90 @@ async def delivery_log(ctx: AuthContext = Depends(require_manager), db: AsyncSes
              "created_at": r.created_at.isoformat() if r.created_at else None} for r in rows]
 
 
-@router.get("/email/unsubscribe", response_class=HTMLResponse)
-async def email_unsubscribe(token: str = ""):
-    """Public link at the bottom of every automatic customer email."""
+def _unsub_token(token: str) -> Optional[tuple[str, str, Optional[str]]]:
+    """(workspace, address, assistant) from an unsubscribe link; links sent before Nov 2026 have no assistant."""
     from auth import decode_scoped_token
     subject = decode_scoped_token(token, "email_unsub")
     if not subject or "|" not in subject:
-        return HTMLResponse(_page("This link has expired", "Reply to the email you received and ask to be removed."), status_code=400)
-    owner_id, address = subject.split("|", 1)
-    await automations.unsubscribe(owner_id, address)
-    return HTMLResponse(_page("You're unsubscribed", f"{address} won't get any more automatic emails from this business."))
+        return None
+    parts = subject.split("|")
+    return parts[0], parts[1], (parts[2] if len(parts) > 2 else None)
+
+
+async def _business_name(owner_id: str, bot_id: Optional[str]) -> str:
+    from database import async_session
+    async with async_session() as db:
+        return (await senders.sender_for(db, owner_id, bot_id)).name
+
+
+@router.get("/email/unsubscribe", response_class=HTMLResponse)
+async def email_unsubscribe(token: str = ""):
+    """The link at the bottom of every customer email. A visit only shows the choices: email security scanners open
+    links by themselves, and a visit that unsubscribed would stop emails nobody asked to stop."""
+    found = _unsub_token(token)
+    if not found:
+        return _html(_page("This link has expired", "Reply to the email you received and ask to be removed."), status_code=400)
+    owner_id, address, bot_id = found
+    business = await _business_name(owner_id, bot_id)
+    from database import async_session
+    async with async_session() as db:
+        why = await suppress.why_blocked(db, owner_id, address)
+    if why:
+        return _html(_page("You're unsubscribed", f"{address} doesn't get emails from {business}.",
+                                  [("resubscribe", "Resubscribe", False)] if why == suppress.TEXT["unsubscribed"] else []))
+    return _html(_page(f"Stop emails from {business}?", f"For {address}.",
+                              [("all", "Unsubscribe from all emails", True),
+                               ("marketing", "Only stop offers and news", False)]))
 
 
 @router.post("/email/unsubscribe")
-async def email_unsubscribe_one_click(token: str = ""):
-    """Mail apps' one-click unsubscribe (List-Unsubscribe-Post) posts to the same link."""
-    from auth import decode_scoped_token
-    subject = decode_scoped_token(token, "email_unsub")
-    if not subject or "|" not in subject:
-        raise HTTPException(status_code=400, detail="This link has expired")
-    owner_id, address = subject.split("|", 1)
-    await automations.unsubscribe(owner_id, address)
-    return {"status": "unsubscribed"}
+async def email_unsubscribe_post(request: Request, token: str = ""):
+    """The page's buttons, and mail apps' one-click unsubscribe (RFC 8058: they post "List-Unsubscribe=One-Click")."""
+    form = parse_qs((await request.body())[:2000].decode(errors="ignore"))
+    action = (form.get("action") or [""])[0]
+    found = _unsub_token(token)
+    if not found:
+        if not action:
+            raise HTTPException(status_code=400, detail="This link has expired")
+        return _html(_page("This link has expired", "Reply to the email you received and ask to be removed."), status_code=400)
+    owner_id, address, bot_id = found
+    if action == "resubscribe":
+        from database import async_session
+        async with async_session() as db:
+            done = await suppress.resubscribe(db, owner_id, address)
+            await suppress.commit_quietly(db)
+        business = await _business_name(owner_id, bot_id)
+        if done:
+            return _html(_page("You're subscribed again", f"{address} will get emails from {business} again."))
+        return _html(_page("This can't be changed here", f"Write to {business} if you'd like their emails again."))
+    await automations.unsubscribe(owner_id, address, scope="marketing" if action == "marketing" else "all", bot_id=bot_id)
+    if not action:  # a mail app: it shows its own confirmation
+        return {"status": "unsubscribed"}
+    business = await _business_name(owner_id, bot_id)
+    if action == "marketing":
+        return _html(_page("Offers and news stopped",
+                                  f"{address} won't get offers or news from {business}. Emails about your own enquiries still come."))
+    return _html(_page("You're unsubscribed", f"{address} won't get any more emails from {business}.",
+                              [("resubscribe", "Resubscribe", False)]))
 
 
-def _page(title: str, text: str) -> str:
+def _html(page: str, status_code: int = 200) -> HTMLResponse:
+    """The API's own pages may post only back to this server (security.py forbids forms everywhere else)."""
+    return HTMLResponse(page, status_code=status_code, headers={"Content-Security-Policy": (
+        "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")})
+
+
+def _page(title: str, text: str, buttons: Optional[list[tuple[str, str, bool]]] = None) -> str:
+    """A small public page. `buttons`: (action, label, primary), each posting to the same link (its token included)."""
     import html as h
-    return (f'<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>{h.escape(title)}</title>'
-            f'<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:420px;margin:15vh auto;padding:0 16px;color:#1c1719">'
-            f'<h1 style="font-size:20px;margin:0 0 8px">{h.escape(title)}</h1><p style="color:#57534e;line-height:1.6">{h.escape(text)}</p></div>')
+    forms = "".join(
+        f'<form method="post" style="margin:0 0 10px"><input type="hidden" name="action" value="{h.escape(action)}">'
+        f'<button type="submit" style="width:100%;padding:11px 16px;border-radius:8px;font:inherit;font-size:15px;cursor:pointer;'
+        + ('border:1px solid #550a64;background:#550a64;color:#fff' if primary else 'border:1px solid #d6d3d1;background:#fff;color:#1c1719')
+        + f'">{h.escape(label)}</button></form>'
+        for action, label, primary in buttons or [])
+    return (f'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<meta name="robots" content="noindex"><title>{h.escape(title)}</title>'
+            f'<body style="margin:0;background:#faf9f7"><div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:420px;'
+            f'margin:15vh auto;padding:0 16px;color:#1c1719"><h1 style="font-size:20px;margin:0 0 8px">{h.escape(title)}</h1>'
+            f'<p style="color:#57534e;line-height:1.6;margin:0 0 20px">{h.escape(text)}</p>{forms}</div></body>')

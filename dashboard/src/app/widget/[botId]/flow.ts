@@ -44,6 +44,41 @@ export function variableName(node: FlowNode): string {
 }
 
 /** Returns an error message, or null if the answer is acceptable. */
+// Providers most people in India use: a domain one or two letters off is probably a typo (backend mail/address.py).
+const COMMON = ["gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.in", "yahoo.in", "ymail.com", "hotmail.com", "outlook.com",
+    "live.com", "msn.com", "icloud.com", "me.com", "rediffmail.com", "aol.com", "protonmail.com", "proton.me", "zoho.com", "zohomail.in"];
+const REAL = new Set([...COMMON, "mail.com", "gmx.com", "gmx.net", "yandex.com", "live.in", "hotmail.co.in", "outlook.in", "mac.com"]);
+
+/** Letters added, removed, changed or swapped to turn a into b. */
+function distance(a: string, b: string): number {
+    const rows: number[][] = [Array.from({ length: b.length + 1 }, (_, j) => j)];
+    for (let i = 1; i <= a.length; i++) {
+        const row = [i, ...Array<number>(b.length).fill(0)];
+        for (let j = 1; j <= b.length; j++) {
+            row[j] = Math.min(rows[i - 1][j] + 1, row[j - 1] + 1, rows[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+            if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) row[j] = Math.min(row[j], rows[i - 2][j - 2] + 1);
+        }
+        rows.push(row);
+    }
+    return rows[a.length][b.length];
+}
+
+/** "karthi@gmail.com" for "karthi@gmial.com"; null when the address looks right. */
+export function emailSuggestion(address: string): string | null {
+    const at = address.lastIndexOf("@");
+    if (at < 1) return null;
+    const local = address.slice(0, at);
+    const domain = address.slice(at + 1).toLowerCase().replace(/\.$/, "");
+    if (REAL.has(domain)) return null;
+    let best: string | null = null;
+    let bestD = 3;
+    for (const c of COMMON) {
+        const d = distance(domain, c);
+        if (d < bestD) { best = c; bestD = d; }
+    }
+    return best && bestD <= (domain.length <= 7 ? 1 : 2) ? `${local}@${best}` : null;
+}
+
 export function validate(type: InputType, value: string): string | null {
     const v = value.trim();
     if (type === "emailInput" && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) return "That email doesn't look right. Please check it and try again.";

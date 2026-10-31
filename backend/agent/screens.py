@@ -107,8 +107,24 @@ SCREENS: dict[str, dict] = {
         "Connecting a WhatsApp number (from their own Meta app for now: token and app secret), replacing a token or "
         "secret, sending a test message, disconnecting, and WhatsApp messages after phone calls. Owners and admins.")},
     "integrations": {"title": "Integrations", "path": "/dashboard/integrations", "about": (
-        "What happens after chats and calls (paid plans): lead alerts and emails to customers, WhatsApp messages, "
-        "webhooks and LeadSquared, each on or off, with their recent activity. Owners and admins.")},
+        "What happens after chats and calls (paid plans): WhatsApp messages, webhooks and LeadSquared, each on or off, "
+        "with their recent activity; email has its own section. Owners and admins.")},
+    "email_overview": {"title": "Email: Overview", "path": "/dashboard/email", "about": (
+        "How their customer emails are going over the last 30 days (sent, delivered, bounced, reported as spam, "
+        "failed), which automatic emails are on, their sending domains, and recent problems. Owners and admins.")},
+    "email_automations": {"title": "Email: Automations", "path": "/dashboard/email/automations", "about": (
+        "Alerts to their team (new leads, call summaries, someone asking for a person) and automatic emails to "
+        "customers after a chat, after a call, when a call met its goal, when a call didn't reach them, and after the "
+        "team helped in Live chat; each one email or a short sequence, with placeholders and a test send.")},
+    "email_bulk": {"title": "Email: Bulk email", "path": "/dashboard/email/bulk", "about": (
+        "One email to a group of leads who shared their email (chat or calls, recent days, hot only); unsubscribed, "
+        "bounced and throwaway addresses are left out; up to 2,000 people and 5 sends a day.")},
+    "email_history": {"title": "Email: History", "path": "/dashboard/email/history", "about": (
+        "Every customer email with its status and what happened after sending (delivered, bounced, reported as "
+        "spam); send a failed one again, cancel a waiting one, or stop emailing someone.")},
+    "email_settings": {"title": "Email: Settings", "path": "/dashboard/email/settings", "about": (
+        "Their own sending domain (DNS records to add, verified by Resend), who each assistant's emails come from "
+        "(name, address, replies), and the addresses they don't email (unsubscribed, spam reports, bounces).")},
     "analytics": {"title": "Analytics", "path": "/dashboard/analytics", "about": (
         "Chats, leads, hand-overs and calls over the last 7 to 90 days, per day and per assistant.")},
     "billing": {"title": "Billing", "path": "/dashboard/billing", "about": (
@@ -127,8 +143,11 @@ SCREENS: dict[str, dict] = {
 POINTS = {
     **{f"nav.{k}": f"the {v} menu in the top bar" for k, v in (
         ("assistants", "Assistants"), ("deployments", "Deployments"), ("live_chat", "Live chat"),
-        ("questions", "Questions"), ("voice", "Voice"), ("whatsapp", "WhatsApp"), ("integrations", "Integrations"),
-        ("analytics", "Analytics"), ("billing", "Billing"))},
+        ("questions", "Questions"), ("voice", "Voice"), ("whatsapp", "WhatsApp"), ("email", "Email"),
+        ("integrations", "Integrations"), ("analytics", "Analytics"), ("billing", "Billing"))},
+    **{f"email.tab.{k}": f"the Email section's {v} tab" for k, v in (
+        ("overview", "Overview"), ("automations", "Automations"), ("bulk", "Bulk email"), ("history", "History"),
+        ("settings", "Settings"))},
     **{f"builder.tab.{k}": f"the builder's {k.capitalize()} tab" for k in ("design", "knowledge", "behaviour", "flow", "leads")},
     "builder.test": "the builder's Test button", "builder.install": "the builder's 'Add to website' button",
     "voice.use_own_number": "Voice > Numbers: Use your own number (Twilio or Exotel)", "voice.get_number": "Voice > Numbers: Get a number",
@@ -165,6 +184,7 @@ AREAS = {
     "assistant": ("assistants", "builder", "questions", "deployments", "deployment", "live_chat", "analytics"),
     "voice": tuple(k for k in SCREENS if k.startswith("voice_")),
     "whatsapp": tuple(k for k in SCREENS if k.startswith("whatsapp_")),
+    "email": tuple(k for k in SCREENS if k.startswith("email_")),
     "account": ("integrations", "billing", "profile", "team"),
 }
 

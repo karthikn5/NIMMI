@@ -1,46 +1,37 @@
 "use client";
 
 import { useRef, useState, type ReactNode } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, Plus, Send, X } from "lucide-react";
-import { Button, Card, Input, Notice, Segmented, Select, SettingRow, Status, Switch, Textarea, cn } from "@/components/ui";
+import Link from "next/link";
+import { ArrowRight, ChevronDown, Plus, Send, X } from "lucide-react";
+import { Button, Card, Input, Select, SettingRow, Status, Switch, Textarea, cn } from "@/components/ui";
 import {
     AUTOMATIONS, DELAY_LABEL, DELAY_SECONDS, MAX_STEPS, SAMPLE, renderTemplate,
     type Automation, type AutomationKey, type Delay, type EmailStep, type IntegrationSettings,
 } from "@/lib/integrations";
-import { BulkEmail } from "./BulkEmail";
-import { EmailHistory } from "./EmailHistory";
 import { PanelHeader, type PanelProps } from "./shared";
 
-type View = "automations" | "bulk" | "history";
-
-export function EmailPanel(props: PanelProps) {
-    const router = useRouter();
-    const pathname = usePathname();
-    const params = useSearchParams();
-    const requested = params.get("view") as View | null;
-    const view: View = requested === "bulk" || requested === "history" ? requested : "automations";
-    const go = (v: View) => router.replace(`${pathname}?tab=email${v === "automations" ? "" : `&view=${v}`}`, { scroll: false });
-    const { draft } = props;
-
+/** Email has its own section now (dashboard/email); Integrations > Email points there. */
+export function EmailMovedPanel() {
     return (
         <>
-            <PanelHeader title="Email" description="Alerts to your team, automatic follow-ups to customers, and bulk emails to your leads." />
-            {!draft.server.email && (
-                <Notice title="Email sending isn't set up on the server">
-                    Everything here is saved, and shows in History, but nothing is delivered until an email provider (Resend or SMTP) is configured.
-                </Notice>
-            )}
-            <div className="mb-5 overflow-x-auto">
-                <Segmented label="Email section" value={view} onChange={go} options={[
-                    { value: "automations", label: "Automations" }, { value: "bulk", label: "Bulk email" }, { value: "history", label: "History" },
-                ]} />
-            </div>
-            {view === "automations" && <Automations {...props} />}
-            {view === "bulk" && <BulkEmail draft={draft} saved={props.saved} />}
-            {view === "history" && <EmailHistory />}
+            <PanelHeader title="Email" description="Alerts to your team, automatic emails to customers, bulk email and what happened to each email." />
+            <Card className="p-5">
+                <p className="text-sm">Email has its own section now.</p>
+                <p className="text-[13px] text-stone-500 mt-1">
+                    Your automatic emails, bulk email and history are there, with what happened to each email after it went (delivered,
+                    bounced, reported as spam), sending from your own domain, and who each assistant&apos;s emails come from.
+                </p>
+                <Link href="/dashboard/email" className="mt-4 inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-plum text-white text-sm font-medium hover:bg-plum-hover">
+                    Open Email <ArrowRight size={14} />
+                </Link>
+            </Card>
         </>
     );
+}
+
+/** Alerts to the team and the automatic emails to customers (Email > Automations). */
+export function EmailAutomations(props: PanelProps) {
+    return <Automations {...props} />;
 }
 
 function Automations({ draft, set, test, testing }: PanelProps) {

@@ -111,6 +111,8 @@ async def init_db():
         try:
             await conn.run_sync(Base.metadata.create_all)
             await conn.run_sync(_add_missing_columns, Base.metadata)
+            await conn.run_sync(_add_missing_indexes, Base.metadata)
+            await conn.run_sync(_relax_not_null, "contacts", "e164")  # a chat lead with only an email is a contact too
             await conn.run_sync(_encrypt_legacy_secrets)
             print("Database tables created/verified.")
         except Exception as e:
@@ -166,6 +168,59 @@ def _add_missing_columns(sync_conn, metadata) -> None:
             ddl_type = column.type.compile(dialect=sync_conn.dialect)
             sync_conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl_type}'))
             print(f"[DB] Added column {table.name}.{column.name}")
+
+
+def _add_missing_indexes(sync_conn, metadata) -> None:
+    """Indexes the models declare on columns added after their table existed (create_all skips existing tables)."""
+    from sqlalchemy import inspect
+
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+    for table in metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        present = {i["name"] for i in inspector.get_indexes(table.name)}
+        columns = {c["name"] for c in inspector.get_columns(table.name)}
+        for index in table.indexes:
+            if index.name in present or not all(c.name in columns for c in index.columns):
+                continue
+            index.create(sync_conn, checkfirst=True)
+            print(f"[DB] Added index {index.name}")
+
+
+def _relax_not_null(sync_conn, table: str, column: str) -> None:
+    """Let a column that used to be required be empty. Postgres alters it in place; SQLite (local development) can't,
+    so the table is rebuilt with the same definition minus NOT NULL, its rows and indexes copied over."""
+    import re
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(sync_conn)
+    if table not in inspector.get_table_names():
+        return
+    columns = {c["name"]: c for c in inspector.get_columns(table)}
+    if column not in columns or columns[column]["nullable"]:
+        return
+    if sync_conn.dialect.name == "postgresql":
+        sync_conn.execute(text(f'ALTER TABLE "{table}" ALTER COLUMN "{column}" DROP NOT NULL'))
+    elif sync_conn.dialect.name == "sqlite":
+        ddl = sync_conn.execute(text("select sql from sqlite_master where type = 'table' and name = :t"), {"t": table}).scalar()
+        relaxed, found = re.subn(rf'(^\s*"?{column}"?\s+[^,\n]*?)\s+NOT NULL', r"\1", ddl, count=1, flags=re.MULTILINE)
+        renamed, named = re.subn(rf'^CREATE TABLE "?{table}"?', f'CREATE TABLE "{table}__rebuild"', relaxed, count=1)
+        if not (found and named):
+            print(f"[DB] Couldn't make {table}.{column} optional: unexpected table definition")
+            return
+        indexes = [sql for (sql,) in sync_conn.execute(text(
+            "select sql from sqlite_master where type = 'index' and tbl_name = :t and sql is not null"), {"t": table})]
+        names = ", ".join(f'"{c}"' for c in columns)
+        sync_conn.execute(text(renamed))
+        sync_conn.execute(text(f'INSERT INTO "{table}__rebuild" ({names}) SELECT {names} FROM "{table}"'))
+        sync_conn.execute(text(f'DROP TABLE "{table}"'))
+        sync_conn.execute(text(f'ALTER TABLE "{table}__rebuild" RENAME TO "{table}"'))
+        for sql in indexes:
+            sync_conn.execute(text(sql))
+    else:
+        return
+    print(f"[DB] {table}.{column} may now be empty")
 
 
 # Columns stored with secretbox.EncryptedText: (table, primary key, columns).

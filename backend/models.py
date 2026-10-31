@@ -190,14 +190,15 @@ class VoiceScript(Base):
 
 
 class Contact(Base):
-    """Someone an assistant has spoken to on the phone, by number: what it remembers about them on the next call.
-    Each assistant keeps its own (one account can run assistants for different businesses)."""
+    """Someone an assistant has spoken to, by number (calls, WhatsApp) or, for a chat lead who gave only an email, by
+    email: what it remembers about them next time. Each assistant keeps its own (one account can run assistants for
+    different businesses)."""
     __tablename__ = "contacts"
     __table_args__ = (UniqueConstraint("bot_id", "e164", name="uq_contact_bot_number"),)
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
-    e164 = Column(String, nullable=False, index=True)
+    e164 = Column(String, nullable=True, index=True)  # None for a chat lead who gave only an email (database.py relaxes it)
     name = Column(String, nullable=True)
     email = Column(String, nullable=True)
     details = Column(JSON, default=lambda: {})   # everything else they told the assistant (collected fields)
@@ -216,6 +217,7 @@ class Contact(Base):
     lead_at = Column(DateTime(timezone=True), nullable=True)
     follow_ups = Column(Integer, nullable=True)        # follow-up calls placed to them, in all
     follow_ups_off = Column(Boolean, nullable=True)    # the team stopped follow-ups for them
+    source = Column(String, nullable=True)             # how they first came: chat (website); None = a call or WhatsApp
 
 
 class PhoneNumber(Base):
@@ -527,6 +529,8 @@ class IntegrationSettings(Base):
     sender_name = Column(String, nullable=True)         # shown as the From name on customer emails
     reply_to = Column(String, nullable=True)            # where customers' replies go
     email_automations = Column(JSON, nullable=True)     # {"chat_lead": {...}, "call_lead": {...}}
+    sender_local = Column(String(64), nullable=True)     # "hello" in hello@their-domain.in, at sender_domain_id
+    sender_domain_id = Column(String(36), nullable=True)  # an EmailDomain of the workspace; None = Nimmi's sending address
 
 
 class EmailJob(Base):
@@ -548,6 +552,19 @@ class EmailJob(Base):
     step = Column(Integer, nullable=True)  # 1, 2, 3 in a sequence
     sent_at = Column(DateTime(timezone=True), nullable=True)
     broadcast_id = Column(String(36), nullable=True, index=True)  # set for bulk emails
+    bot_id = Column(String(36), nullable=True)  # the assistant it's from (its sender); None on emails queued before Nov 2026
+    attempts = Column(Integer, nullable=True)  # sends so far: part of the idempotency key, so "Send again" really sends
+    subject_tpl = Column(Text, nullable=True)  # the automation's text with placeholders, filled in when it's sent
+    body_tpl = Column(Text, nullable=True)
+    merge_data = Column(JSON, nullable=True)  # placeholder values when it was queued; refreshed from the chat or call at send
+    provider_id = Column(String, nullable=True, index=True)  # Resend's email id: its webhook events find the email by it
+    event = Column(String, nullable=True)  # after sending: delivered, delayed, bounced, complained, failed, suppressed
+    event_detail = Column(String(300), nullable=True)  # e.g. why it bounced
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+    bounced_at = Column(DateTime(timezone=True), nullable=True)
+    complained_at = Column(DateTime(timezone=True), nullable=True)
+    opened_at = Column(DateTime(timezone=True), nullable=True)  # an estimate: mail apps open images by themselves
+    clicked_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class EmailBroadcast(Base):
@@ -563,13 +580,71 @@ class EmailBroadcast(Base):
 
 
 class EmailUnsubscribe(Base):
-    """Customers who asked a workspace to stop emailing them."""
+    """Addresses a workspace doesn't email (mail/suppress.py): the person unsubscribed or reported an email as spam, the
+    address bounced, or the team stopped them. "marketing" stops only offers and news (bulk email)."""
     __tablename__ = "email_unsubscribes"
     __table_args__ = (UniqueConstraint("user_id", "email", name="uq_email_unsub"),)
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     email = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    reason = Column(String, nullable=True)  # unsubscribed, complaint, bounce, team; None = unsubscribed (before Nov 2026)
+    scope = Column(String, nullable=True)  # all, marketing; None = all
+    bot_id = Column(String(36), nullable=True)  # the assistant whose email they acted on, when known
+
+
+class EmailBounce(Base):
+    """Addresses that don't exist, for every workspace: a hard bounce, or Resend's own suppression list."""
+    __tablename__ = "email_bounces"
+    email = Column(String, primary_key=True)  # lower case
+    kind = Column(String, default="bounce")  # bounce, suppressed
+    detail = Column(String(300), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class EmailEvent(Base):
+    """What Resend reported about a sent email (mail/webhooks.py). Resend retries an event with the same id: kept once."""
+    __tablename__ = "email_events"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    event_id = Column(String, unique=True, nullable=False)  # the svix-id header
+    type = Column(String, nullable=False)  # email.delivered, email.bounced, ...
+    provider_id = Column(String, nullable=True, index=True)
+    user_id = Column(String(36), nullable=True, index=True)
+    job_id = Column(String(36), nullable=True, index=True)
+    to_email = Column(String, nullable=True)
+    detail = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class EmailDomain(Base):
+    """A domain a workspace sends from (mail/domains.py), added to Resend: the DNS records to add, its status, and a Resend
+    key that can send only from it."""
+    __tablename__ = "email_domains"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name = Column(String, unique=True, nullable=False)  # lower case; one Resend account holds a domain once
+    resend_id = Column(String, nullable=True)
+    status = Column(String, default="not_started")  # Resend's: not_started, pending, verified, partially_verified, failed...
+    records = Column(JSON, nullable=True)  # the DNS records to add
+    region = Column(String, nullable=True)
+    sending_key = Column(EncryptedText, nullable=True)
+    sending_key_id = Column(String, nullable=True)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+    checked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class EmailSender(Base):
+    """Who an assistant's customer emails come from: the name, the address (at a verified domain of the workspace) and
+    where replies go. Without a row, or for what a row leaves empty, the workspace's settings apply (Integrations)."""
+    __tablename__ = "email_senders"
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    from_name = Column(String(60), nullable=True)
+    local_part = Column(String(64), nullable=True)  # "priya" in priya@sunrisehomes.in
+    domain_id = Column(String(36), nullable=True)  # an EmailDomain of the workspace; None = the workspace's choice
+    reply_to = Column(String(200), nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class NotificationLog(Base):

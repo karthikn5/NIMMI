@@ -17,6 +17,30 @@ const STATUS: Record<EmailStatus, { label: string; tone: "good" | "neutral" | "w
     cancelled: { label: "Stopped", tone: "neutral" },
 };
 
+/** The status to show: once sent, what happened to it (delivered, bounced, reported as spam). */
+function shown(row: EmailRow): { label: string; tone: "good" | "neutral" | "warn" | "bad" } {
+    if (row.status === "sent") {
+        if (row.event === "complained") return { label: "Spam report", tone: "bad" };
+        if (row.event === "bounced") return { label: "Bounced", tone: "bad" };
+        if (row.event === "delivered") return { label: "Delivered", tone: "good" };
+        if (row.event === "delayed") return { label: "Delayed", tone: "warn" };
+    }
+    return STATUS[row.status];
+}
+
+/** After sending: delivered, bounced and why, reported as spam, opened (a hint), clicked. */
+function outcome(row: EmailRow): string | null {
+    const at = (iso: string | null) => (iso ? formatWhen(iso) : "");
+    const parts: string[] = [];
+    if (row.delivered_at) parts.push(`Delivered ${at(row.delivered_at)}`);
+    if (row.event === "delayed") parts.push(row.event_detail || "Delayed: Resend keeps trying");
+    if (row.bounced_at) parts.push(`Bounced ${at(row.bounced_at)}${row.event_detail ? `: ${row.event_detail}` : ""}`);
+    if (row.complained_at) parts.push(`Reported as spam ${at(row.complained_at)}. They won't get more emails.`);
+    if (row.clicked_at) parts.push(`A link clicked ${at(row.clicked_at)}`);
+    else if (row.opened_at) parts.push(`Probably opened ${at(row.opened_at)}`);
+    return parts.length ? parts.join(". ") : null;
+}
+
 /** "In 3 hours", "Tomorrow, 10:30 am", or a past time. */
 function when(row: EmailRow) {
     const iso = row.status === "sent" ? row.sent_at : row.send_at;
@@ -118,13 +142,13 @@ export function EmailHistory() {
                                     <button type="button" onClick={() => setOpenId(r.id)}
                                             className="w-full text-left grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.6fr)_minmax(0,1fr)_6.5rem_8.5rem] gap-x-4 gap-y-0.5 px-5 py-3 text-[13px] hover:bg-stone-50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-plum">
                                         <span className="truncate">{r.to}</span>
-                                        <span className="md:hidden justify-self-end"><Status tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Status></span>
+                                        <span className="md:hidden justify-self-end"><Status tone={shown(r).tone}>{shown(r).label}</Status></span>
                                         <span className="truncate text-stone-700 col-span-2 md:col-span-1">{r.subject}</span>
                                         <span className="min-w-0 text-xs md:text-[13px] text-stone-500">
                                             <span className="block truncate">{r.label}{r.step > 1 && <span className="md:hidden">, follow-up {r.step - 1}</span>}</span>
                                             {r.step > 1 && <span className="hidden md:block text-xs text-stone-400">Follow-up {r.step - 1}</span>}
                                         </span>
-                                        <span className="hidden md:block"><Status tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Status></span>
+                                        <span className="hidden md:block"><Status tone={shown(r).tone}>{shown(r).label}</Status></span>
                                         <span className="text-xs text-stone-500 justify-self-end md:text-right tabular-nums">{when(r)}</span>
                                     </button>
                                 </li>
@@ -146,7 +170,7 @@ export function EmailHistory() {
     );
 }
 
-type Detail = EmailRow & { body: string; unsubscribed: boolean };
+type Detail = EmailRow & { body: string; unsubscribed: boolean; stopped_because: string | null };
 
 function EmailDetail({ id, onClose, onChanged }: { id: string | null; onClose: () => void; onChanged: () => void }) {
     const toast = useToast();
@@ -198,13 +222,14 @@ function EmailDetail({ id, onClose, onChanged }: { id: string | null; onClose: (
                     <div className="p-6 space-y-5">
                         <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-y-2 text-[13px]">
                             <dt className="text-stone-500">Status</dt>
-                            <dd><Status tone={STATUS[detail.status].tone}>{STATUS[detail.status].label}</Status></dd>
+                            <dd><Status tone={shown(detail).tone}>{shown(detail).label}</Status></dd>
                             <dt className="text-stone-500">Email</dt>
                             <dd>{kindLabel(detail)}</dd>
                             <dt className="text-stone-500">{detail.status === "sent" ? "Sent" : detail.status === "queued" ? "Goes out" : "Was due"}</dt>
                             <dd>{when(detail)}</dd>
                             {detail.error && <><dt className="text-stone-500">Why</dt><dd className="text-stone-700">{detail.error}</dd></>}
-                            {detail.unsubscribed && <><dt className="text-stone-500">Person</dt><dd className="text-stone-700">Unsubscribed. They won&apos;t get more emails.</dd></>}
+                            {outcome(detail) && <><dt className="text-stone-500">What happened</dt><dd className="text-stone-700">{outcome(detail)}</dd></>}
+                            {detail.unsubscribed && <><dt className="text-stone-500">Person</dt><dd className="text-stone-700">{detail.stopped_because ?? "Unsubscribed"}. They won&apos;t get more emails.</dd></>}
                         </dl>
 
                         <div className="rounded-md border border-line bg-paper p-3">

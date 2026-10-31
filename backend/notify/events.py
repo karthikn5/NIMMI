@@ -70,10 +70,11 @@ def recipients(settings: IntegrationSettings, owner_email: Optional[str]) -> lis
     return listed[:5] or ([owner_email] if owner_email else [])
 
 
-async def _email_team(to: list[str], subject: str, text: str) -> Optional[str]:
+async def _email_team(to: list[str], subject: str, text: str, owner_id: Optional[str] = None) -> Optional[str]:
     if not to:
         return "no recipient"
-    sent = [await email.send_email(addr, subject, text) for addr in to]
+    tags = {"ws": owner_id, "kind": "alert"} if owner_id else None  # Resend's reports on it aren't about a customer
+    sent = [await email.send_email(addr, subject, text, tags=tags) for addr in to]
     return None if any(sent) else "email not configured"
 
 
@@ -105,14 +106,17 @@ async def lead_captured(conversation_id: str) -> None:
         await _once(bot.user_id, "lead_email", conversation_id, lambda: _email_team(
             recipients(settings, owner.email), f"New lead from {bot.bot_name}",
             f"{bot.bot_name} captured a new lead in {channel}.\n\n{_lines(fields)}\n\n"
-            f"See all leads: {email.dashboard_url()}/dashboard/builder/{bot.bot_id}"))
+            f"See all leads: {email.dashboard_url()}/dashboard/builder/{bot.bot_id}", bot.user_id))
+
+    from mail import contacts  # the lead as a contact of the assistant, with the details they gave
+    await contacts.remember_lead(conversation_id)
 
     # Automatic email to the customer (if they gave an email and the automation is on, on a plan with follow-ups).
     await (automations.schedule if included.email_alerts else _skip)(bot.user_id, "chat_lead", conversation_id, contact.get("email"), {
         **{automations.field_key(k): v for k, v in fields.items()}, "details": automations.details_text(fields),
         "name": contact.get("name"), "email": contact.get("email"), "phone": display(contact.get("phone")) if contact.get("phone") else "",
         "business": _business(settings, bot), "assistant": bot.bot_name, "summary": "",
-    })
+    }, bot_id=bot.bot_id)
 
     if settings.webhook_url and shared.integrations:
         await _once(bot.user_id, "lead_webhook", conversation_id,
@@ -158,7 +162,7 @@ async def call_completed(call_id: str) -> None:
             f"{'New lead' if call.outcome == 'lead_captured' else 'Call'} from {display(call.caller_e164)} ({bot_name})",
             f"{bot_name} {'took a call from' if call.direction == 'inbound' else 'called'} {display(call.caller_e164)}.\n\n"
             f"Summary: {call.summary or '-'}\n\n{_lines(captured) if captured else ''}\n\n"
-            f"Listen and read the transcript: {email.dashboard_url()}/dashboard/voice/calls?call={call.id}"))
+            f"Listen and read the transcript: {email.dashboard_url()}/dashboard/voice/calls?call={call.id}", call.user_id))
 
     # Automatic email to the customer. A call that reached its goal gets the "goal met" email when that's on.
     values = {
@@ -167,9 +171,9 @@ async def call_completed(call_id: str) -> None:
         "business": _business(settings, bot), "assistant": bot_name, "summary": call.summary or "",
         "details": automations.details_text(captured),
     }
-    if included.email_alerts and not (
-            call.successful and await automations.schedule(call.user_id, "goal_met", call.id, contact.get("email"), values)):
-        await automations.schedule(call.user_id, "call_lead", call.id, contact.get("email"), values)
+    if included.email_alerts and not (call.successful and await automations.schedule(
+            call.user_id, "goal_met", call.id, contact.get("email"), values, bot_id=call.bot_id)):
+        await automations.schedule(call.user_id, "call_lead", call.id, contact.get("email"), values, bot_id=call.bot_id)
 
     if settings.webhook_url and shared.integrations:
         await _once(call.user_id, "call_webhook", call.id,
@@ -215,7 +219,7 @@ async def handoff_requested(conversation_id: str, message: str = "") -> None:
     await _once(bot.user_id, "handoff_email", conversation_id, lambda: _email_team(
         recipients(settings, owner.email), f"{who} wants to talk to a person ({bot.bot_name})",
         f"{who} asked for a person in {channel}.\n\n" + (f"Their message: {message}\n\n" if message else "") +
-        f"Reply now from Live chat: {email.dashboard_url()}/dashboard/live-chat"))
+        f"Reply now from Live chat: {email.dashboard_url()}/dashboard/live-chat", bot.user_id))
 
 
 async def call_missed(owner_id: str, ref_id: str, phone: Optional[str], variables: Optional[dict], bot_id: Optional[str]) -> None:
@@ -231,7 +235,7 @@ async def call_missed(owner_id: str, ref_id: str, phone: Optional[str], variable
         **{automations.field_key(k): v for k, v in variables.items()},
         "name": contact.get("name"), "email": contact["email"], "phone": display(phone) if phone else "",
         "business": _business(settings, bot), "assistant": bot.bot_name if bot else "", "summary": "",
-    })
+    }, bot_id=bot_id)
 
 
 async def handoff_closed(conversation_id: str) -> None:
@@ -250,7 +254,7 @@ async def handoff_closed(conversation_id: str) -> None:
         "phone": display(contact["phone"]) if contact.get("phone") else "",
         "business": _business(settings, bot), "assistant": bot.bot_name, "summary": "",
         "details": automations.details_text(captured),
-    })
+    }, bot_id=bot.bot_id)
 
 
 async def _skip(*_, **__) -> bool:

@@ -3,8 +3,10 @@ Customer emails: what was sent (history), and bulk emails to leads.
 
 History lists every automatic and bulk email with its status; a failed or cancelled email can be
 sent again, a queued one cancelled, and a person can be stopped from getting any more emails.
-Bulk email picks leads who shared an email in chat or on a call, skips anyone who unsubscribed,
-and queues one email per address; the scheduler sends them in batches.
+Bulk email picks leads who shared an email in chat or on a call, skips anyone who unsubscribed, reported spam or whose
+address bounced, and throwaway inboxes, and queues one email per address; the scheduler sends them in batches. A
+business's own domain warms up (a little more each day for its first week), and bulk email pauses when people report it
+as spam more often than Gmail allows (0.3%).
 """
 from datetime import datetime, timedelta
 from typing import Optional
@@ -18,7 +20,8 @@ from sqlalchemy.future import select
 import assist
 from auth import AuthContext, rate_limit, require_manager
 from database import get_db
-from backend.models import Bot, CallLog, Conversation, EmailBroadcast, EmailJob, EmailUnsubscribe, IntegrationSettings
+from backend.models import Bot, CallLog, Conversation, EmailBounce, EmailBroadcast, EmailDomain, EmailJob, EmailUnsubscribe, IntegrationSettings
+from mail import address as mail_address, domains as mail_domains, senders, suppress
 from notify import automations, email
 from phone import extract_contact
 import plans
@@ -28,6 +31,8 @@ router = APIRouter(prefix="/api/integrations/email", tags=["integrations"])
 MAX_RECIPIENTS = 2000
 BROADCASTS_PER_DAY = 5
 SCAN = 5000  # most recent chats / calls looked at when building an audience
+COMPLAINT_LIMIT = 0.003   # Gmail's ceiling for spam reports (0.3%)
+COMPLAINT_SAMPLE = 200    # delivered bulk emails needed before the rate means anything
 
 
 def _iso(d: Optional[datetime]) -> Optional[str]:
@@ -38,7 +43,11 @@ def _job_json(j: EmailJob) -> dict:
     key = j.automation or ("broadcast" if j.broadcast_id else j.kind.split("#")[0])
     return {"id": j.id, "to": j.to_email, "subject": j.subject, "automation": key, "label": automations.LABELS.get(key, key),
             "step": j.step or 1, "status": j.status, "error": j.error, "broadcast_id": j.broadcast_id,
-            "send_at": _iso(j.send_at), "sent_at": _iso(j.sent_at), "created_at": _iso(j.created_at)}
+            "send_at": _iso(j.send_at), "sent_at": _iso(j.sent_at), "created_at": _iso(j.created_at),
+            # What Resend reported after sending (mail/webhooks.py). Opens are a hint: mail apps open emails by themselves.
+            "event": j.event, "event_detail": j.event_detail, "delivered_at": _iso(j.delivered_at),
+            "bounced_at": _iso(j.bounced_at), "complained_at": _iso(j.complained_at), "opened_at": _iso(j.opened_at),
+            "clicked_at": _iso(j.clicked_at)}
 
 
 async def _own_job(job_id: str, ctx: AuthContext, db: AsyncSession) -> EmailJob:
@@ -72,8 +81,8 @@ async def history(status: str = "", automation: str = "", q: str = "", offset: i
 @router.get("/jobs/{job_id}")
 async def job_detail(job_id: str, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
     job = await _own_job(job_id, ctx, db)
-    return {**_job_json(job), "body": job.body,
-            "unsubscribed": await automations.is_unsubscribed(db, ctx.owner_id, job.to_email)}
+    why = await suppress.why_blocked(db, ctx.owner_id, job.to_email)
+    return {**_job_json(job), "body": job.body, "unsubscribed": why is not None, "stopped_because": why}
 
 
 @router.post("/jobs/{job_id}/resend")
@@ -111,9 +120,8 @@ async def stop_person(data: StopIn, ctx: AuthContext = Depends(require_manager),
     if not automations.EMAIL_RE.fullmatch(address):
         raise HTTPException(status_code=400, detail="Enter a valid email address")
     cancelled = await automations.stop_for(db, ctx.owner_id, address, "Stopped by your team")
-    if not await automations.is_unsubscribed(db, ctx.owner_id, address):
-        db.add(EmailUnsubscribe(user_id=ctx.owner_id, email=address))
-    await db.commit()
+    await suppress.add(db, ctx.owner_id, address, "team")
+    await suppress.commit_quietly(db)
     return {"cancelled": cancelled}
 
 
@@ -157,13 +165,18 @@ async def _audience(db: AsyncSession, owner_id: str, a: AudienceIn) -> tuple[lis
             found.append((c.started_at, {**contact, "source": "call"}))
 
     found.sort(key=lambda x: x[0] or datetime.min, reverse=True)
-    unsub = {e for (e,) in (await db.execute(select(EmailUnsubscribe.email).where(EmailUnsubscribe.user_id == owner_id))).all()}
+    # Anyone the workspace doesn't email (any reason, offers-only opt-outs included), addresses that bounced anywhere.
+    unsub = {e.lower() for (e,) in (await db.execute(select(EmailUnsubscribe.email).where(EmailUnsubscribe.user_id == owner_id))).all()}
+    candidates = list({p["email"].lower() for _, p in found})
+    for i in range(0, len(candidates), 500):
+        chunk = candidates[i:i + 500]
+        unsub |= {e for (e,) in (await db.execute(select(EmailBounce.email).where(EmailBounce.email.in_(chunk)))).all()}
     people, seen, skipped = [], set(), set()
     for when, p in found:
         key = p["email"].lower()
         if key in seen or key in skipped:
             continue
-        if key in unsub:
+        if key in unsub or mail_address.throwaway(mail_address.domain_of(key)):
             skipped.add(key)
             continue
         seen.add(key)
@@ -200,14 +213,34 @@ async def send_broadcast(data: BroadcastIn, ctx: AuthContext = Depends(require_m
     if today >= BROADCASTS_PER_DAY:
         raise HTTPException(status_code=429, detail=f"You can send up to {BROADCASTS_PER_DAY} bulk emails a day")
     rate_limit(f"broadcast:{ctx.owner_id}", 3, 600)
+    rate = await complaint_rate(db, ctx.owner_id)
+    if rate is not None and rate > COMPLAINT_LIMIT:
+        raise HTTPException(status_code=409, detail=(
+            f"Bulk email is paused: {rate:.1%} of the people who got your recent bulk emails reported them as spam, and "
+            f"Gmail's limit is {COMPLAINT_LIMIT:.1%}. Send to people who asked to hear from you, and it opens again as "
+            "the rate falls."))
 
     people, _ = await _audience(db, ctx.owner_id, data)
     if not people:
         raise HTTPException(status_code=400, detail="No one to send to with these filters")
     if len(people) > MAX_RECIPIENTS:
         raise HTTPException(status_code=400, detail=f"That's {len(people)} people. Narrow it to {MAX_RECIPIENTS} or fewer.")
+    sender = await senders.sender_for(db, ctx.owner_id, None, settings)
+    if sender.domain:  # a domain of their own warms up: a little more bulk email each day for its first week
+        domain = (await db.execute(select(EmailDomain).where(
+            EmailDomain.user_id == ctx.owner_id, EmailDomain.name == sender.domain))).scalars().first()
+        allowance = mail_domains.bulk_allowance(domain)
+        if allowance is not None:
+            today = (await db.execute(select(func.count()).select_from(EmailJob).where(
+                EmailJob.user_id == ctx.owner_id, EmailJob.broadcast_id.isnot(None),
+                EmailJob.created_at >= datetime.utcnow() - timedelta(days=1)))).scalar_one()
+            if today + len(people) > allowance:
+                raise HTTPException(status_code=409, detail=(
+                    f"{sender.domain} is new, so mail services are still learning to trust it: it can send "
+                    f"{max(allowance - today, 0)} more bulk emails today, about twice as many each day this week. "
+                    "Narrow the group, or send the rest tomorrow."))
 
-    business = settings.sender_name or "Our team"
+    business = sender.name
     b = EmailBroadcast(user_id=ctx.owner_id, subject=data.subject.strip(), body=data.body.strip(),
                        audience={"source": data.source, "days": data.days, "hot_only": data.hot_only}, recipients=len(people))
     db.add(b)
@@ -220,6 +253,19 @@ async def send_broadcast(data: BroadcastIn, ctx: AuthContext = Depends(require_m
                         subject=automations.render(b.subject, values)[:200], body=automations.render(b.body, values), send_at=now))
     await db.commit()
     return {"id": b.id, "recipients": len(people)}
+
+
+async def complaint_rate(db: AsyncSession, owner_id: str, days: int = 30) -> Optional[float]:
+    """Spam reports per delivered bulk email in the last `days` days; None until there are enough to tell."""
+    since = datetime.utcnow() - timedelta(days=days)
+    bulk = [EmailJob.user_id == owner_id, EmailJob.broadcast_id.isnot(None), EmailJob.sent_at >= since]
+    delivered = (await db.execute(select(func.count()).select_from(EmailJob).where(
+        *bulk, EmailJob.delivered_at.isnot(None)))).scalar_one()
+    if delivered < COMPLAINT_SAMPLE:
+        return None
+    complaints = (await db.execute(select(func.count()).select_from(EmailJob).where(
+        *bulk, EmailJob.complained_at.isnot(None)))).scalar_one()
+    return complaints / delivered
 
 
 @router.get("/broadcasts")

@@ -119,6 +119,14 @@ export interface EmailRow {
     send_at: string | null;
     sent_at: string | null;
     created_at: string | null;
+    /** What Resend reported after sending (backend/mail/webhooks.py). Opens are a hint only. */
+    event: "delivered" | "delayed" | "bounced" | "complained" | "failed" | "suppressed" | null;
+    event_detail: string | null;
+    delivered_at: string | null;
+    bounced_at: string | null;
+    complained_at: string | null;
+    opened_at: string | null;
+    clicked_at: string | null;
 }
 
 export interface EmailHistory {

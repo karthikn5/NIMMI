@@ -28,6 +28,10 @@ GROUPS: dict[str, tuple[str, str]] = {  # name -> (what it's for, its tools)
     "schedule": ("Schedule: call-backs, follow-ups and meetings", "get_schedule update_schedule schedule_planned"),
     "numbers": ("phone numbers and which assistant answers each", "phone_numbers assign_number"),
     "whatsapp": ("WhatsApp numbers and chats", "whatsapp_status whatsapp_chats update_whatsapp_number"),
+    "email": ("customer emails: how sending is going, history, bulk emails and who they'd reach, sending domains, "
+              "who emails come from, addresses not emailed",
+              "email_overview email_history email_bulk_sends email_audience email_domains email_senders set_email_sender "
+              "email_stopped_addresses"),
     "connect": ("connecting WhatsApp, a phone number (Twilio or Exotel) or Cal.com, and what's connected now",
                 "connection_guide connection_status"),
     "account": ("the plan and its limits, the team, business hours",

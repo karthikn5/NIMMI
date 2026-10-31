@@ -320,6 +320,39 @@ only on the owner's machines): @.claude/private-notes.md
 - Tests: `tests/test_whatsapp.py` (FakeMeta). Local run without a number: `dev-scripts/whatsapp/fake_meta.py` +
   `sim_chat.py` (backend started with `WHATSAPP_GRAPH_URL=http://127.0.0.1:8790`); UI: `dev-scripts/ui-checks/whatsapp_ui.mjs`.
 
+## Email (mail_plan.md)
+
+- Phases 0-9 in `mail_plan.md` (written 1 Nov 2026 from the owner's idea, with market research). Phase 0 built 1 Nov
+  2026: sending foundations and the dashboard's Email section (Overview, Automations, Bulk email, History, Settings;
+  Integrations > Email points there).
+- Sending: `notify/email.py` `deliver()` (Resend, else SMTP) returns Resend's email id; `send_email()` wraps it. Every
+  customer email carries tags (`ws`, `job`, `kind`: customer / alert) and an idempotency key (`email-<job>-<attempt>`, so
+  "Send again" really sends). Nimmi's own emails come from `EMAIL_FROM`; customer emails from `CUSTOMER_EMAIL_FROM`
+  (meant: a subdomain such as mail.nimmiai.in) or the business's verified domain. `RESEND_API_URL` points local runs
+  and tests at a fake.
+- `backend/mail/`: `senders.py` (who an assistant's emails come from: its `EmailSender`, then the workspace's
+  IntegrationSettings sender_name / reply_to / sender_local / sender_domain_id, then the bot name; `{{business}}` is
+  that name), `domains.py` (a business's own domain through Resend's Domains API: DNS records shown without Resend's
+  tracking record, tracking off, a sending-only key per domain sealed with secretbox, checks every 10 min for 4 days,
+  bulk email warms up 100/200/400... a day for a week), `webhooks.py` (Resend's signed events at
+  `/api/email/webhooks/resend`, Svix scheme, `RESEND_WEBHOOK_SECRET`, kept once by svix-id in `email_events`, purged after
+  90 days), `suppress.py` (`email_unsubscribes` with reason unsubscribed / complaint / bounce / team and scope all /
+  marketing; `email_bounces` for every workspace: a hard bounce or Resend's suppression; a meeting confirmation still goes
+  to someone who unsubscribed), `address.py` (format, typo suggestion, throwaway list `disposable-email-domains`, MX
+  lookup with `dnspython`, cached a day; tests never use real DNS: conftest `_no_dns`), `contacts.py` (a website chat
+  lead becomes a `Contact` found by number, else email; `contacts.e164` is optional since Nov 2026: Postgres alters it,
+  SQLite rebuilds the table at startup, `database._relax_not_null`), `api.py` (`/api/email/...`).
+- Automatic emails (`notify/automations.py`): the text is filled in when sent (`subject_tpl`, `body_tpl`, `merge_data`,
+  refreshed from the chat or call), the address is checked first (a domain without mail: the email shows "cancelled"
+  with the reason and a likely fix), anyone stopped for any reason is skipped. The unsubscribe link only asks (scanners
+  open links): its buttons post back (that page's own CSP allows `form-action 'self'`), "Only stop offers and news",
+  Resubscribe; mail apps' one-click POST still works. Bulk email skips bounced and throwaway addresses and pauses
+  above Gmail's 0.3% spam rate (200+ delivered in 30 days). The widget asks "Did you mean ...@gmail.com?".
+- Nimmi agent: email tools in `agent/tools/email.py` (group "email", screens `email_*`).
+- Tests: `tests/test_mail_foundation.py`; browser: `dev-scripts/ui-checks/email_ui.mjs` with `email_seed.py` and
+  `dev-scripts/email/fake_resend.py` (domains, keys, sending, and Resend's signed reports back to the backend).
+- Backups (`ops/backup.py`) never run with LOCAL_DEV: a developer's .env can hold the live storage keys.
+
 ## Public site and SEO
 
 - Pages: home `src/app/page.tsx` (sections in `components/site/`); product pages `/ai-voice-agent`, `/whatsapp-chatbot`,

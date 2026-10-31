@@ -1,15 +1,20 @@
 """
-Transactional email. Uses Resend when RESEND_API_KEY is set, otherwise SMTP
-(SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS). With neither, it logs and
-returns False so local development keeps working.
+All email Nimmi sends: its own (password resets, alerts to a business's team) and customer emails for the
+businesses (mail plan). Uses Resend when RESEND_API_KEY is set, otherwise SMTP (SMTP_HOST / SMTP_PORT / SMTP_USER /
+SMTP_PASS). With neither, it logs and fails, so local development keeps working.
+
+Nimmi's own emails come from EMAIL_FROM; customer emails from CUSTOMER_EMAIL_FROM (a subdomain such as
+mail.nimmiai.in, so customers' mail never affects password resets), or from the business's own verified domain.
 """
 import asyncio
 import base64
 import html
 import logging
 import os
+import re
 import smtplib
 from contextvars import ContextVar
+from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Optional
 
@@ -25,6 +30,13 @@ def last_error() -> Optional[str]:
     return _last_error.get()
 
 
+@dataclass
+class Delivery:
+    ok: bool
+    id: Optional[str] = None  # Resend's email id: its webhook events name the email by it
+    error: Optional[str] = None
+
+
 def _resend_reason(status: int, body: str) -> str:
     try:
         message = str(httpx.Response(status, content=body).json().get("message") or "")
@@ -32,9 +44,23 @@ def _resend_reason(status: int, body: str) -> str:
         message = body
     if "testing emails" in message or "verify a domain" in message:
         return "Resend is in test mode: it only sends to your own Resend address until your domain is verified"
+    if "not verified" in message and "domain" in message:
+        return "The sending domain isn't verified in Resend yet"
     if status in (401, 403) and "API key" in message:
         return "Resend rejected the API key"
+    if status == 429 and "quota" in message:
+        return "Resend's sending allowance for the day or month is used up"
     return f"Resend: {message[:200]}" if message else f"Resend returned {status}"
+
+
+def resend_url() -> str:
+    """Resend's API; RESEND_API_URL points local runs and tests at a fake (dev-scripts/email/fake_resend.py)."""
+    return os.getenv("RESEND_API_URL", "https://api.resend.com").rstrip("/")
+
+
+def resend_client(timeout: float = 15) -> httpx.AsyncClient:
+    """Every call to Resend goes through this (tests swap in a mock transport)."""
+    return httpx.AsyncClient(timeout=timeout, headers={"User-Agent": "nimmi-ai"})  # Resend refuses requests without one
 
 
 def dashboard_url() -> str:
@@ -45,57 +71,90 @@ def _sender() -> str:
     return os.getenv("EMAIL_FROM") or os.getenv("SMTP_USER") or "Nimmi AI <notifications@nimmiai.in>"
 
 
+def customer_sender() -> str:
+    """Where customer emails come from when the business has no verified domain of its own."""
+    return os.getenv("CUSTOMER_EMAIL_FROM") or _sender()
+
+
+def address_of(sender: str) -> str:
+    return sender[sender.find("<") + 1:sender.find(">")] if "<" in sender else sender
+
+
 def is_configured() -> bool:
     return bool(os.getenv("RESEND_API_KEY") or (os.getenv("SMTP_HOST") and os.getenv("SMTP_USER") and os.getenv("SMTP_PASS")))
 
 
-def _from(from_name: Optional[str]) -> str:
-    """Our sending address, optionally under the business's name ("Acme Realty <notifications@...>")."""
-    sender = _sender()
+def _from(from_name: Optional[str], address: Optional[str] = None) -> str:
+    """The From line: our sending address (or the one given), under the business's name ("Acme Realty <...>")."""
+    sender = f"<{address}>" if address else _sender()
     if not from_name:
-        return sender
-    address = sender[sender.find("<") + 1:sender.find(">")] if "<" in sender else sender
+        return address or sender
     clean = "".join(ch for ch in from_name if ch not in '<>"\r\n').strip()[:60]
-    return f'"{clean}" <{address}>' if clean else sender
+    return f'"{clean}" <{address_of(sender)}>' if clean else (address or sender)
 
 
-async def send_email(to: str, subject: str, text: str, html_body: Optional[str] = None,
-                     reply_to: Optional[str] = None, from_name: Optional[str] = None,
-                     unsubscribe_url: Optional[str] = None, attachments: Optional[list[dict]] = None) -> bool:
-    """`attachments`: [{"filename", "content" (text or bytes), "content_type"}], e.g. a calendar invite."""
+_TAG = re.compile(r"[^A-Za-z0-9_-]")
+
+
+async def deliver(to: str, subject: str, text: str, html_body: Optional[str] = None, *,
+                  reply_to: Optional[str] = None, from_name: Optional[str] = None, from_address: Optional[str] = None,
+                  unsubscribe_url: Optional[str] = None, attachments: Optional[list[dict]] = None,
+                  tags: Optional[dict] = None, idempotency_key: Optional[str] = None,
+                  api_key: Optional[str] = None) -> Delivery:
+    """
+    Send one email. `attachments`: [{"filename", "content" (text or bytes), "content_type"}], e.g. a calendar invite.
+    `tags` (workspace, email, kind) come back on Resend's events; `idempotency_key` makes a repeated request a no-op at
+    Resend for 24 hours; `api_key` is a domain's own sending key; `from_address` sends from that address.
+    """
     # One-click unsubscribe (RFC 8058): Gmail and Yahoo expect it on emails to customers.
     extra = {"List-Unsubscribe": f"<{unsubscribe_url}>", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"} if unsubscribe_url else {}
     _last_error.set(None)
-    if os.getenv("RESEND_API_KEY"):
+    key = api_key or os.getenv("RESEND_API_KEY")
+    if key:
+        payload = {"from": _from(from_name, from_address), "to": [to], "subject": subject, "text": text,
+                   "html": html_body or _plain_html(text)}
+        if reply_to:
+            payload["reply_to"] = [reply_to]
+        if extra:
+            payload["headers"] = extra
+        if attachments:
+            payload["attachments"] = [{"filename": a["filename"], "content_type": a["content_type"],
+                                       "content": base64.b64encode(_bytes(a["content"])).decode()} for a in attachments]
+        if tags:
+            payload["tags"] = [{"name": _TAG.sub("_", str(k))[:256], "value": _TAG.sub("_", str(v))[:256]}
+                               for k, v in tags.items() if v]
+        headers = {"Authorization": f"Bearer {key}"}
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key[:256]
         try:
-            payload = {"from": _from(from_name), "to": [to], "subject": subject, "text": text, "html": html_body or _plain_html(text)}
-            if reply_to:
-                payload["reply_to"] = [reply_to]
-            if extra:
-                payload["headers"] = extra
-            if attachments:
-                payload["attachments"] = [{"filename": a["filename"], "content_type": a["content_type"],
-                                           "content": base64.b64encode(_bytes(a["content"])).decode()} for a in attachments]
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(
-                    "https://api.resend.com/emails",
-                    headers={"Authorization": f"Bearer {os.getenv('RESEND_API_KEY')}"},
-                    json=payload,
-                )
+            async with resend_client() as client:
+                for attempt in range(2):
+                    resp = await client.post(f"{resend_url()}/emails", headers=headers, json=payload)
+                    wait = resp.headers.get("retry-after")
+                    # Over 10 requests a second (the team's limit, across four processes): wait it out once.
+                    if resp.status_code == 429 and attempt == 0 and "quota" not in resp.text and (wait or "1").isdigit() and int(wait or "1") <= 2:
+                        await asyncio.sleep(int(wait or "1"))
+                        continue
+                    break
             if resp.status_code >= 300:
                 logger.error(f"Resend rejected email to {to}: {resp.status_code} {resp.text[:200]}")
-                _last_error.set(_resend_reason(resp.status_code, resp.text))
-                return False
-            return True
+                reason = _resend_reason(resp.status_code, resp.text)
+                _last_error.set(reason)
+                return Delivery(False, error=reason)
+            try:
+                provider_id = resp.json().get("id")
+            except Exception:
+                provider_id = None
+            return Delivery(True, id=provider_id)
         except Exception as e:
             logger.error(f"Resend error: {e}")
             _last_error.set("Couldn't reach Resend")
-            return False
+            return Delivery(False, error="Couldn't reach Resend")
 
     host, user, password = os.getenv("SMTP_HOST"), os.getenv("SMTP_USER"), os.getenv("SMTP_PASS")
     if host and user and password:
         msg = EmailMessage()
-        msg["Subject"], msg["From"], msg["To"] = subject, _from(from_name), to
+        msg["Subject"], msg["From"], msg["To"] = subject, _from(from_name, from_address), to
         if reply_to:
             msg["Reply-To"] = reply_to
         for k, v in extra.items():
@@ -114,15 +173,23 @@ async def send_email(to: str, subject: str, text: str, html_body: Optional[str] 
 
         try:
             await asyncio.to_thread(_send)
-            return True
+            return Delivery(True)
         except Exception as e:
             logger.error(f"SMTP error: {e}")
             _last_error.set(f"SMTP: {str(e)[:200]}")
-            return False
+            return Delivery(False, error=f"SMTP: {str(e)[:200]}")
 
     logger.warning(f"Email not configured; would have sent '{subject}' to {to}")
     _last_error.set("Email sending isn't set up on the server")
-    return False
+    return Delivery(False, error="Email sending isn't set up on the server")
+
+
+async def send_email(to: str, subject: str, text: str, html_body: Optional[str] = None,
+                     reply_to: Optional[str] = None, from_name: Optional[str] = None,
+                     unsubscribe_url: Optional[str] = None, attachments: Optional[list[dict]] = None, **more) -> bool:
+    """`deliver`, for callers that only need to know whether it went (`more`: deliver's other options)."""
+    return (await deliver(to, subject, text, html_body, reply_to=reply_to, from_name=from_name,
+                          unsubscribe_url=unsubscribe_url, attachments=attachments, **more)).ok
 
 
 def _bytes(content) -> bytes:

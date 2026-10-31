@@ -372,3 +372,31 @@ def test_a_replaced_encryption_key_can_still_read_old_secrets(monkeypatch):
     monkeypatch.setenv("ENCRYPTION_OLD_KEYS", "the-first-key-used-on-the-server")
     assert secretbox.unseal(sealed) == "twilio-token"
     assert secretbox.unseal(secretbox.seal("new")) == "new"  # new secrets use the new key
+
+
+def test_a_local_development_server_never_backs_up_into_production_storage(run, monkeypatch):
+    """A developer's .env can hold the live storage keys while the app runs on local SQLite (Nov 2026: the local server
+    listed live's backups bucket at start); its database must never become one of production's daily backups."""
+    import time
+    from ops import backup
+    uploads = []
+
+    async def listing(client, url, headers):
+        return []  # no backup yet today
+
+    async def upload():
+        uploads.append(1)
+        return "nimmi-backup"
+    monkeypatch.setattr(backup, "_storage", lambda: ("https://storage.test", {}))
+    monkeypatch.setattr(backup, "_list", listing)
+    monkeypatch.setattr(backup, "upload_backup", upload)
+
+    monkeypatch.setenv("LOCAL_DEV", "true")
+    monkeypatch.setattr(backup, "_last_check", time.monotonic() - 7 * 3600)
+    run(backup.maybe_backup)
+    assert uploads == []
+
+    monkeypatch.setenv("LOCAL_DEV", "false")
+    monkeypatch.setattr(backup, "_last_check", time.monotonic() - 7 * 3600)
+    run(backup.maybe_backup)
+    assert uploads == [1]  # a real server still makes its daily backup

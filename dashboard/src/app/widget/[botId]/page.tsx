@@ -6,7 +6,7 @@ import { Send, User, Bot, X, Clock, Paperclip, Phone, ThumbsUp, ThumbsDown, Mic,
 import { useSearchParams } from "next/navigation";
 import { io, type Socket } from "socket.io-client";
 import { motion, AnimatePresence } from "framer-motion";
-import { Flow, evaluate, questionFor, validate, variableName, type FlowNode, type InputType } from "./flow";
+import { Flow, emailSuggestion, evaluate, questionFor, validate, variableName, type FlowNode, type InputType } from "./flow";
 import { isLight } from "@/lib/color";
 import { RichText } from "./rich";
 import { speechLang, useVoiceInput } from "./voice";
@@ -28,7 +28,8 @@ type Pending =
     | { kind: "choices"; node: FlowNode; options: string[] }
     | { kind: "rating"; node: FlowNode; scale: number }
     | { kind: "file"; node: FlowNode }
-    | { kind: "callback"; node: FlowNode; phone: string };
+    | { kind: "callback"; node: FlowNode; phone: string }
+    | { kind: "emailFix"; node: FlowNode; typed: string; suggested: string };
 
 const CALL_YES = "Yes, call me";
 const CALL_NO = "No, thanks";
@@ -278,6 +279,14 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
         if (p.kind === "input") {
             const problem = validate(p.type, value);
             if (problem) { say(problem); return; }
+            // "karthi@gmial.com": ask once, before the welcome email goes to an address that doesn't exist.
+            const fix = p.type === "emailInput" ? emailSuggestion(value.trim()) : null;
+            if (fix) {
+                await sleep(300);
+                say(`Did you mean ${fix}?`);
+                setPending({ kind: "emailFix", node: p.node, typed: value.trim(), suggested: fix });
+                return;
+            }
             setPending(null);
             saveVar(variableName(p.node), value.trim());
             // A phone number is the moment to offer a call, if the business takes callbacks.
@@ -287,6 +296,14 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                 setPending({ kind: "callback", node: p.node, phone: value.trim() });
                 return;
             }
+            return run(flow.next(p.node.id));
+        }
+        if (p.kind === "emailFix") {
+            const v = value.trim();
+            const chosen = v === p.suggested || v === p.typed ? v : !validate("emailInput", v) ? v : null;
+            if (!chosen) { say("Please pick one of these, or type your email again."); return; }
+            setPending(null);
+            saveVar(variableName(p.node), chosen);
             return run(flow.next(p.node.id));
         }
         if (p.kind === "callback") {
@@ -437,7 +454,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
         }
 
         // Typing answers the flow's question; a typed option counts as choosing it.
-        if (pending?.kind === "input" && !flowWaiting) return answer(text);
+        if ((pending?.kind === "input" || pending?.kind === "emailFix") && !flowWaiting) return answer(text);
         if (!suggested && (pending?.kind === "choices" || pending?.kind === "callback")) {
             const options = pending.kind === "choices" ? pending.options : [CALL_YES, CALL_NO];
             const match = options.find((o) => o.toLowerCase() === text.toLowerCase());
@@ -652,6 +669,9 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                     <div className="flex flex-wrap gap-2 pl-9">
                         {pending.kind === "choices" && pending.options.map((o) => (
                             <button key={o} onClick={() => answer(o)} className={chip} style={{ borderColor: primaryColor, color: primaryColor }}>{o}</button>
+                        ))}
+                        {pending.kind === "emailFix" && [pending.suggested, pending.typed].map((o) => (
+                            <button key={o} onClick={() => answer(o)} className={`${chip} break-all`} style={{ borderColor: primaryColor, color: primaryColor }}>{o}</button>
                         ))}
                         {pending.kind === "rating" && Array.from({ length: pending.scale }, (_, i) => String(i + 1)).map((n) => (
                             <button key={n} onClick={() => answer(n)} className={`${chip} w-9 px-0`} style={{ borderColor: primaryColor, color: primaryColor }}>{n}</button>

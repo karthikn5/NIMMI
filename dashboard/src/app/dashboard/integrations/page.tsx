@@ -1,24 +1,24 @@
 "use client";
 
-import { Suspense, useEffect, useState, type ComponentType } from "react";
+import { Suspense, useEffect, type ComponentType } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Activity, Contact, Mail, MessageCircle, Webhook } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
 import { SaveBar, Skeleton, Status, ToastProvider, cn, useToast } from "@/components/ui";
-import { EmailPanel } from "@/components/integrations/EmailPanel";
+import { EmailMovedPanel } from "@/components/integrations/EmailPanel";
 import { ActivityPanel, LeadSquaredPanel, WebhookPanel } from "@/components/integrations/OtherPanels";
 import { WhatsAppPanel } from "@/components/integrations/WhatsAppPanel";
-import type { PanelProps, TestChannel } from "@/components/integrations/shared";
-import { apiJson, currentUserId } from "@/lib/api";
+import { useIntegrations } from "@/components/integrations/useIntegrations";
+import { currentUserId } from "@/lib/api";
 import type { IntegrationSettings, LogRow } from "@/lib/integrations";
-import { useApi, useDraft } from "@/lib/useApi";
+import { useApi } from "@/lib/useApi";
 import { PlanNeeded, useLimits } from "@/lib/plan";
 
 type Tab = "email" | "whatsapp" | "webhook" | "leadsquared" | "activity";
 type Tone = "good" | "neutral" | "warn" | "bad";
 
 const TABS: { id: Tab; label: string; hint: string; icon: ComponentType<{ size?: number; className?: string }> }[] = [
-    { id: "email", label: "Email", hint: "Alerts and customer follow-ups", icon: Mail },
+    { id: "email", label: "Email", hint: "Now its own section", icon: Mail },
     { id: "whatsapp", label: "WhatsApp", hint: "Now its own section", icon: MessageCircle },
     { id: "webhook", label: "Webhook", hint: "Your own system, Zapier, Make", icon: Webhook },
     { id: "leadsquared", label: "LeadSquared", hint: "CRM sync", icon: Contact },
@@ -84,10 +84,8 @@ function Integrations() {
     const pathname = usePathname();
     const params = useSearchParams();
     const toast = useToast();
-    const settings = useApi<IntegrationSettings>("/api/integrations");
     const log = useApi<LogRow[]>("/api/integrations/log");
-    const { draft, setDraft, dirty, saving, save, discard } = useDraft(settings, "/api/integrations");
-    const [testing, setTesting] = useState<string | null>(null);
+    const { settings, draft, dirty, saving, save, discard, props } = useIntegrations(() => log.reload());
     const requested = params.get("tab") as Tab | null;
     const tab: Tab = TABS.some((t) => t.id === requested) ? requested! : "email";
 
@@ -95,25 +93,8 @@ function Integrations() {
 
     const go = (t: Tab) => router.replace(`${pathname}?tab=${t}`, { scroll: false });
 
-    const test: PanelProps["test"] = async (channel: TestChannel, automation?: string, phone?: string) => {
-        if (dirty) return toast("Save your changes first, so the test uses them.");
-        const key = automation ? `${channel}:${automation}` : channel;
-        setTesting(key);
-        try {
-            await apiJson("/api/integrations/test", { method: "POST", json: { channel, automation, to_phone: phone } });
-            toast(channel === "whatsapp" ? "Test message sent" : channel === "email_automation" ? "Test email sent to your alert address" : "Test sent");
-        } catch (e) {
-            toast((e as Error).message);
-        } finally {
-            setTesting(null);
-            log.reload();
-        }
-    };
-
     if (settings.error) return <p className="mt-8 text-sm text-signal">{settings.error}</p>;
-    if (!draft) return <Skeleton className="h-96 mt-8" />;
-    const set: PanelProps["set"] = (k, v) => setDraft({ ...draft, [k]: v });
-    const props: PanelProps = { draft, saved: settings.data, set, test, testing };
+    if (!draft || !props) return <Skeleton className="h-96 mt-8" />;
 
     return (
         <div className="mt-8 grid lg:grid-cols-[15rem_minmax(0,1fr)] gap-6 lg:gap-8 items-start">
@@ -151,7 +132,7 @@ function Integrations() {
             </nav>
 
             <section className="min-w-0">
-                {tab === "email" && <EmailPanel {...props} />}
+                {tab === "email" && <EmailMovedPanel />}
                 {tab === "whatsapp" && <WhatsAppPanel />}
                 {tab === "webhook" && <WebhookPanel {...props} />}
                 {tab === "leadsquared" && <LeadSquaredPanel {...props} />}

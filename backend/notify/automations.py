@@ -8,10 +8,11 @@ Triggers (each can be a short sequence of up to three emails):
   call_missed   we called (call-back or campaign) and never reached them
   handoff_done  a person from the team finished helping them in Live chat
 
-A trigger queues one EmailJob per step; the scheduler sends each when due. Follow-up steps stop
-when the customer unsubscribes, when a later call with them reaches its goal, or when the business
-stops them. Every email carries the business's name, replies go to the business, and there's an
-unsubscribe link that's honoured before each send. Bulk emails (broadcasts) use the same queue.
+A trigger queues one EmailJob per step; the scheduler sends each when due. The text is filled in when it's sent, from
+the chat or call as it is then (a name given after the email address still makes it in). Follow-up steps stop when the
+customer unsubscribes, reports spam, the address bounces, a later call with them reaches its goal, or the business
+stops them. Every email comes from the assistant's sender (mail/senders.py), replies go to the business, and there's
+an unsubscribe link that's honoured before each send. Bulk emails (broadcasts) use the same queue.
 """
 import hashlib
 import html
@@ -26,8 +27,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 
 from database import async_session
-from backend.models import CallLog, EmailJob, EmailUnsubscribe, IntegrationSettings, NotificationLog
+from backend.models import CallLog, Conversation, EmailJob, IntegrationSettings, NotificationLog
+from mail import address as mail_address, senders, suppress
 from notify import email
+from phone import display, extract_contact
 
 logger = logging.getLogger(__name__)
 
@@ -116,24 +119,27 @@ def html_email(body: str, business: str, unsubscribe_url: Optional[str]) -> str:
             f'font-size:12px;color:#78716c;text-align:center">{footer}</p></div>')
 
 
-def unsubscribe_url(owner_id: str, to: str) -> str:
+def unsubscribe_url(owner_id: str, to: str, bot_id: Optional[str] = None) -> str:
     from auth import issue_scoped_token
-    token = issue_scoped_token(f"{owner_id}|{to.lower()}", "email_unsub", 365 * 24 * 3600)
+    subject = f"{owner_id}|{to.lower()}" + (f"|{bot_id}" if bot_id else "")
+    token = issue_scoped_token(subject, "email_unsub", 365 * 24 * 3600)
     base = os.getenv("PUBLIC_BACKEND_URL") or os.getenv("BACKEND_URL", "http://localhost:8000")
     return f"{base.rstrip('/')}/api/integrations/email/unsubscribe?token={token}"
 
 
 async def is_unsubscribed(db, owner_id: str, to: str) -> bool:
-    return (await db.execute(select(EmailUnsubscribe.id).where(
-        EmailUnsubscribe.user_id == owner_id, EmailUnsubscribe.email == to.lower()))).first() is not None
+    """Whether this workspace mustn't email them at all (unsubscribed, spam report, bounce, stopped by the team)."""
+    return await suppress.why_blocked(db, owner_id, to) is not None
 
 
 def job_kind(automation: str, step: int) -> str:
     return automation if step == 1 else f"{automation}#{step}"
 
 
-async def schedule(owner_id: str, kind: str, ref_id: str, to: Optional[str], values: dict) -> bool:
-    """Queue this automation's emails for one customer, if it's on. True if queued (once per kind + ref)."""
+async def schedule(owner_id: str, kind: str, ref_id: str, to: Optional[str], values: dict,
+                   bot_id: Optional[str] = None) -> bool:
+    """Queue this automation's emails for one customer, if it's on. True if queued (once per kind + ref).
+    An address whose domain takes no mail gets its first email as "cancelled", with the reason, so History shows it."""
     to = (to or "").strip()
     if not to or not EMAIL_RE.fullmatch(to):
         return False
@@ -144,17 +150,54 @@ async def schedule(owner_id: str, kind: str, ref_id: str, to: Optional[str], val
             return False
         if await _looks_abusive(db, owner_id, kind, to):
             return False
-        values = {**values, "name": values.get("name") or "there"}
-        now = datetime.utcnow()
+    verdict = await mail_address.check(to)  # a DNS lookup: outside the session, so no connection waits on it
+    values = {**values, "name": values.get("name") or "there"}
+    now = datetime.utcnow()
+    async with async_session() as db:
         for i, step in enumerate(auto["steps"][:MAX_STEPS], start=1):
-            db.add(EmailJob(user_id=owner_id, kind=job_kind(kind, i), ref_id=ref_id, to_email=to, automation=kind, step=i,
-                            subject=render(step["subject"], values)[:200], body=render(step["body"], values),
-                            send_at=now + timedelta(seconds=DELAYS.get(step["delay"], 0))))
+            job = EmailJob(user_id=owner_id, bot_id=bot_id, kind=job_kind(kind, i), ref_id=ref_id, to_email=to,
+                           automation=kind, step=i, subject=render(step["subject"], values)[:200],
+                           body=render(step["body"], values), subject_tpl=step["subject"], body_tpl=step["body"],
+                           merge_data=_json_safe(values), send_at=now + timedelta(seconds=DELAYS.get(step["delay"], 0)))
+            if not verdict.ok:
+                job.status = "cancelled"
+                job.error = verdict.reason + (f". Did they mean {verdict.suggestion}?" if verdict.suggestion else "")
+                db.add(job)
+                break
+            db.add(job)
         try:
             await db.commit()
         except IntegrityError:
             return False  # already queued for this lead
-    return True
+    return verdict.ok
+
+
+def _json_safe(values: dict) -> dict:
+    return {str(k): (v if isinstance(v, (str, int, float, bool)) or v is None else str(v)) for k, v in values.items()}
+
+
+async def _fresh_values(db, job: EmailJob) -> tuple[dict, Optional[str]]:
+    """The placeholder values as the chat or call is now, over the ones saved when it was queued; and its assistant."""
+    values = dict(job.merge_data or {})
+    bot_id = job.bot_id
+    captured, summary = None, None
+    if job.automation in ("chat_lead", "handoff_done"):
+        conv = await db.get(Conversation, job.ref_id)
+        if conv is not None:
+            captured, bot_id = conv.captured_data or {}, bot_id or conv.bot_id
+    elif job.automation in ("call_lead", "goal_met"):
+        call = await db.get(CallLog, job.ref_id)
+        if call is not None:
+            captured, summary, bot_id = call.captured or {}, call.summary, bot_id or call.bot_id
+    if captured is not None:
+        found = extract_contact(captured)
+        fresh = {field_key(k): v for k, v in captured.items() if v not in (None, "")}
+        fresh.update({k: v for k, v in (("name", found.get("name")), ("email", found.get("email")),
+                                        ("phone", display(found["phone"]) if found.get("phone") else None),
+                                        ("details", details_text(captured)), ("summary", summary)) if v})
+        values.update(fresh)
+    values["name"] = values.get("name") or "there"
+    return values, bot_id
 
 
 DAILY_CAP = int(os.getenv("AUTOMATION_DAILY_CAP", "500"))  # automatic emails one workspace can queue per day
@@ -198,9 +241,11 @@ async def process_due() -> None:
                                  .order_by(EmailJob.send_at).limit(BATCH))).scalars().all()
         for job in jobs:
             settings = (await db.execute(select(IntegrationSettings).where(IntegrationSettings.user_id == job.user_id))).scalars().first()
-            if await is_unsubscribed(db, job.user_id, job.to_email):
-                job.status, job.error = "cancelled", "They unsubscribed"
+            why = await suppress.why_blocked(db, job.user_id, job.to_email, marketing=bool(job.broadcast_id))
+            if why:
+                job.status, job.error = "cancelled", why
                 continue
+            bot_id = job.bot_id
             if not job.broadcast_id:
                 key = job.automation or job.kind.split("#")[0]
                 auto = automations(settings).get(key)
@@ -213,23 +258,38 @@ async def process_due() -> None:
                 if (job.step or 1) > 1 and await _reached_goal_since(db, job):
                     job.status, job.error = "cancelled", "Stopped: a later call reached its goal"
                     continue
-            business = (settings.sender_name if settings else None) or "Our team"
-            link = unsubscribe_url(job.user_id, job.to_email)
-            text = f"{job.body}\n\n--\n{business}\nUnsubscribe: {link}"
+            values = None
+            if not job.broadcast_id and job.subject_tpl is not None:  # queued since Nov 2026: filled in now
+                values, bot_id = await _fresh_values(db, job)
+                job.bot_id = bot_id
+            sender = await senders.sender_for(db, job.user_id, bot_id, settings)
+            if values is not None:  # from the chat or call as it is now, under the assistant's own sender name
+                values["business"] = sender.name
+                job.subject = render(job.subject_tpl, values)[:200] or job.subject
+                job.body = render(job.body_tpl or "", values) or job.body
+            link = unsubscribe_url(job.user_id, job.to_email, bot_id)
+            text = f"{job.body}\n\n--\n{sender.name}\nUnsubscribe: {link}"
+            job.attempts = (job.attempts or 0) + 1
             result: dict = {}
 
-            async def send(job=job, text=text, business=business, link=link, result=result):
-                ok = await email.send_email(job.to_email, job.subject, text, html_email(job.body, business, link),
-                                            reply_to=settings.reply_to if settings else None, from_name=business,
-                                            unsubscribe_url=link)
-                result["ok"], result["error"] = ok, email.last_error()
-                return None if ok else (result["error"] or "email not configured")
+            async def send(job=job, text=text, sender=sender, link=link, result=result):
+                result["called"] = True
+                sent = await email.deliver(
+                    job.to_email, job.subject, text, html_email(job.body, sender.name, link), reply_to=sender.reply_to,
+                    from_name=sender.name, from_address=sender.address, api_key=sender.api_key, unsubscribe_url=link,
+                    tags={"ws": job.user_id, "job": job.id, "kind": "customer"},
+                    idempotency_key=f"email-{job.id}-{job.attempts}")  # a retry of this send is a no-op at Resend
+                result["sent"] = sent
+                return None if sent.ok else (sent.error or "email not configured")
             await db.commit()  # _once writes in its own session; SQLite allows one writer at a time
             await _once(job.user_id, f"auto_{job.kind}", job.ref_id, send)
-            if result.get("ok"):
-                job.status, job.error, job.sent_at = "sent", None, datetime.utcnow()
-            else:
-                job.status, job.error = "failed", result.get("error") or "Email provider not configured or rejected the message"
+            sent = result.get("sent")
+            if sent is not None and sent.ok:
+                job.status, job.error, job.sent_at, job.provider_id = "sent", None, datetime.utcnow(), sent.id
+            elif result.get("called"):
+                job.status, job.error = "failed", (sent.error if sent else None) or "Email provider not configured or rejected the message"
+            else:  # another process sent it already (its claim was there first)
+                job.status, job.error = "sent", None
         await db.commit()
 
 
@@ -248,15 +308,15 @@ async def stop_for(db, owner_id: str, to: str, reason: str) -> int:
     return len(jobs)
 
 
-async def unsubscribe(owner_id: str, to: str) -> None:
+async def unsubscribe(owner_id: str, to: str, scope: str = "all", bot_id: Optional[str] = None) -> None:
+    """From the link in an email: "all" stops every email from this workspace, "marketing" only bulk email."""
     async with async_session() as db:
-        if not await is_unsubscribed(db, owner_id, to):
-            db.add(EmailUnsubscribe(user_id=owner_id, email=to.lower()))
-        await stop_for(db, owner_id, to, "They unsubscribed")
-        try:
-            await db.commit()
-        except IntegrityError:
-            pass
+        await suppress.add(db, owner_id, to, "unsubscribed", scope=scope, bot_id=bot_id)
+        if scope == "all":
+            await stop_for(db, owner_id, to, "They unsubscribed")
+        else:
+            await suppress.cancel_queued_bulk(db, owner_id, to)
+        await suppress.commit_quietly(db)
 
 
 def recipient_ref(address: str) -> str:

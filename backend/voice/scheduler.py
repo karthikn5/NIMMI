@@ -310,6 +310,15 @@ async def renew_numbers() -> None:
                                      f"{number.number} was unpaid for {NUMBER_GRACE_DAYS} days, so it has been released.")
 
 
+async def purge_email_events(days: int = 90) -> None:
+    """Resend's reports are kept 90 days; each email keeps its own summary (delivered, bounced...) for good."""
+    from sqlalchemy import delete
+    from backend.models import EmailEvent
+    async with async_session() as db:
+        await db.execute(delete(EmailEvent).where(EmailEvent.created_at < datetime.utcnow() - timedelta(days=days)))
+        await db.commit()
+
+
 async def _loop() -> None:
     last_purge = datetime.min
     last_recycle = datetime.min
@@ -335,6 +344,7 @@ async def _loop() -> None:
             await meetings.process_due()  # meeting reminders and links, requests that ran out of time
             if datetime.utcnow() - last_purge > timedelta(hours=6):
                 await purge_expired_recordings()
+                await purge_email_events()
                 if twilio.configured():
                     await renew_numbers()
                 last_purge = datetime.utcnow()
@@ -347,6 +357,8 @@ async def _loop() -> None:
             if datetime.utcnow() - last_billing > timedelta(minutes=10):
                 import payments
                 await payments.maintenance()  # plan reminders and endings, Razorpay subscriptions still to stop
+                from mail import domains as mail_domains
+                await mail_domains.check_pending()  # businesses' own sending domains waiting for their DNS records
                 last_billing = datetime.utcnow()
             if datetime.utcnow() - last_sites > timedelta(minutes=2):
                 from sites import deploy as site_deploys

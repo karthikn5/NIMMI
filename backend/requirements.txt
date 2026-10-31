@@ -56,3 +56,6 @@ youtube-transcript-api
 razorpay
 python-dotenv>=1.2.2
 pydantic
+# Email (mail/address.py): can an address's domain receive mail, and is it a throwaway inbox
+dnspython>=2.6
+disposable-email-domains

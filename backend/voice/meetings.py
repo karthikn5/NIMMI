@@ -486,6 +486,7 @@ async def _note_sent(meeting_id: str, what: str, via: list[str]) -> None:
 async def _to_person(meeting_id: str, what: str) -> Optional[str]:
     """Write to the person about their meeting, on WhatsApp and by email. None when it went out at least one way, else
     why it didn't."""
+    from mail import senders, suppress
     from notify import channels as notify_channels, email
     from whatsapp import chats as wa_chats, outbound
     async with async_session() as db:
@@ -495,6 +496,10 @@ async def _to_person(meeting_id: str, what: str) -> Optional[str]:
         settings = await settings_for(meeting.bot_id, db)
         business = await _business(db, meeting.bot_id)
         number, chat = await _whatsapp_chat(db, meeting)
+        # From the assistant's email sender, replies to the business. They asked for the meeting, so it still goes to
+        # someone who unsubscribed; never to an address that bounced or reported spam.
+        sender = await senders.sender_for(db, meeting.user_id, meeting.bot_id)
+        blocked = await suppress.why_blocked(db, meeting.user_id, meeting.email, requested=True) if meeting.email else None
     text, params, subject = _texts(meeting, settings, business, what)
     via, problems = [], []
     if number is not None:
@@ -512,13 +517,18 @@ async def _to_person(meeting_id: str, what: str) -> Optional[str]:
             via.append("whatsapp")
         except Exception as e:
             problems.append(f"WhatsApp: {str(e)[:200]}")
-    if meeting.email:
+    if meeting.email and blocked:
+        problems.append(f"Email: {blocked}")
+    elif meeting.email:
         invite = [{"filename": "meeting.ics", "content": ics(meeting, settings, business),
                    "content_type": "text/calendar; charset=utf-8; method=PUBLISH"}] if what == "confirmed" else None
-        if await email.send_email(meeting.email, subject, text, from_name=business, attachments=invite):
+        sent = await email.deliver(meeting.email, subject, text, from_name=sender.name, from_address=sender.address,
+                                   api_key=sender.api_key, reply_to=sender.reply_to, attachments=invite,
+                                   tags={"ws": meeting.user_id, "kind": "customer", "meeting": meeting.id})
+        if sent.ok:
             via.append("email")
         else:
-            problems.append(f"Email: {email.last_error() or 'not sent'}")
+            problems.append(f"Email: {sent.error or 'not sent'}")
     if via:
         await _note_sent(meeting_id, what, via)
         return None

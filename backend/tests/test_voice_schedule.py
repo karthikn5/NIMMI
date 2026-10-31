@@ -369,10 +369,11 @@ def test_the_confirmation_email_carries_a_calendar_invite(run, make_user, monkey
                                 starts_at=datetime(2030, 1, 2, 5, 0)))
     emails = []
 
-    async def send_email(to, subject, text, html_body=None, reply_to=None, from_name=None, unsubscribe_url=None, attachments=None):
+    async def deliver(to, subject, text, html_body=None, *, attachments=None, **_):
         emails.append((to, subject, text, attachments))
-        return True
-    monkeypatch.setattr("notify.email.send_email", send_email)
+        from notify import email
+        return email.Delivery(True)
+    monkeypatch.setattr("notify.email.deliver", deliver)
     run(meetings.send_confirmation, meeting.id)
     run(meetings.send_confirmation, meeting.id)  # once only
     to_person = [e for e in emails if e[0] == "priya@example.com"]

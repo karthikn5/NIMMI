@@ -76,3 +76,15 @@ class User:
 @pytest.fixture
 def make_user(client):
     return lambda name="Test User": User(client, name)
+
+
+@pytest.fixture(autouse=True)
+def _no_dns(monkeypatch):
+    """Tests never look up real DNS (example.com itself says it takes no mail): every domain receives mail, unless a
+    test says otherwise by patching mail.address._lookup."""
+    from mail import address
+
+    async def lookup(domain):
+        return True
+    monkeypatch.setattr(address, "_lookup", lookup)
+    address._cache.clear()

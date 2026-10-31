@@ -139,7 +139,10 @@ def _stamp(name: str) -> Optional[datetime]:
 async def maybe_backup() -> None:
     """Called by the scheduler loop: one backup a day, checked at most every 6 hours."""
     global _last_check
-    if os.getenv("BACKUPS", "on").lower() == "off" or not _storage() or time.monotonic() - _last_check < 6 * 3600:
+    from security import local_dev
+    # A developer's machine runs on its own SQLite database, often with the live storage keys in its .env: its copy
+    # must never land among production's backups (and live, seeing a fresh one, would skip its own that day).
+    if local_dev() or os.getenv("BACKUPS", "on").lower() == "off" or not _storage() or time.monotonic() - _last_check < 6 * 3600:
         return
     _last_check = time.monotonic()
     url, headers = _storage()

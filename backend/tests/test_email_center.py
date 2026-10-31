@@ -18,10 +18,10 @@ BASE = {
 def _capture(monkeypatch):
     sent = []
 
-    async def fake_send(to, subject, text, html_body=None, reply_to=None, from_name=None, unsubscribe_url=None, **_):
+    async def fake_deliver(to, subject, text, html_body=None, *, reply_to=None, from_name=None, unsubscribe_url=None, **_):
         sent.append({"to": to, "subject": subject, "text": text, "unsubscribe": unsubscribe_url})
-        return True
-    monkeypatch.setattr(email, "send_email", fake_send)
+        return email.Delivery(True, id=f"re_{len(sent)}")
+    monkeypatch.setattr(email, "deliver", fake_deliver)
     monkeypatch.setattr(email, "is_configured", lambda: True)
     return sent
 

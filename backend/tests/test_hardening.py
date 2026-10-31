@@ -280,6 +280,31 @@ def test_we_only_call_supported_countries(client, make_user):
 
 
 # ─── abuse limits and encryption ──────────────────────────────────
+def test_an_email_that_never_went_out_does_not_use_up_the_days_limit(client, make_user, run):
+    """Nov 2026, on live: emails tried before Resend was set up failed, and then blocked that address for a day."""
+    import uuid
+    from datetime import datetime
+    from backend.models import EmailJob
+    from database import async_session
+    from notify import automations
+    user = make_user()
+
+    async def tried(status):
+        async with async_session() as db:
+            db.add(EmailJob(user_id=user.id, kind=f"chat_lead#{status}", ref_id=str(uuid.uuid4()), to_email="seen@limit-test.in", automation="chat_lead",
+                            step=1, subject="", body="", status=status, send_at=datetime.utcnow()))
+            await db.commit()
+
+    async def blocked():
+        async with async_session() as db:
+            return await automations._looks_abusive(db, user.id, "chat_lead", "seen@limit-test.in")
+    run(tried, "failed")
+    run(tried, "cancelled")
+    assert run(blocked) is False
+    run(tried, "sent")
+    assert run(blocked) is True
+
+
 def test_one_address_gets_an_automation_once_a_day(client, make_user, run):
     u = make_user()
     client.put("/api/integrations", json={

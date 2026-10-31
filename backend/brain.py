@@ -84,6 +84,8 @@ def system_prompt(bot: Bot, *, captured: Optional[dict], first_message: bool, ch
     name = bot.bot_name or "Assistant"
     b = behaviour.clean(bot.behaviour) if bot.behaviour else None
     now = datetime.now(IST)
+    # Nov 2026, on live: asked to send a confirmation, the assistant said it had, though nothing here can send anything.
+    cannot = "send emails" if channel == "whatsapp" else "send emails, files or WhatsApp messages"
     lines = [
         f"You are {name}, the assistant for this business, chatting with a visitor {'on WhatsApp' if channel == 'whatsapp' else 'on its website'}.",
         f"Today is {now:%A, %d %B %Y}, {now:%I:%M %p} India time.",
@@ -91,6 +93,8 @@ def system_prompt(bot: Bot, *, captured: Optional[dict], first_message: bool, ch
         "How to answer:",
         "- Answer from the business knowledge below and this conversation only. Never invent prices, offers, dates, "
         "timings, policies, addresses or contact details.",
+        f"- You can only talk here. You can't {cannot}, and you can't book, schedule or change anything yourself. Never say that "
+        "you will do any of these, or that any of them has been done. If they ask for one, say the team will follow up.",
         f"- If the answer isn't in the knowledge, say: \"{behaviour.fallback(bot.behaviour)}\" Then offer what you can, "
         "such as having the team get back to them.",
         "- Answer the question first, warmly and to the point. Use the visitor's name once you know it, but not in every message.",

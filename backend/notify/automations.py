@@ -250,7 +250,7 @@ async def _looks_abusive(db, owner_id: str, kind: str, to: str, per_day: int = 1
     since = datetime.utcnow() - timedelta(days=1)
     again = (await db.execute(select(func.count()).select_from(EmailJob).where(
         EmailJob.user_id == owner_id, EmailJob.automation == kind, func.lower(EmailJob.to_email) == to.lower(),
-        EmailJob.created_at >= since))).scalar_one()
+        EmailJob.status.notin_(("failed", "cancelled")), EmailJob.created_at >= since))).scalar_one()  # those never reached them
     if again >= per_day:
         return True
     today = (await db.execute(select(func.count()).select_from(EmailJob).where(

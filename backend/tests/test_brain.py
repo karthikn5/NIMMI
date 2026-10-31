@@ -131,3 +131,15 @@ def test_search_passages_say_which_page_they_came_from():
     assert [(source, body.strip()) for source, body in vector_store._sections(kb)] == [
         ("Written knowledge", "Open 9 to 7"), ("https://homes.example/", "Welcome"),
         ("https://homes.example/pricing", "2BHK from 58 lakhs"), ("file: brochure.pdf", "Amenities")]
+
+
+def test_the_assistant_is_told_it_can_only_talk():
+    """Nov 2026, on live: asked to send a confirmation, it said it had been sent. Nothing in a chat can send anything."""
+    from backend.models import Bot
+    bot = Bot(bot_id="x", bot_name="Desk", behaviour=None)
+    website = brain.system_prompt(bot, captured={}, first_message=False, channel="chat", knowledge_text="")
+    assert "You can't send emails, files or WhatsApp messages, and you can't book" in website
+    assert "Never say that you will do any of these, or that any of them has been done" in website
+    whatsapp = brain.system_prompt(bot, captured={}, first_message=False, channel="whatsapp", knowledge_text="")
+    assert "You can't send emails, and you can't book" in whatsapp  # it does send files there
+

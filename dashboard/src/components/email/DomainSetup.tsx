@@ -47,7 +47,7 @@ export function DomainSetup({ onChanged }: { onChanged?: () => void }) {
                 <h2 className="text-sm font-medium">Send from your own domain</h2>
                 <p className="text-[13px] text-stone-500 mt-0.5 max-w-2xl">
                     Emails then come from an address like hello@yourbusiness.in instead of Nimmi&apos;s sending address. People trust them more,
-                    and Gmail and Outlook are more likely to show them in the inbox. It takes three DNS records at the company where you bought the domain.
+                    and Gmail and Outlook are more likely to show them in the inbox. It takes a few DNS records at the company where you bought the domain.
                 </p>
             </div>
             {list.error ? <p className="px-5 pb-4 text-sm text-signal">{list.error}</p> : !list.data ? (
@@ -206,7 +206,7 @@ function HowTo() {
             {open && (
                 <div className="mt-2 text-[13px] text-stone-600 space-y-2 max-w-3xl">
                     <p><span className="font-medium text-ink">GoDaddy:</span> Domain Portfolio (or My Products) &gt; your domain &gt; DNS &gt; Add New Record. Pick the type, put the Name in &ldquo;Name&rdquo; (GoDaddy adds your domain by itself), paste the Value, and for MX the Priority. Save.</p>
-                    <p><span className="font-medium text-ink">Cloudflare:</span> your domain &gt; DNS &gt; Records &gt; Add record. Pick the type, enter the Name and paste the Value into &ldquo;Content&rdquo; (&ldquo;Mail server&rdquo; for MX, with the Priority). Save.</p>
+                    <p><span className="font-medium text-ink">Cloudflare:</span> your domain &gt; DNS &gt; Records &gt; Add record. Pick the type, enter the Name and paste the Value into &ldquo;Content&rdquo; (&ldquo;Mail server&rdquo; for MX, with the Priority). For a CNAME, set Proxy status to &ldquo;DNS only&rdquo;. Save.</p>
                     <p><span className="font-medium text-ink">Hostinger:</span> Domains &gt; your domain &gt; DNS / Nameservers &gt; DNS records. Add each record with its type, name and value.</p>
                     <p><span className="font-medium text-ink">Others:</span> look for &ldquo;DNS settings&rdquo;, &ldquo;DNS management&rdquo; or &ldquo;Zone editor&rdquo; where you bought the domain. Enter the Name exactly as shown, without your domain after it.</p>
                     <p>Changes usually show within an hour, sometimes a few hours. Press Check now any time.</p>

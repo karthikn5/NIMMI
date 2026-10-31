@@ -7,6 +7,7 @@ Triggers (each can be a short sequence of up to three emails):
   goal_met      a call reached the agent's goal (e.g. a booking); replaces call_lead for that call
   call_missed   we called (call-back or campaign) and never reached them
   handoff_done  a person from the team finished helping them in Live chat
+The AI's own email after a call replaces call_lead and goal_met where it's on (mail/after_call.py).
 
 A trigger queues one EmailJob per step; the scheduler sends each when due. The text is filled in when it's sent, from
 the chat or call as it is then (a name given after the email address still makes it in). Follow-up steps stop when the
@@ -28,7 +29,7 @@ from sqlalchemy.future import select
 
 from database import async_session
 from backend.models import CallLog, Conversation, EmailJob, IntegrationSettings, NotificationLog
-from mail import address as mail_address, senders, suppress
+from mail import address as mail_address, senders, setup, suppress
 from notify import email
 from phone import display, extract_contact
 
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 # How long after the trigger each email goes out.
 DELAYS = {"now": 0, "1h": 3600, "1d": 86400, "2d": 2 * 86400, "3d": 3 * 86400, "5d": 5 * 86400, "7d": 7 * 86400, "14d": 14 * 86400}
 MAX_STEPS = 3
+QUIET = int(os.getenv("EMAIL_QUIET_SECONDS", "120"))  # the welcome email waits until the chat has been quiet this long
 PLACEHOLDERS = ["name", "business", "assistant", "email", "phone", "summary", "details"]
 EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]{2,}")
 BATCH = 50  # emails sent per scheduler pass (about every 20 seconds)
@@ -71,7 +73,8 @@ DEFAULTS: dict[str, dict] = {
 }
 
 LABELS = {"chat_lead": "After a chat", "call_lead": "After a call", "goal_met": "Goal met on a call",
-          "call_missed": "Couldn't reach them", "handoff_done": "After your team helps", "broadcast": "Bulk email"}
+          "call_missed": "Couldn't reach them", "handoff_done": "After your team helps", "broadcast": "Bulk email",
+          "after_call": "After a call, by the AI"}
 
 
 def _normalize(saved: Optional[dict], default: dict) -> dict:
@@ -81,6 +84,34 @@ def _normalize(saved: Optional[dict], default: dict) -> dict:
     if steps is None and saved.get("subject") is not None:
         steps = [_step(saved.get("delay") or "now", saved.get("subject") or "", saved.get("body") or "")]
     return {"enabled": bool(saved.get("enabled", default["enabled"])), "steps": steps or default["steps"]}
+
+
+def checked(given: dict) -> dict[str, dict]:
+    """Automations as saved from the dashboard ({key: {"enabled", "steps": [{"delay", "subject", "body"}]}}), checked:
+    known kinds and delays, at most MAX_STEPS emails each later than the one before, text in every email that's on.
+    Raises ValueError with what to fix."""
+    out = {}
+    for key, a in (given or {}).items():
+        steps = a.get("steps") or []
+        if key not in DEFAULTS or not steps or any(st.get("delay") not in DELAYS for st in steps):
+            raise ValueError("Unknown email automation")
+        if len(steps) > MAX_STEPS:
+            raise ValueError(f"A sequence can have up to {MAX_STEPS} emails")
+        offsets = [DELAYS[st["delay"]] for st in steps]
+        if any(later <= earlier for earlier, later in zip(offsets, offsets[1:])):
+            raise ValueError("Each follow-up has to go out after the one before it")
+        on = bool(a.get("enabled"))
+        if on and not all(str(st.get("subject") or "").strip() and str(st.get("body") or "").strip() for st in steps):
+            raise ValueError("Add a subject and message to every email before turning it on")
+        out[key] = {"enabled": on, "steps": [{"delay": st["delay"], "subject": str(st.get("subject") or "").strip()[:200],
+                                              "body": str(st.get("body") or "").strip()[:5000]} for st in steps]}
+    return out
+
+
+def grows(before: dict, after: dict) -> list[str]:
+    """Automations newly on, or with more emails than before: beyond the one-email welcome, those need Growth."""
+    return [k for k, a in after.items() if a["enabled"] and (not before[k]["enabled"] or len(a["steps"]) > len(before[k]["steps"]))
+            and not (k == "chat_lead" and len(a["steps"]) == 1)]
 
 
 def automations(settings: Optional[IntegrationSettings]) -> dict[str, dict]:
@@ -137,15 +168,17 @@ def job_kind(automation: str, step: int) -> str:
 
 
 async def schedule(owner_id: str, kind: str, ref_id: str, to: Optional[str], values: dict,
-                   bot_id: Optional[str] = None) -> bool:
+                   bot_id: Optional[str] = None, first_only: bool = False) -> bool:
     """Queue this automation's emails for one customer, if it's on. True if queued (once per kind + ref).
-    An address whose domain takes no mail gets its first email as "cancelled", with the reason, so History shows it."""
+    An address whose domain takes no mail gets its first email as "cancelled", with the reason, so History shows it.
+    `first_only`: no follow-ups (the plan includes only the welcome email)."""
     to = (to or "").strip()
     if not to or not EMAIL_RE.fullmatch(to):
         return False
     async with async_session() as db:
         settings = (await db.execute(select(IntegrationSettings).where(IntegrationSettings.user_id == owner_id))).scalars().first()
         auto = automations(settings).get(kind)
+        auto = (await setup.automations_for(db, owner_id, bot_id, settings)).get(kind)
         if not auto or not auto["enabled"] or await is_unsubscribed(db, owner_id, to):
             return False
         if await _looks_abusive(db, owner_id, kind, to):
@@ -153,12 +186,17 @@ async def schedule(owner_id: str, kind: str, ref_id: str, to: Optional[str], val
     verdict = await mail_address.check(to)  # a DNS lookup: outside the session, so no connection waits on it
     values = {**values, "name": values.get("name") or "there"}
     now = datetime.utcnow()
+    from mail import compose
     async with async_session() as db:
-        for i, step in enumerate(auto["steps"][:MAX_STEPS], start=1):
+        auto = (await setup.automations_for(db, owner_id, bot_id)).get(kind) or auto  # the assistant's own, if it has them
+        for i, step in enumerate(auto["steps"][:1 if first_only else MAX_STEPS], start=1):
+            welcome = kind == "chat_lead" and i == 1  # the designed welcome email (mail/compose.py)
             job = EmailJob(user_id=owner_id, bot_id=bot_id, kind=job_kind(kind, i), ref_id=ref_id, to_email=to,
                            automation=kind, step=i, subject=render(step["subject"], values)[:200],
                            body=render(step["body"], values), subject_tpl=step["subject"], body_tpl=step["body"],
-                           merge_data=_json_safe(values), send_at=now + timedelta(seconds=DELAYS.get(step["delay"], 0)))
+                           merge_data=_json_safe(values),
+                           compose_state="pending" if welcome and not first_only and compose.needs_writing(kind) else None,
+                           send_at=now + timedelta(seconds=DELAYS.get(step["delay"], 0) + (QUIET if welcome else 0)))
             if not verdict.ok:
                 job.status = "cancelled"
                 job.error = verdict.reason + (f". Did they mean {verdict.suggestion}?" if verdict.suggestion else "")
@@ -203,17 +241,17 @@ async def _fresh_values(db, job: EmailJob) -> tuple[dict, Optional[str]]:
 DAILY_CAP = int(os.getenv("AUTOMATION_DAILY_CAP", "500"))  # automatic emails one workspace can queue per day
 
 
-async def _looks_abusive(db, owner_id: str, kind: str, to: str) -> bool:
+async def _looks_abusive(db, owner_id: str, kind: str, to: str, per_day: int = 1) -> bool:
     """
     Chat details are typed by website visitors, so anyone could enter a stranger's address over and over
-    to make us email them. Each address gets a given automation at most once a day, and a workspace has
-    a daily ceiling, which protects people's inboxes and our sending reputation.
+    to make us email them. Each address gets a given automation at most `per_day` times a day, and a workspace
+    has a daily ceiling, which protects people's inboxes and our sending reputation.
     """
     since = datetime.utcnow() - timedelta(days=1)
-    again = (await db.execute(select(EmailJob.id).where(
+    again = (await db.execute(select(func.count()).select_from(EmailJob).where(
         EmailJob.user_id == owner_id, EmailJob.automation == kind, func.lower(EmailJob.to_email) == to.lower(),
-        EmailJob.created_at >= since).limit(1))).first()
-    if again:
+        EmailJob.created_at >= since))).scalar_one()
+    if again >= per_day:
         return True
     today = (await db.execute(select(func.count()).select_from(EmailJob).where(
         EmailJob.user_id == owner_id, EmailJob.broadcast_id.is_(None), EmailJob.created_at >= since))).scalar_one()
@@ -235,6 +273,7 @@ async def _reached_goal_since(db, job: EmailJob) -> bool:
 async def process_due() -> None:
     """Send queued customer emails whose time has come (called by the background loop)."""
     from notify.events import _once  # the delivery log, one row per (kind, ref)
+    from mail import after_call, compose
     now = datetime.utcnow()
     async with async_session() as db:
         jobs = (await db.execute(select(EmailJob).where(EmailJob.status == "queued", EmailJob.send_at <= now)
@@ -246,9 +285,18 @@ async def process_due() -> None:
                 job.status, job.error = "cancelled", why
                 continue
             bot_id = job.bot_id
-            if not job.broadcast_id:
+            if compose.waiting(job):
+                continue  # the AI is still writing part of it: it goes on a later pass
+            if job.automation == "after_call":
+                stop = await after_call.hold_back(db, job)
+                if stop == "wait":
+                    continue
+                if stop:
+                    job.status, job.error = "cancelled", stop
+                    continue
+            elif not job.broadcast_id:
                 key = job.automation or job.kind.split("#")[0]
-                auto = automations(settings).get(key)
+                auto = (await setup.automations_for(db, job.user_id, bot_id, settings)).get(key)
                 if not auto or not auto["enabled"]:
                     job.status, job.error = "cancelled", "Automation turned off"
                     continue
@@ -268,14 +316,23 @@ async def process_due() -> None:
                 job.subject = render(job.subject_tpl, values)[:200] or job.subject
                 job.body = render(job.body_tpl or "", values) or job.body
             link = unsubscribe_url(job.user_id, job.to_email, bot_id)
-            text = f"{job.body}\n\n--\n{sender.name}\nUnsubscribe: {link}"
+            designed = job.automation == "after_call" or (values is not None and job.automation == "chat_lead" and (job.step or 1) == 1)
+            if designed:  # from the assistant's design
+                made, tracked = await (after_call.made(db, job, sender, link) if job.automation == "after_call"
+                                       else compose.welcome(db, job, values, sender, link))
+                job.subject, job.body = made.subject, made.text.split("\n\n--\n")[0]
+                text, html_body = made.text, made.html
+                db.add_all(tracked)
+            else:
+                text = f"{job.body}\n\n--\n{sender.name}\nUnsubscribe: {link}"
+                html_body = html_email(job.body, sender.name, link)
             job.attempts = (job.attempts or 0) + 1
             result: dict = {}
 
-            async def send(job=job, text=text, sender=sender, link=link, result=result):
+            async def send(job=job, text=text, html_body=html_body, sender=sender, link=link, result=result):
                 result["called"] = True
                 sent = await email.deliver(
-                    job.to_email, job.subject, text, html_email(job.body, sender.name, link), reply_to=sender.reply_to,
+                    job.to_email, job.subject, text, html_body, reply_to=sender.reply_to,
                     from_name=sender.name, from_address=sender.address, api_key=sender.api_key, unsubscribe_url=link,
                     tags={"ws": job.user_id, "job": job.id, "kind": "customer"},
                     idempotency_key=f"email-{job.id}-{job.attempts}")  # a retry of this send is a no-op at Resend
@@ -302,7 +359,7 @@ async def requeue(job: EmailJob, db) -> None:
 async def stop_for(db, owner_id: str, to: str, reason: str) -> int:
     """Cancel everything still queued for this address. Returns how many."""
     jobs = (await db.execute(select(EmailJob).where(
-        EmailJob.user_id == owner_id, func.lower(EmailJob.to_email) == to.lower(), EmailJob.status == "queued"))).scalars().all()
+        EmailJob.user_id == owner_id, func.lower(EmailJob.to_email) == to.lower(), EmailJob.status.in_(("queued", "draft"))))).scalars().all()
     for job in jobs:
         job.status, job.error = "cancelled", reason
     return len(jobs)

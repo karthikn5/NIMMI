@@ -554,7 +554,8 @@ def test_every_read_tool_works_stays_in_the_workspace_and_never_calls_an_ai(clie
             await db.commit()
             return call.id
     special = {"go_to": {"page": "builder", "assistant_id": mine}, "point_at": {"element": "nav.voice"},
-               "connection_guide": {"provider": "calcom", "assistant_id": mine}, "get_call": {"call_id": run(a_call)}}
+               "connection_guide": {"provider": "calcom", "assistant_id": mine}, "get_call": {"call_id": run(a_call)},
+               "email_design": {"assistant_id": mine, "kind": "welcome"}}
     for name, t in registry.TOOLS.items():
         if t.level != "read" or t.internal:  # Nimmi's own tools act on a run: tested with the plan
             continue
@@ -605,7 +606,7 @@ def test_the_dashboard_and_the_agent_name_the_same_screens_and_elements():
     built = {"nav": ("assistants", "deployments", "live_chat", "questions", "voice", "whatsapp", "email", "integrations", "analytics", "billing"),
              "voice.tab": ("overview", "agents", "knowledge", "contacts", "calls", "schedule", "campaigns", "data", "numbers", "compliance"),
              "whatsapp.tab": ("overview", "inbox", "assistant", "files", "settings"),
-             "email.tab": ("overview", "automations", "bulk", "history", "settings"),
+             "email.tab": ("overview", "automations", "drafts", "bulk", "history", "settings"),
              "builder.tab": ("design", "knowledge", "behaviour", "flow", "leads")}
     for prefix, values in built.items():
         if "data-agent={`" + prefix + ".${" in pages:
@@ -813,6 +814,63 @@ def test_schedule_changes_wait_for_confirm_and_are_checked_first(client, make_us
     assert done["state"] == "done" and done["refresh"] == [{"kind": "schedule", "id": bot}]
     assert client.get(f"/api/voice/schedule/settings/{bot}", headers=user.h()).json()["settings"]["callbacks"]["enabled"] is True
 
+
+
+def test_nimmi_changes_an_email_draft_with_undo_and_sends_or_discards_only_on_confirm(client, make_user, model, run):
+    from datetime import datetime
+    from backend.models import EmailJob
+    from database import async_session
+    user = make_user()
+    bot = user.bot()
+
+    async def draft(to):
+        async with async_session() as db:
+            row = EmailJob(user_id=user.id, bot_id=bot, kind="after_call", ref_id=str(uuid.uuid4()), to_email=to, automation="after_call",
+                           step=1, subject="", body="", status="draft", compose_state="done", send_at=datetime.utcnow(),
+                           merge_data={"name": "Priya", "direction": "inbound", "language": "en",
+                                       "call": {"recap": ["You asked about homes."], "answers": [], "next_step": ""}})
+            db.add(row)
+            await db.commit()
+            return row.id
+
+    async def state(job_id):
+        async with async_session() as db:
+            row = await db.get(EmailJob, job_id)
+            return row.status, (row.merge_data.get("call") or {}).get("next_step")
+    first, second = run(draft, "a@nimmi-agent.test"), run(draft, "b@nimmi-agent.test")
+
+    model([ToolCall("c1", "email_drafts", {})], [ToolCall("c2", "edit_email_draft", {"draft_id": first, "next_step": "We'll send the plans."})],
+          [Text("Changed.")])
+    evs = ask(user, "what's waiting, and add a next step", screen={"id": "email_drafts"})
+    results = [e for e in evs if e["type"] == "TOOL_CALL_RESULT"]
+    assert all(r["ok"] for r in results) and "a@nimmi-agent.test" in results[0]["content"]
+    assert run(state, first) == ("draft", "We'll send the plans.")
+    assert client.post(f"/api/agent/actions/{results[1]['actionId']}/undo", headers=user.h()).status_code == 200
+    assert run(state, first) == ("draft", "")
+
+    import notify.email as e
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(e, "is_configured", lambda: True)
+        model([ToolCall("c3", "send_email_draft", {"draft_id": first})], [Text("Confirm above.")])
+        evs = ask(user, "send it", screen={"id": "email_drafts"})
+        card = next(x["value"] for x in evs if x["type"] == "CUSTOM" and x["name"] == "confirm")
+        assert "a@nimmi-agent.test" in card["summary"] and "You asked about homes." in card["summary"]
+        assert run(state, first)[0] == "draft"  # nothing sent yet
+        done = client.post(f"/api/agent/actions/{card['actionId']}/confirm", headers=user.h()).json()
+        assert done["state"] == "done" and run(state, first)[0] == "queued"
+
+    model([ToolCall("c4", "discard_email_draft", {"draft_id": second})], [Text("Confirm above.")])
+    evs = ask(user, "drop the other one", screen={"id": "email_drafts"})
+    card = next(x["value"] for x in evs if x["type"] == "CUSTOM" and x["name"] == "confirm")
+    assert run(state, second)[0] == "draft"
+    assert client.post(f"/api/agent/actions/{card['actionId']}/confirm", headers=user.h()).json()["state"] == "done"
+    assert run(state, second)[0] == "cancelled"
+
+    async def tidy():
+        async with async_session() as db:
+            await db.delete(await db.get(EmailJob, first))
+            await db.commit()
+    run(tidy)
 
 
 def test_every_route_is_a_tool_or_excluded_with_a_reason_or_pending_for_a_phase(client):

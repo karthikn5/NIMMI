@@ -71,8 +71,9 @@ def _reserved(name: str) -> bool:
 
 
 def records(raw: Optional[list], domain: str) -> list[dict]:
-    """The DNS records to add, as the business types them: the host relative to the domain (most DNS providers add the
-    domain themselves), TXT values without the quotes some providers add. Tracking records are left out."""
+    """The DNS records to add, as the business types them: the host as Resend gives it, relative to the domain's zone
+    (most DNS providers add the domain themselves; for a subdomain Resend writes "resend._domainkey.mail"), TXT values
+    without the quotes some providers add. Tracking records are left out."""
     out = []
     for r in raw or []:
         if (r.get("record") or "").lower() == "tracking":
@@ -85,8 +86,7 @@ def records(raw: Optional[list], domain: str) -> list[dict]:
         value = str(r.get("value") or "")
         if len(value) > 1 and value[0] == value[-1] == '"':
             value = value[1:-1]
-        out.append({"purpose": r.get("record") or "", "type": r.get("type") or "", "host": host or "@",
-                    "full_name": domain if host in ("", "@") else f"{host}.{domain}", "value": value,
+        out.append({"purpose": r.get("record") or "", "type": r.get("type") or "", "host": host or "@", "value": value,
                     "priority": r.get("priority"), "status": r.get("status") or "not_started"})
     return out
 

@@ -85,8 +85,9 @@ only on the owner's machines): @.claude/private-notes.md
 
 - Plans (`plans.py`): free = 1 assistant + 1 website, no custom domain, voice calls paid with credits (10 free). A
   workspace is paid while any of its assistants has an active subscription (or one the owner paid for). What each plan
-  includes (`Includes`, BILLING_PLAN.md phase 2): Starter = website chat, 2,000 AI replies a month, 1 seat; Growth +
-  WhatsApp, live chat, email alerts and follow-ups, 10,000 replies, 3 seats; Pro + 300 call credits a month, Schedule,
+  includes (`Includes`, BILLING_PLAN.md phase 2): Starter = website chat, team alerts and a plain welcome email
+  (`team_alerts`, `welcome_email`), 2,000 AI replies a month, 1 seat; Growth + WhatsApp, live chat, every other email to
+  customers (`email_alerts`: the AI's note and files, after-call emails, follow-ups, bulk, their own domain), 10,000 replies, 3 seats; Pro + 300 call credits a month, Schedule,
   campaigns, webhooks/LeadSquared/Sheets, business hours, transfers and "Pick up the call", 25,000 replies, 5 seats;
   earlier 1/6/12 Month plans everything with no reply limit. Per assistant (`includes`); seats, integrations and business
   hours by the workspace's best plan (`workspace_includes`). Checked where things run (WhatsApp answering, the widget's
@@ -110,7 +111,10 @@ only on the owner's machines): @.claude/private-notes.md
   `billing_seed.py`, `plan_features_ui.mjs` with `plan_features_seed.py`.
 - Workspaces: owner plus team members (admin/agent); requests act on `ctx.owner_id`; the `X-Workspace` header picks one.
 - Encrypted secrets (customer AI keys, phone account tokens): `secretbox` MultiFernet over ENCRYPTION_KEY
-  (+ JWT_SECRET, + `ENCRYPTION_OLD_KEYS` decrypt-only); columns store `enc:v1:...`.
+  (+ JWT_SECRET, + `ENCRYPTION_OLD_KEYS` decrypt-only); columns store `enc:v1:...`. To replace the key: new ENCRYPTION_KEY
+  (and JWT_SECRET), the old values in ENCRYPTION_OLD_KEYS; each start then moves every stored secret to the new key
+  (`database._reseal_secrets`, also `SEALED_TEXT` and `SEALED_JSON`: add new sealed places there) and logs how many, and
+  how many no key opens. Remove the old keys only once that log says 0 moved and 0 unreadable.
 
 ## Chat widget and live chat
 
@@ -322,9 +326,9 @@ only on the owner's machines): @.claude/private-notes.md
 
 ## Email (mail_plan.md)
 
-- Phases 0-9 in `mail_plan.md` (written 1 Nov 2026 from the owner's idea, with market research). Phase 0 built 1 Nov
-  2026: sending foundations and the dashboard's Email section (Overview, Automations, Bulk email, History, Settings;
-  Integrations > Email points there).
+- Phases 0-9 in `mail_plan.md` (written 1 Nov 2026 from the owner's idea, with market research). Phase 0 live 1 Nov
+  2026: sending foundations and the dashboard's Email section (Overview, Automations, Drafts, Bulk email, History, Settings;
+  Integrations > Email points there). Phase 1 in progress: the status is in mail_plan.md section 11.
 - Sending: `notify/email.py` `deliver()` (Resend, else SMTP) returns Resend's email id; `send_email()` wraps it. Every
   customer email carries tags (`ws`, `job`, `kind`: customer / alert) and an idempotency key (`email-<job>-<attempt>`, so
   "Send again" really sends). Nimmi's own emails come from `EMAIL_FROM`; customer emails from `CUSTOMER_EMAIL_FROM`
@@ -349,8 +353,31 @@ only on the owner's machines): @.claude/private-notes.md
   Resubscribe; mail apps' one-click POST still works. Bulk email skips bounced and throwaway addresses and pauses
   above Gmail's 0.3% spam rate (200+ delivered in 30 days). The widget asks "Did you mean ...@gmail.com?".
 - Nimmi agent: email tools in `agent/tools/email.py` (group "email", screens `email_*`).
-- Tests: `tests/test_mail_foundation.py`; browser: `dev-scripts/ui-checks/email_ui.mjs` with `email_seed.py` and
-  `dev-scripts/email/fake_resend.py` (domains, keys, sending, and Resend's signed reports back to the backend).
+- An assistant's emails (phase 1): `mail/setup.py` (`EmailSetup`: its own automations and settings over the workspace's;
+  a design is what it saved in that language, else in English, else for welcome the workspace's old text, else ready-made),
+  `designs.py` (`KINDS`, blocks, languages; only welcome and after_call are used so far: the other kinds and their settings do
+  nothing yet, so Nimmi doesn't offer them), `render.py` (blocks to mail-safe HTML and text; a block with nothing to show is
+  left out, and so are `book` and `call` buttons until their pages exist), `links.py` (`EmailLink`: tracked links, downloads).
+- The AI's parts are never written in the email loop: `compose.prepare_due` runs by `fire_and_forget`, claims each email
+  (`compose_state` pending, working, done, failed) and holds no database connection while a model answers. A sentence with a
+  number the sources don't have goes (`keep_known_numbers`). AI-written emails count as AI replies and stop when they're used up.
+- Welcome email (`compose.py`): sent when the chat has been quiet `QUIET` seconds (`EMAIL_QUIET_SECONDS`, default 120; each message
+  pushes it, for at most 10 minutes), with the AI's note and the files that fit (`WhatsAppFile`). Starter: text and buttons only.
+- After-call email (`mail/after_call.py`, queued after Schedule in `pipeline._remember_and_plan`): per direction off / review /
+  auto (`settings.after_call`), Growth up. Replaces the fixed call_lead and goal_met emails while on. Only calls where they talked
+  to the assistant (never voicemail, opt-out, a transfer, a test call, or someone on the do-not-call list). Address: what the call
+  collected, else the contact (not with Remember callers off), else the campaign's list. One model writes it, another checks it
+  against the call, the knowledge and what Schedule really has booked ("ok", "fix", "hold"). Code checks the language by its script (`designs.written_in`: a real
+  Tamil call got Hindi and English, and the checking model passed it): wrong once, it's written again. It goes to Drafts, even on
+  automatic, on "hold", when the language is still wrong, when the check didn't run, or when the caller was unhappy; when no model answers it waits there with a Write again
+  button. Unanswered questions go to Questions and the email says the team will reply. Language: `CallLog.language` (designs exist
+  in en, ta, hi; other languages get the English frame around the AI's words). Drafts (`status="draft"`, not in History, dropped
+  after 14 days): `/api/email/drafts`, `/dashboard/email/drafts`; an approved one goes whatever the setting says by then. After 20
+  approvals it offers automatic once. Real calls, Nov 2026 (`dev-scripts/email/compose_probe.py`, 8 calls): no invented numbers, 2-4 s
+  for the two model calls when Gemini is quick; the same day it took 20 s for a one-word answer, hence the long time limits.
+- Tests: `tests/test_mail_foundation.py`, `test_mail_designs.py`, `test_after_call_email.py`; browser: `dev-scripts/ui-checks/
+  email_ui.mjs`, `email_design_ui.mjs`, `email_drafts_ui.mjs` with `email_seed.py` and `dev-scripts/email/fake_resend.py` (domains,
+  keys, sending, and Resend's signed reports back to the backend).
 - Backups (`ops/backup.py`) never run with LOCAL_DEV: a developer's .env can hold the live storage keys.
 
 ## Public site and SEO

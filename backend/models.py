@@ -565,6 +565,9 @@ class EmailJob(Base):
     complained_at = Column(DateTime(timezone=True), nullable=True)
     opened_at = Column(DateTime(timezone=True), nullable=True)  # an estimate: mail apps open images by themselves
     clicked_at = Column(DateTime(timezone=True), nullable=True)
+    # Parts the AI writes before it's sent (mail/compose.py): pending, working (claimed by one process), done.
+    compose_state = Column(String, nullable=True)
+    compose_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class EmailBroadcast(Base):
@@ -631,6 +634,50 @@ class EmailDomain(Base):
     sending_key_id = Column(String, nullable=True)
     verified_at = Column(DateTime(timezone=True), nullable=True)
     checked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class EmailSetup(Base):
+    """An assistant's own customer emails (mail plan, phase 1): which are on, their follow-ups, and the settings of the
+    emails that have them (the AI after-call email's mode and review count...). Without a row, or for a kind it doesn't
+    set, the workspace's automations apply (IntegrationSettings.email_automations)."""
+    __tablename__ = "email_setups"
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    automations = Column(JSON, nullable=True)  # {"chat_lead": {"enabled", "steps"}, ...}: same shape as the workspace's
+    settings = Column(JSON, nullable=True)     # {"after_call": {...}, "callback_booked": {"enabled": true}, ...}
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class EmailTemplate(Base):
+    """How one of an assistant's emails looks (mail/designs.py): its subject and blocks (text, the AI's note, files,
+    buttons, signature...), per language. Without a row, the ready-made design for that kind and language is used."""
+    __tablename__ = "email_templates"
+    __table_args__ = (UniqueConstraint("bot_id", "kind", "language", name="uq_email_template"),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
+    kind = Column(String, nullable=False)       # welcome, after_call, meeting, callback_booked, voicemail, ...
+    language = Column(String(8), nullable=False, default="en")  # en, ta, hi
+    subject = Column(String(200), nullable=False)
+    blocks = Column(JSON, nullable=False)
+    updated_by = Column(String(36), nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class EmailLink(Base):
+    """A link in a customer email (mail/links.py): where it goes, and how often it was opened. Files are downloaded
+    through it, so the business sees who downloaded the brochure."""
+    __tablename__ = "email_links"
+    token = Column(String(32), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    job_id = Column(String(36), nullable=True, index=True)
+    kind = Column(String, nullable=False)   # link, file, book, call, whatsapp
+    target = Column(Text, nullable=False)   # the address it opens, or the file's id
+    label = Column(String(200), nullable=True)
+    clicks = Column(Integer, default=0)
+    first_at = Column(DateTime(timezone=True), nullable=True)
+    last_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

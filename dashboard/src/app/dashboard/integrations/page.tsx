@@ -53,8 +53,8 @@ function IntegrationsPlan() {
         <div className="mt-6 -mb-2">
             {!has.email_alerts ? (
                 <PlanNeeded feature="email_alerts">
-                    Lead alerts and emails to customers come with Growth; webhooks, LeadSquared and Google Sheets with Pro.
-                    Choose a plan for one of your assistants on the Billing page.
+                    Lead alerts and a welcome email come with Starter, more emails with Growth; webhooks, LeadSquared and Google
+                    Sheets with Pro. Choose a plan for one of your assistants on the Billing page.
                 </PlanNeeded>
             ) : <PlanNeeded feature="integrations" />}
         </div>

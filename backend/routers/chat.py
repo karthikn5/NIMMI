@@ -150,10 +150,12 @@ def _after_answer(bot: Bot, conversation_id: Optional[str], question: str, answe
 
 
 async def _save_turn(conversation_id: str, user_text: str, answer: str) -> None:
+    from mail import compose
     async with async_session() as db:
         db.add(Message(conversation_id=conversation_id, role="user", content=user_text))
         if answer:
             db.add(Message(conversation_id=conversation_id, role="assistant", content=answer))
+        await compose.chat_went_on(db, conversation_id)  # their welcome email waits until the chat goes quiet
         await db.commit()
 
 

@@ -98,7 +98,7 @@ class IntegrationUpdate(BaseModel):
 
 @router.put("")
 async def update_settings(data: IntegrationUpdate, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
-    await plans.require_workspace_feature(db, ctx.owner_id, "email_alerts")  # alerts and follow-ups: Growth
+    await plans.require_workspace_feature(db, ctx.owner_id, "team_alerts")  # alerts to the team: Starter up
     s, owner = await _load(ctx.owner_id, db)
     adding = ((data.webhook_url.strip() and data.webhook_url.strip() != (s.webhook_url or ""))
               or (data.leadsquared_enabled and not s.leadsquared_enabled))
@@ -119,20 +119,13 @@ async def update_settings(data: IntegrationUpdate, ctx: AuthContext = Depends(re
         raise HTTPException(status_code=400, detail="Send alerts to up to 5 addresses")
     if data.reply_to.strip() and not automations.EMAIL_RE.fullmatch(data.reply_to.strip()):
         raise HTTPException(status_code=400, detail="Enter a valid reply-to email address")
-    autos = {}
-    for key, a in data.automations.items():
-        steps = a.step_list()
-        if key not in automations.DEFAULTS or not steps or any(st.delay not in automations.DELAYS for st in steps):
-            raise HTTPException(status_code=400, detail="Unknown email automation")
-        if len(steps) > automations.MAX_STEPS:
-            raise HTTPException(status_code=400, detail=f"A sequence can have up to {automations.MAX_STEPS} emails")
-        offsets = [automations.DELAYS[st.delay] for st in steps]
-        if any(later <= earlier for earlier, later in zip(offsets, offsets[1:])):
-            raise HTTPException(status_code=400, detail="Each follow-up has to go out after the one before it")
-        if a.enabled and not all(st.subject.strip() and st.body.strip() for st in steps):
-            raise HTTPException(status_code=400, detail="Add a subject and message to every email before turning it on")
-        autos[key] = {"enabled": a.enabled,
-                      "steps": [{"delay": st.delay, "subject": st.subject.strip(), "body": st.body.strip()} for st in steps]}
+    try:
+        autos = automations.checked({k: {"enabled": a.enabled, "steps": [st.model_dump() for st in a.step_list()]}
+                                     for k, a in data.automations.items()})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if automations.grows(automations.automations(s), autos):  # beyond the one-email welcome: Growth
+        await plans.require_workspace_feature(db, ctx.owner_id, "email_alerts")
     if any(a["enabled"] for a in autos.values()) and not (data.reply_to.strip() or s.reply_to):
         raise HTTPException(status_code=400, detail="Add a reply-to address so customers can answer you")
     if data.whatsapp_enabled and not data.whatsapp_template:
@@ -171,7 +164,7 @@ class TestRequest(BaseModel):
 
 @router.post("/test")
 async def send_test(req: TestRequest, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
-    await plans.require_workspace_feature(db, ctx.owner_id, "email_alerts")
+    await plans.require_workspace_feature(db, ctx.owner_id, "team_alerts")
     s, owner = await _load(ctx.owner_id, db)
     sample = {"name": "Test Lead", "phone": "+919876543210", "email": "test@example.com", "bot": "Test assistant",
               "summary": "This is a test from Nimmi AI.", "fields": {"Name": "Test Lead"}, "source": "test"}

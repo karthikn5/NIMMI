@@ -87,7 +87,7 @@ async def add_bounce(db, address: str, kind: str = "bounce", detail: Optional[st
 
 async def cancel_queued(db, address: str, why: str, owner_id: Optional[str] = None) -> int:
     """Cancel what's still waiting to go to this address (in one workspace, or all). Returns how many."""
-    query = select(EmailJob).where(func.lower(EmailJob.to_email) == _norm(address), EmailJob.status == "queued")
+    query = select(EmailJob).where(func.lower(EmailJob.to_email) == _norm(address), EmailJob.status.in_(("queued", "draft")))
     if owner_id:
         query = query.where(EmailJob.user_id == owner_id)
     jobs = (await db.execute(query)).scalars().all()

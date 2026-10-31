@@ -118,7 +118,9 @@ class Includes:
     call_credits: int = 0          # call credits included each month
     whatsapp: bool = False
     live_chat: bool = False        # "Talk to a person", and chats handed to the team
-    email_alerts: bool = False     # lead and call alerts to the team, follow-up emails to customers
+    email_alerts: bool = False     # emails to customers beyond the welcome: after calls, follow-ups, files, own domain
+    team_alerts: bool = False      # email alerts to the team: new leads, call summaries (Starter up, since Nov 2026)
+    welcome_email: bool = False    # the welcome email after a chat: on Starter one simple email from Nimmi's address
     schedule: bool = False         # call-backs, follow-ups and meeting calls; the widget's call-back offer
     campaigns: bool = False
     integrations: bool = False     # webhooks, LeadSquared, Google Sheets
@@ -126,18 +128,19 @@ class Includes:
     transfers: bool = False        # warm transfers, and picking up calls in the dashboard
 
 
-_ALL = dict(whatsapp=True, live_chat=True, email_alerts=True, schedule=True, campaigns=True, integrations=True,
-            business_hours=True, transfers=True)
+_ALL = dict(whatsapp=True, live_chat=True, email_alerts=True, team_alerts=True, welcome_email=True, schedule=True,
+            campaigns=True, integrations=True, business_hours=True, transfers=True)
 NO_PLAN = Includes(None, None, 1)  # build and test: the assistant answers customers only on a plan
-STARTER = Includes("starter", 2000, 1)
-GROWTH = Includes("growth", 10000, 3, whatsapp=True, live_chat=True, email_alerts=True)
+STARTER = Includes("starter", 2000, 1, team_alerts=True, welcome_email=True)
+GROWTH = Includes("growth", 10000, 3, whatsapp=True, live_chat=True, email_alerts=True, team_alerts=True, welcome_email=True)
 PRO = Includes("pro", 25000, 5, 300, **_ALL)
 EARLIER = Includes("earlier", None, 5, **_ALL)
 BY_TIER = {"starter": STARTER, "growth": GROWTH, "pro": PRO}
 _RANK = {None: 0, "starter": 1, "growth": 2, "pro": 3, "earlier": 3}
 # What each feature is called, and the plan it starts on.
 NEEDS = {"whatsapp": ("WhatsApp comes", "Growth"), "live_chat": ("Live chat comes", "Growth"),
-         "email_alerts": ("Email alerts and follow-ups come", "Growth"), "schedule": ("Call-backs and follow-up calls come", "Pro"),
+         "email_alerts": ("Emails after calls, follow-ups, your files and your own domain come", "Growth"),
+         "team_alerts": ("Email alerts to your team come", "Starter"), "welcome_email": ("The welcome email comes", "Starter"), "schedule": ("Call-backs and follow-up calls come", "Pro"),
          "campaigns": ("Campaigns come", "Pro"), "integrations": ("Webhooks, LeadSquared and Google Sheets come", "Pro"),
          "business_hours": ("Business hours come", "Pro"), "transfers": ("Transfers to your team come", "Pro")}
 

@@ -400,3 +400,55 @@ def test_a_local_development_server_never_backs_up_into_production_storage(run, 
     monkeypatch.setattr(backup, "_last_check", time.monotonic() - 7 * 3600)
     run(backup.maybe_backup)
     assert uploads == [1]  # a real server still makes its daily backup
+
+
+def test_rotating_the_encryption_key_moves_every_stored_secret_to_the_new_key(client, make_user, run, monkeypatch):
+    """After Railway's Oct 2026 incident: a new ENCRYPTION_KEY, the old ones listed in ENCRYPTION_OLD_KEYS. Every kind of
+    place a secret is stored is moved to the new key at startup, so the old keys can then be removed."""
+    import secretbox
+    import database
+    from sqlalchemy.future import select
+    from backend.models import Bot, TelephonyAccount, TwilioKey, VoiceAgent
+    from database import Base, async_session, engine
+    from voice import accounts, functions
+    u = make_user()
+    bot = u.bot()
+    monkeypatch.setenv("ENCRYPTION_KEY", "the-old-key-railway-may-have-exposed")
+    sealed = functions._seal("shop-secret")
+
+    async def seed():
+        async with async_session() as db:
+            (await db.get(Bot, bot)).ai_api_key = "customer-ai-key"
+            db.add(TelephonyAccount(user_id=u.id, provider="twilio", account_sid="ACrot", webhook_token="rot-hook",
+                                    secrets=accounts.seal({"token": "tw-token"})))
+            db.add(TwilioKey(account_sid="ACrot", key_sid="SKrot", secret=secretbox.seal("key-secret")))
+            db.add(VoiceAgent(bot_id=bot, user_id=u.id, functions=[{"headers": [{"name": "X", "value": sealed}]}],
+                              inbound={"functions": [{"cal_api_key": sealed}]}))
+            await db.commit()
+    run(seed)
+
+    monkeypatch.setenv("ENCRYPTION_KEY", "a-brand-new-key-after-the-incident")
+    monkeypatch.setenv("JWT_SECRET", "a-brand-new-jwt-secret-after-the-incident")
+    monkeypatch.setenv("ENCRYPTION_OLD_KEYS", "the-old-key-railway-may-have-exposed")
+
+    async def reseal():
+        async with engine.begin() as conn:
+            await conn.run_sync(database._reseal_secrets, Base.metadata)
+    run(reseal)
+    monkeypatch.delenv("ENCRYPTION_OLD_KEYS")  # the old key is gone: everything must open with the new one
+
+    async def read():
+        async with async_session() as db:
+            b = await db.get(Bot, bot)
+            acct = (await db.execute(select(TelephonyAccount).where(TelephonyAccount.account_sid == "ACrot"))).scalars().first()
+            key = await db.get(TwilioKey, "ACrot")
+            agent = await db.get(VoiceAgent, bot)
+            await db.delete(acct)
+            await db.delete(key)
+            await db.commit()
+            return (b.ai_api_key, secretbox.unseal(acct.secrets), secretbox.unseal(key.secret),
+                    functions._open(agent.functions[0]["headers"][0]["value"]),
+                    functions._open(agent.inbound["functions"][0]["cal_api_key"]))
+    ai, account, twilio_key, header, cal = run(read)
+    assert ai == "customer-ai-key" and "tw-token" in account and twilio_key == "key-secret"  # with only the new key
+    assert header == "shop-secret" and cal == "shop-secret"

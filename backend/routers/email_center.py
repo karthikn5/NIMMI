@@ -61,7 +61,7 @@ async def _own_job(job_id: str, ctx: AuthContext, db: AsyncSession) -> EmailJob:
 @router.get("/history")
 async def history(status: str = "", automation: str = "", q: str = "", offset: int = 0, limit: int = 50,
                   ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
-    base = [EmailJob.user_id == ctx.owner_id]
+    base = [EmailJob.user_id == ctx.owner_id, EmailJob.status != "draft"]  # drafts have their own page
     if automation == "broadcast":
         base.append(EmailJob.broadcast_id.isnot(None))
     elif automation:

@@ -29,6 +29,7 @@ from sqlalchemy.future import select
 from database import async_session
 from backend.models import Bot, CallbackJob, CallHandoff, CallLog, DncEntry, VoiceAgent
 import assist
+from mail import after_call
 from notify.events import call_completed, fire_and_forget
 from phone import extract_contact
 from voice import ai_models, ambience, handoff, llm, memory, metering, recording, sarvam, schedule
@@ -1609,3 +1610,4 @@ class CallSession:
         if self.s.agent.remember_callers is not False:
             await memory.remember_call(self.call_id)
         await schedule.after_call(self.call_id)
+        await after_call.queue(self.call_id)

@@ -116,6 +116,10 @@ SCREENS: dict[str, dict] = {
         "Alerts to their team (new leads, call summaries, someone asking for a person) and automatic emails to "
         "customers after a chat, after a call, when a call met its goal, when a call didn't reach them, and after the "
         "team helped in Live chat; each one email or a short sequence, with placeholders and a test send.")},
+    "email_drafts": {"title": "Email: Drafts", "path": "/dashboard/email/drafts", "about": (
+        "The AI's emails after calls that wait for the team: read each with the reason it was held, change the recap, "
+        "answers, next step, files or subject, then send or discard it, or have it written again. After 20 approved "
+        "emails it offers to send them automatically.")},
     "email_bulk": {"title": "Email: Bulk email", "path": "/dashboard/email/bulk", "about": (
         "One email to a group of leads who shared their email (chat or calls, recent days, hot only); unsubscribed, "
         "bounced and throwaway addresses are left out; up to 2,000 people and 5 sends a day.")},
@@ -146,7 +150,7 @@ POINTS = {
         ("questions", "Questions"), ("voice", "Voice"), ("whatsapp", "WhatsApp"), ("email", "Email"),
         ("integrations", "Integrations"), ("analytics", "Analytics"), ("billing", "Billing"))},
     **{f"email.tab.{k}": f"the Email section's {v} tab" for k, v in (
-        ("overview", "Overview"), ("automations", "Automations"), ("bulk", "Bulk email"), ("history", "History"),
+        ("overview", "Overview"), ("automations", "Automations"), ("drafts", "Drafts"), ("bulk", "Bulk email"), ("history", "History"),
         ("settings", "Settings"))},
     **{f"builder.tab.{k}": f"the builder's {k.capitalize()} tab" for k in ("design", "knowledge", "behaviour", "flow", "leads")},
     "builder.test": "the builder's Test button", "builder.install": "the builder's 'Add to website' button",

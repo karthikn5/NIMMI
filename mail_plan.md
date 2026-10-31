@@ -957,8 +957,8 @@ its AI replies). That is small next to ₹2,499.
    - **Resend webhook** (after phase 0 is live): resend.com > Webhooks > Add Endpoint:
      `https://api.nimmiai.in/api/email/webhooks/resend`, all email events. Put its signing secret in Railway as
      `RESEND_WEBHOOK_SECRET`.
-   - **GoDaddy:** a TXT record with the name `_dmarc` and the value `v=DMARC1; p=none; rua=mailto:<an address you
-     read>`.
+   - **DMARC:** nothing to add. `_dmarc.nimmiai.in` already exists (read 1 Nov 2026: `v=DMARC1; p=quarantine; adkim=r;
+     aspf=r; rua=mailto:dmarc_rua@onsecureserver.net;`, GoDaddy's own). A second `_dmarc` record would break DMARC.
 2. **Resend plan:** upgrade to Pro ($20 a month) now, and to Scale ($90) when customers' domains pass about 8?
 3. **Plans** (section 8): which plan gets what, the email allowances and the packs. Team alerts on every plan (today
    they need Growth)?
@@ -981,7 +981,7 @@ its AI replies). That is small next to ₹2,499.
 
 1 Nov 2026: plan written.
 
-Phase 0 built 1 Nov 2026, locally, not committed:
+Phase 0 built 1 Nov 2026 and live the same day (df95395):
 - Done as planned:
   - Resend's signed webhook with bounces, spam reports, suppressions and failures;
   - text filled in at send time, idempotency keys, tags;
@@ -1001,8 +1001,31 @@ Phase 0 built 1 Nov 2026, locally, not committed:
   - 418 backend tests pass (`test_mail_foundation.py` 13, plus the backup test);
   - three of the new tests were checked to fail without their fix;
   - browser `email_ui.mjs` 29 of 29.
-- Waiting on the owner (section 10, decision 1): `RESEND_API_KEY` on Railway, `mail.nimmiai.in` verified in Resend,
-  then `CUSTOMER_EMAIL_FROM`, the webhook and its secret, the DMARC record.
+- Set up by the owner, 1 Nov 2026: `nimmiai.in` and `mail.nimmiai.in` verified in Resend (8 DNS records in GoDaddy; the `_dmarc`
+  record GoDaddy already had stays).
+- Still to do on Railway: `RESEND_API_KEY` (Full access), `CUSTOMER_EMAIL_FROM`, the Resend webhook and `RESEND_WEBHOOK_SECRET`.
+
+The owner's decisions, 1 Nov 2026 (section 10):
+- Starter gets team alerts and a plain welcome email from Nimmi's address; Growth and Pro get everything else.
+- The after-call email starts on review first; after 20 approved emails Nimmi offers automatic.
+- No "Sent with Nimmi" line.
+
+Phase 1, as of 1 Nov 2026:
+- Built:
+  - each assistant's own emails, designs with blocks in English, Tamil and Hindi, the editor with a live preview and a test send;
+  - tracked links and downloads;
+  - the welcome email after a quiet chat, with the AI's note and files;
+  - the after-call email (section 5.3), with Email > Drafts and the offer to go automatic;
+  - Nimmi's tools for all of it.
+- Not built yet: the `send_email` call tool, meeting emails from the designs with the change-time and cancel page, the thank-you
+  and rebook emails, call-back booked, voicemail, missed live chat, "email me this chat", the book and call pages, the daily
+  summary, plan limits on the number of emails (section 8 needs the owner's numbers).
+- Checks:
+  - backend tests in `test_mail_designs.py` and `test_after_call_email.py`; ten safeguards of the after-call email were each
+    switched off once to confirm a test fails without them;
+  - browser `email_design_ui.mjs`, `email_drafts_ui.mjs`;
+  - `compose_probe.py` on 8 real calls: no invented number (the plan's 30 are still to run, as more real calls come in).
+- Not tried yet: a real call ending in a real email in a Gmail inbox ("Done when", above).
 
 ## Words used
 

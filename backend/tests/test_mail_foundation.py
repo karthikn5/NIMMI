@@ -102,20 +102,20 @@ def test_the_webhook_needs_a_valid_signature_and_keeps_each_event_once(client, m
 def test_a_hard_bounce_stops_the_address_for_everyone_and_a_spam_report_for_that_business(client, make_user, run, monkeypatch):
     monkeypatch.setenv("RESEND_WEBHOOK_SECRET", SECRET)
     a, b = make_user(), make_user()
-    sent_a = _job(run, a.id, "Ghost@Example.com", status="sent", provider_id="re_ghost")
-    waiting_a = _job(run, a.id, "ghost@example.com", status="queued")
-    waiting_b = _job(run, b.id, "ghost@example.com", status="queued")
+    sent_a = _job(run, a.id, "Ghost-MF@Example.com", status="sent", provider_id="re_ghost")
+    waiting_a = _job(run, a.id, "ghost-mf@example.com", status="queued")
+    waiting_b = _job(run, b.id, "ghost-mf@example.com", status="queued")
 
     # A temporary bounce is only shown.
-    _event(client, "email.bounced", {"email_id": "re_ghost", "to": ["ghost@example.com"], "tags": {"ws": a.id, "job": sent_a, "kind": "customer"},
+    _event(client, "email.bounced", {"email_id": "re_ghost", "to": ["ghost-mf@example.com"], "tags": {"ws": a.id, "job": sent_a, "kind": "customer"},
                                      "bounce": {"type": "Transient", "subType": "MailboxFull", "message": "Mailbox full"}})
-    assert _get(run, EmailBounce, "ghost@example.com") is None and _get(run, EmailJob, waiting_b).status == "queued"
+    assert _get(run, EmailBounce, "ghost-mf@example.com") is None and _get(run, EmailJob, waiting_b).status == "queued"
 
-    _event(client, "email.bounced", {"email_id": "re_ghost", "to": ["ghost@example.com"], "tags": {"ws": a.id, "job": sent_a, "kind": "customer"},
+    _event(client, "email.bounced", {"email_id": "re_ghost", "to": ["ghost-mf@example.com"], "tags": {"ws": a.id, "job": sent_a, "kind": "customer"},
                                      "bounce": {"type": "Permanent", "subType": "General", "message": "550 5.1.1 Unknown user"}})
     j = _get(run, EmailJob, sent_a)
     assert j.event == "bounced" and "Unknown user" in j.event_detail and j.bounced_at
-    assert _get(run, EmailBounce, "ghost@example.com").kind == "bounce"
+    assert _get(run, EmailBounce, "ghost-mf@example.com").kind == "bounce"
     for job_id in (waiting_a, waiting_b):  # dead for everyone
         w = _get(run, EmailJob, job_id)
         assert w.status == "cancelled" and "bounced" in w.error
@@ -123,7 +123,7 @@ def test_a_hard_bounce_stops_the_address_for_everyone_and_a_spam_report_for_that
     async def blocked(owner, addr):
         async with async_session() as db:
             return await suppress.why_blocked(db, owner, addr)
-    assert "bounced" in run(blocked, b.id, "GHOST@example.com")
+    assert "bounced" in run(blocked, b.id, "GHOST-MF@example.com")
 
     # A spam report: that business never emails them again; another business still can.
     sent_b = _job(run, b.id, "priya@example.com", status="sent", provider_id="re_priya")
@@ -138,16 +138,16 @@ def test_a_hard_bounce_stops_the_address_for_everyone_and_a_spam_report_for_that
 def test_failed_and_suppressed_emails_say_why_in_history(client, make_user, run, monkeypatch):
     monkeypatch.setenv("RESEND_WEBHOOK_SECRET", SECRET)
     u = make_user()
-    quota = _job(run, u.id, "a@example.com", status="sent", provider_id="re_q")
-    blocked = _job(run, u.id, "b@example.com", status="sent", provider_id="re_s")
-    _event(client, "email.failed", {"email_id": "re_q", "to": ["a@example.com"], "failed": {"reason": "reached_daily_quota"}})
-    _event(client, "email.suppressed", {"email_id": "re_s", "to": ["b@example.com"],
+    quota = _job(run, u.id, "quota-mf@example.com", status="sent", provider_id="re_q")
+    blocked = _job(run, u.id, "suppressed-mf@example.com", status="sent", provider_id="re_s")
+    _event(client, "email.failed", {"email_id": "re_q", "to": ["quota-mf@example.com"], "failed": {"reason": "reached_daily_quota"}})
+    _event(client, "email.suppressed", {"email_id": "re_s", "to": ["suppressed-mf@example.com"],
                                         "suppressed": {"type": "OnAccountSuppressionList", "message": "On the list"}})
     _event(client, "email.opened", {"email_id": "re_q"})
     rows = {r["id"]: r for r in client.get("/api/integrations/email/history", headers=u.h()).json()["items"]}
     assert rows[quota]["status"] == "failed" and "for the day" in rows[quota]["error"] and rows[quota]["opened_at"]
     assert rows[blocked]["status"] == "failed" and rows[blocked]["event"] == "suppressed"
-    assert _get(run, EmailBounce, "b@example.com").kind == "suppressed"
+    assert _get(run, EmailBounce, "suppressed-mf@example.com").kind == "suppressed"
     detail = client.get(f"/api/integrations/email/jobs/{blocked}", headers=u.h()).json()
     assert detail["unsubscribed"] and "Resend won't send" in detail["stopped_because"]
 
@@ -331,6 +331,7 @@ class FakeResend:
             {"record": "SPF", "name": "send", "type": "MX", "ttl": "Auto", "status": rec, "value": "feedback-smtp.us-east-1.amazonses.com", "priority": 10},
             {"record": "SPF", "name": "send", "type": "TXT", "ttl": "Auto", "status": rec,
              "value": '"v=spf1 include:amazonses.com ~all"' if full else "v=spf1 include:amazonses.com ~all"},
+            {"record": "SPF", "name": "rsend", "type": "CNAME", "ttl": "Auto", "status": rec, "value": "send.forge.rmta.net"},
             {"record": "Tracking", "name": "links", "type": "CNAME", "ttl": "Auto", "status": rec, "value": "links1.resend-dns.com"},
         ]
 
@@ -354,7 +355,8 @@ def test_a_business_sends_from_its_own_domain_once_verified(client, make_user, r
     assert added.status_code == 200, added.text
     d = added.json()
     assert d["name"] == "sunrise-homes.in" and not d["verified"]
-    assert [(r["type"], r["host"]) for r in d["records"]] == [("TXT", "resend._domainkey"), ("MX", "send"), ("TXT", "send")]  # no tracking
+    assert [(r["type"], r["host"]) for r in d["records"]] == [  # as Resend gave them (1 Nov 2026), without the tracking record
+        ("TXT", "resend._domainkey"), ("MX", "send"), ("TXT", "send"), ("CNAME", "rsend")]
     assert "PATCH /domains/dom_1" in resend.calls  # tracking turned off
     assert client.post("/api/email/domains", json={"name": "sunrise-homes.in"}, headers=other.h()).status_code == 400
 
@@ -476,12 +478,12 @@ def test_meeting_emails_reply_to_the_business_and_skip_bounced_addresses(client,
     async def unsubscribe(addr):
         async with async_session() as db:
             await suppress.add(db, u.id, addr, "unsubscribed")
-            await suppress.add_bounce(db, "dead@example.com")
+            await suppress.add_bounce(db, "dead-mf@example.com")
             await db.commit()
     run(unsubscribe, "priya@example.com")
     run(meetings._to_person, run(meeting, "priya@example.com"), "confirmed")  # they asked for it: it still goes
     assert sent and sent[0]["reply_to"] == "front@clinic.in" and sent[0]["tags"]["kind"] == "customer"
-    problem = run(meetings._to_person, run(meeting, "dead@example.com"), "confirmed")
+    problem = run(meetings._to_person, run(meeting, "dead-mf@example.com"), "confirmed")
     assert len(sent) == 1 and "bounced" in problem
 
 

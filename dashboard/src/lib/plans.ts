@@ -17,13 +17,13 @@ export const TIERS: Tier[] = [
     {
         id: "starter", name: "Starter", monthly: 999, summary: "An assistant on your website.",
         includes: ["1 assistant", "Website chat in your brand", "2,000 AI replies a month", "Train on documents, websites and videos",
-                   "Questions it couldn't answer, to teach it", "1 team seat"],
+                   "Questions it couldn't answer, to teach it", "Lead alerts and a welcome email to new leads", "1 team seat"],
     },
     {
         id: "growth", name: "Growth", monthly: 2499, summary: "Website and WhatsApp, with your team.", featured: true,
         previous: "Starter",
         includes: ["WhatsApp on your own business number", "Live chat with notes and saved replies", "10,000 AI replies a month",
-                   "Collected data and lead scores", "Email alerts and customer follow-ups", "3 team seats"],
+                   "Collected data and lead scores", "Emails after chats and calls, with your files", "3 team seats"],
     },
     {
         id: "pro", name: "Pro", monthly: 6999, summary: "Add phone calls and campaigns.",

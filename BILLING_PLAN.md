@@ -92,9 +92,10 @@ Phase 1 built:
 
 Phase 2 built (31 Oct 2026): what each plan includes, enforced (`plans.py` `Includes`, the
 website's lists read as below; `ENFORCE_PLAN_LIMITS` is on in production, off in most tests).
-- Starter: website chat, 2,000 AI replies a month, 1 team seat. Growth: + WhatsApp (answering, connecting a number, its
-  Files and confirmations), live chat ("Talk to a person" in the widget, hand-overs when a visitor asks or is upset), email
-  alerts and follow-up emails to customers (lead and call alerts, automations, broadcasts), 10,000 replies, 3 seats. Pro:
+- Starter: website chat, 2,000 AI replies a month, 1 team seat, and since 1 Nov 2026 (owner's decision, mail_plan.md) team
+  alerts and a plain welcome email. Growth: + WhatsApp (answering, connecting a number, its Files and confirmations), live chat
+  ("Talk to a person" in the widget, hand-overs when a visitor asks or is upset), every other email to customers (the AI's
+  note and files, after-call emails, follow-ups, broadcasts), 10,000 replies, 3 seats. Pro:
   + 300 call credits a month (at once on purchase, then each wallet cycle), Schedule (call-backs, follow-ups, meeting
   calls, the widget's call-back offer), campaigns, webhooks, LeadSquared and Google Sheets, business hours (without Pro
   the business is always open; saved hours are kept), transfers and "Pick up the call", 25,000 replies, 5 seats.

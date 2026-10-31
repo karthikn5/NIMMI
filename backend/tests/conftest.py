@@ -79,6 +79,16 @@ def make_user(client):
 
 
 @pytest.fixture(autouse=True)
+def _no_email_waits(monkeypatch):
+    """The welcome email waits for the chat to go quiet and for the AI's note (mail/compose.py): tests about other
+    things send it at once, without AI. Tests about the wait or the note turn them back on."""
+    from mail import compose
+    from notify import automations
+    monkeypatch.setattr(automations, "QUIET", 0)
+    monkeypatch.setattr(compose, "needs_writing", lambda kind: False)
+
+
+@pytest.fixture(autouse=True)
 def _no_dns(monkeypatch):
     """Tests never look up real DNS (example.com itself says it takes no mail): every domain receives mail, unless a
     test says otherwise by patching mail.address._lookup."""

@@ -1,7 +1,8 @@
 "use client";
 
 import { Notice, SaveBar, Skeleton, useToast } from "@/components/ui";
-import { EmailAutomations } from "@/components/integrations/EmailPanel";
+import { AssistantEmails } from "@/components/email/AssistantEmails";
+import { TeamAlerts } from "@/components/integrations/EmailPanel";
 import { useIntegrations } from "@/components/integrations/useIntegrations";
 
 export default function EmailAutomationsPage() {
@@ -16,7 +17,8 @@ export default function EmailAutomationsPage() {
                     Everything here is saved, and shows in History, but nothing is delivered until Nimmi&apos;s email service is set up.
                 </Notice>
             )}
-            <EmailAutomations {...props} />
+            <TeamAlerts {...props} />
+            <AssistantEmails />
             <SaveBar visible={dirty} saving={saving} onDiscard={discard} onSave={async () => toast(await save())} />
         </>
     );

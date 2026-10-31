@@ -40,6 +40,7 @@ const ROUTES: [RegExp, string, string, string?][] = [
     [/^\/dashboard\/whatsapp\/settings/, "whatsapp_settings", "WhatsApp: Settings"],
     [/^\/dashboard\/whatsapp\/?$/, "whatsapp_overview", "WhatsApp: Overview"],
     [/^\/dashboard\/email\/automations/, "email_automations", "Email: Automations"],
+    [/^\/dashboard\/email\/drafts/, "email_drafts", "Email: Drafts"],
     [/^\/dashboard\/email\/bulk/, "email_bulk", "Email: Bulk email"],
     [/^\/dashboard\/email\/history/, "email_history", "Email: History"],
     [/^\/dashboard\/email\/settings/, "email_settings", "Email: Settings"],

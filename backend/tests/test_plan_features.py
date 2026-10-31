@@ -276,10 +276,10 @@ def test_lead_alerts_and_webhooks_follow_the_plan(client, make_user, run, limits
     run(setup)
     _plan(run, u, starter, "starter")
     run(events.lead_captured, run(lead, starter))
-    assert (sent, hooks) == ([], [])  # Starter: neither
+    assert (sent, hooks) == (["New lead from Starter"], [])  # Starter: the alert (since Nov 2026), no webhook
     _plan(run, u, growth, "growth")
     run(events.lead_captured, run(lead, growth))
-    assert (sent, hooks) == (["New lead from Growth"], [])  # Growth: the alert, no webhook
+    assert (sent, hooks) == (["New lead from Starter", "New lead from Growth"], [])  # Growth: the alert, no webhook
     _plan(run, u, pro, "pro")
     run(events.lead_captured, run(lead, pro))
     assert sent[-1] == "New lead from Pro" and hooks == ["lead.captured"]  # Pro: both (the workspace's best plan)
@@ -301,3 +301,59 @@ def test_earlier_plans_keep_everything_until_they_end(client, make_user, run, li
             await db.commit()
             return await plans.can_reply(db, bot)
     assert run(after_many_replies) is True  # no allowance to run out of
+
+
+
+def test_starter_sends_the_welcome_email_without_follow_ups(client, make_user, run, limits_on):
+    """Owner, 1 Nov 2026: Starter gets alerts to the team and a simple welcome email; follow-ups come with Growth."""
+    from sqlalchemy.future import select
+    from backend.models import Conversation, EmailJob, IntegrationSettings
+    from notify import events
+    u = make_user()
+    starter, growth = u.bot("Starter"), u.bot("Growth")
+    seq = {"chat_lead": {"enabled": True, "steps": [{"delay": "now", "subject": "Welcome", "body": "Hi {{name}}"},
+                                                   {"delay": "2d", "subject": "Still looking?", "body": "Hi again"}]}}
+
+    async def setup():
+        async with async_session() as db:
+            db.add(IntegrationSettings(user_id=u.id, email_alerts=False, reply_to="hello@acme.in", email_automations=seq))
+            await db.commit()
+    run(setup)
+    limits_on()
+    _plan(run, u, starter, "starter")
+
+    async def lead(bot, address):
+        async with async_session() as db:
+            conv = Conversation(bot_id=bot, visitor_session_id=f"s-{uuid.uuid4().hex[:8]}",
+                                captured_data={"Name": "Priya", "Email": address})
+            db.add(conv)
+            await db.commit()
+        await events.lead_captured(conv.conversation_id)
+
+    async def steps(address):
+        async with async_session() as db:
+            return sorted(j.step for j in (await db.execute(select(EmailJob).where(
+                EmailJob.user_id == u.id, EmailJob.to_email == address))).scalars().all())
+
+    async def tidy():  # other tests send every email that's due: leave none waiting
+        async with async_session() as db:
+            for j in (await db.execute(select(EmailJob).where(EmailJob.user_id == u.id, EmailJob.status == "queued"))).scalars().all():
+                j.status = "cancelled"
+            await db.commit()
+    run(lead, starter, "priya@example.com")
+    assert run(steps, "priya@example.com") == [1]  # the welcome email only
+    _plan(run, u, growth, "growth")
+    run(lead, growth, "ravi@example.com")
+    assert run(steps, "ravi@example.com") == [1, 2]
+    run(tidy)
+
+    # On Starter alone, saving a welcome email with a follow-up asks for Growth.
+    v = make_user()
+    only = v.bot("Only Starter")
+    _plan(run, v, only, "starter")
+    base = {"email_alerts": True, "alert_email": "", "whatsapp_enabled": False, "whatsapp_template": "", "whatsapp_language": "en",
+            "webhook_url": "", "leadsquared_enabled": False, "leadsquared_host": "", "leadsquared_access_key": "", "reply_to": "hi@v.in"}
+    ok = client.put("/api/integrations", json={**base, "automations": {"chat_lead": {**seq["chat_lead"], "steps": seq["chat_lead"]["steps"][:1]}}}, headers=v.h())
+    assert ok.status_code == 200, ok.text
+    more = client.put("/api/integrations", json={**base, "automations": seq}, headers=v.h())
+    assert more.status_code == 402 and "Growth" in more.json()["detail"]

@@ -6,12 +6,15 @@ import { usePathname, useRouter } from "next/navigation";
 import AppHeader from "@/components/AppHeader";
 import { EmptyState, ToastProvider, cn } from "@/components/ui";
 import { currentUserId } from "@/lib/api";
+import { DRAFTS_CHANGED, type Drafts } from "@/lib/email";
 import { PlanNeeded, useLimits } from "@/lib/plan";
+import { useApi } from "@/lib/useApi";
 import { useRole } from "@/lib/whatsapp";
 
 const tabs = [
     { href: "/dashboard/email", label: "Overview", exact: true },
     { href: "/dashboard/email/automations", label: "Automations" },
+    { href: "/dashboard/email/drafts", label: "Drafts" },
     { href: "/dashboard/email/bulk", label: "Bulk email" },
     { href: "/dashboard/email/history", label: "History" },
     { href: "/dashboard/email/settings", label: "Settings" },
@@ -23,11 +26,18 @@ export default function EmailLayout({ children }: { children: ReactNode }) {
     const [ready, setReady] = useState(false);
     const limits = useLimits();
     const role = useRole();
+    const drafts = useApi<Drafts>(ready && role && role !== "agent" ? "/api/email/drafts?limit=1" : null);
+    const { reload } = drafts;
 
     useEffect(() => {
         if (!currentUserId()) router.push("/auth/signup");
         else setReady(true);
     }, [router]);
+
+    useEffect(() => {
+        window.addEventListener(DRAFTS_CHANGED, reload);
+        return () => window.removeEventListener(DRAFTS_CHANGED, reload);
+    }, [reload]);
 
     return (
         <ToastProvider>
@@ -49,6 +59,9 @@ export default function EmailLayout({ children }: { children: ReactNode }) {
                                           className={cn("pb-3 text-sm border-b-2 whitespace-nowrap transition-colors",
                                               active ? "border-plum text-ink font-medium" : "border-transparent text-stone-500 hover:text-ink")}>
                                         {t.label}
+                                        {t.label === "Drafts" && !!drafts.data?.total && (
+                                            <span className="ml-1.5 text-xs text-plum" aria-label={`, ${drafts.data.total} waiting`}>{drafts.data.total}</span>
+                                        )}
                                     </Link>
                                 );
                             })}
@@ -60,10 +73,10 @@ export default function EmailLayout({ children }: { children: ReactNode }) {
                         <EmptyState title="Email is set up by your workspace's owner and admins" body="Ask them to change alerts, automatic emails or bulk email." />
                     ) : (
                         <>
-                            {limits?.includes && !limits.includes.email_alerts && (
-                                <PlanNeeded feature="email_alerts">
-                                    Look around and get your emails ready. Alerts to your team and emails to customers come with Growth or Pro for
-                                    one of your assistants.
+                            {limits?.includes && !limits.includes.team_alerts && (
+                                <PlanNeeded feature="team_alerts">
+                                    Look around and get your emails ready. Alerts to your team and a welcome email come with Starter, the rest
+                                    with Growth or Pro, for one of your assistants.
                                 </PlanNeeded>
                             )}
                             {ready ? children : null}

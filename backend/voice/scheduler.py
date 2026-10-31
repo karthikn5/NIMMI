@@ -328,6 +328,9 @@ async def _loop() -> None:
     while True:
         try:
             from notify import automations
+            from notify.events import fire_and_forget
+            from mail import compose
+            fire_and_forget(compose.prepare_due())  # the AI's parts of emails due soon, without holding up this loop
             await automations.process_due()  # automatic customer emails
             from whatsapp import memory as whatsapp_memory, replies as whatsapp_replies
             await whatsapp_replies.sweep()  # WhatsApp answers whose timer was lost (a restart)
@@ -359,6 +362,8 @@ async def _loop() -> None:
                 await payments.maintenance()  # plan reminders and endings, Razorpay subscriptions still to stop
                 from mail import domains as mail_domains
                 await mail_domains.check_pending()  # businesses' own sending domains waiting for their DNS records
+                from mail import after_call
+                await after_call.expire_drafts()  # after-call emails nobody looked at for two weeks
                 last_billing = datetime.utcnow()
             if datetime.utcnow() - last_sites > timedelta(minutes=2):
                 from sites import deploy as site_deploys

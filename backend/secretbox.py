@@ -30,9 +30,7 @@ def _key(material: str) -> Fernet:
     return Fernet(base64.urlsafe_b64encode(hashlib.sha256(material.encode()).digest()))
 
 
-def _fernet() -> MultiFernet:
-    """The first key encrypts; every key can decrypt. ENCRYPTION_OLD_KEYS (comma-separated) lists keys
-    that were replaced, so secrets saved under them can still be read."""
+def _keys() -> list[str]:
     from security import is_production
     old = [k.strip() for k in os.getenv("ENCRYPTION_OLD_KEYS", "").split(",") if k.strip()]
     keys = [k for k in (os.getenv("ENCRYPTION_KEY"), os.getenv("JWT_SECRET"), *old) if k]
@@ -40,7 +38,26 @@ def _fernet() -> MultiFernet:
         keys = ["nimmi-local-dev-encryption"]  # development only; production always has JWT_SECRET
     if not keys:
         raise SecretError("Set ENCRYPTION_KEY on the server before storing secrets")
-    return MultiFernet([_key(k) for k in dict.fromkeys(keys)])
+    return list(dict.fromkeys(keys))
+
+
+def _fernet() -> MultiFernet:
+    """The first key encrypts; every key can decrypt. ENCRYPTION_OLD_KEYS (comma-separated) lists keys
+    that were replaced, so secrets saved under them can still be read."""
+    return MultiFernet([_key(k) for k in _keys()])
+
+
+def reseal(token: str) -> str:
+    """The sealed value under the current key (unchanged if it already is). Raises SecretError if no key opens it."""
+    try:
+        _key(_keys()[0]).decrypt(token.encode())
+        return token
+    except InvalidToken:
+        pass
+    try:
+        return _fernet().rotate(token.encode()).decode()
+    except InvalidToken as e:
+        raise SecretError("A stored secret can't be read with any key") from e
 
 
 def seal(text: str) -> str:

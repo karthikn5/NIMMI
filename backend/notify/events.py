@@ -101,7 +101,7 @@ async def lead_captured(conversation_id: str) -> None:
     fields = dict(conv.captured_data)
     lead = {**contact, "bot": bot.bot_name, "fields": fields, "conversation_id": conversation_id, "source": "chat"}
 
-    if settings.email_alerts and owner and included.email_alerts:
+    if settings.email_alerts and owner and included.team_alerts:
         channel = "WhatsApp" if (conv.visitor_session_id or "").startswith("wa:") else "chat"
         await _once(bot.user_id, "lead_email", conversation_id, lambda: _email_team(
             recipients(settings, owner.email), f"New lead from {bot.bot_name}",
@@ -112,11 +112,11 @@ async def lead_captured(conversation_id: str) -> None:
     await contacts.remember_lead(conversation_id)
 
     # Automatic email to the customer (if they gave an email and the automation is on, on a plan with follow-ups).
-    await (automations.schedule if included.email_alerts else _skip)(bot.user_id, "chat_lead", conversation_id, contact.get("email"), {
+    await (automations.schedule if included.welcome_email else _skip)(bot.user_id, "chat_lead", conversation_id, contact.get("email"), {
         **{automations.field_key(k): v for k, v in fields.items()}, "details": automations.details_text(fields),
         "name": contact.get("name"), "email": contact.get("email"), "phone": display(contact.get("phone")) if contact.get("phone") else "",
         "business": _business(settings, bot), "assistant": bot.bot_name, "summary": "",
-    }, bot_id=bot.bot_id)
+    }, bot_id=bot.bot_id, first_only=not included.email_alerts)  # Starter: the welcome email, without follow-ups
 
     if settings.webhook_url and shared.integrations:
         await _once(bot.user_id, "lead_webhook", conversation_id,
@@ -141,6 +141,8 @@ async def call_completed(call_id: str) -> None:
         )).scalar_one_or_none() is not None
         import plans
         included, shared = await plans.includes(db, call.bot_id), await plans.workspace_includes(db, call.user_id)
+        from mail import after_call  # where the AI's own email is on, the fixed ones below aren't sent
+        fixed_emails = included.email_alerts and not (call.bot_id and await after_call.covers(db, call))
 
     if call.channel == "browser":
         return  # test calls don't notify anyone
@@ -156,7 +158,7 @@ async def call_completed(call_id: str) -> None:
 
     wants_call_email = call.outcome == "lead_captured" and settings.email_alerts or \
         call.outcome in ("transferred", "answered") and settings.alert_calls is not False
-    if owner and wants_call_email and included.email_alerts:
+    if owner and wants_call_email and included.team_alerts:
         await _once(call.user_id, "call_email", call.id, lambda: _email_team(
             recipients(settings, owner.email),
             f"{'New lead' if call.outcome == 'lead_captured' else 'Call'} from {display(call.caller_e164)} ({bot_name})",
@@ -171,7 +173,7 @@ async def call_completed(call_id: str) -> None:
         "business": _business(settings, bot), "assistant": bot_name, "summary": call.summary or "",
         "details": automations.details_text(captured),
     }
-    if included.email_alerts and not (call.successful and await automations.schedule(
+    if fixed_emails and not (call.successful and await automations.schedule(
             call.user_id, "goal_met", call.id, contact.get("email"), values, bot_id=call.bot_id)):
         await automations.schedule(call.user_id, "call_lead", call.id, contact.get("email"), values, bot_id=call.bot_id)
 

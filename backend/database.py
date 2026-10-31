@@ -123,6 +123,11 @@ async def init_db():
                 await conn.run_sync(_close_public_api)
         except Exception as e:
             print(f"[DB] Could not verify table access rules: {e}")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(_reseal_secrets, Base.metadata)
+    except Exception as e:
+        print(f"[DB] Could not re-encrypt stored secrets: {e}")
 
 
 def _close_public_api(sync_conn) -> None:
@@ -221,6 +226,66 @@ def _relax_not_null(sync_conn, table: str, column: str) -> None:
     else:
         return
     print(f"[DB] {table}.{column} may now be empty")
+
+
+# Where secrets are sealed outside EncryptedText columns: whole values, and values inside JSON ("enc:v1:...").
+SEALED_TEXT = [("telephony_accounts", "secrets"), ("twilio_keys", "secret")]
+SEALED_JSON = [("voice_agents", "functions"), ("voice_agents", "inbound")]
+
+
+def _reseal_secrets(sync_conn, metadata) -> None:
+    """A key was replaced (ENCRYPTION_OLD_KEYS is set): every stored secret still under an old key is encrypted again
+    with the current one. It runs at each start while the old keys are listed; once the log says nothing was left and
+    nothing unreadable, they can be removed (rotating after Railway's Oct 2026 incident)."""
+    import os
+    from sqlalchemy import select, text
+    import secretbox
+
+    if not os.getenv("ENCRYPTION_OLD_KEYS", "").strip():
+        return
+    changed, unreadable = 0, 0
+
+    def again(token: str) -> str:
+        nonlocal changed, unreadable
+        try:
+            fresh = secretbox.reseal(token)
+        except secretbox.SecretError:
+            unreadable += 1
+            return token
+        changed += fresh != token
+        return fresh
+
+    def inside(value):
+        if isinstance(value, dict):
+            return {k: inside(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [inside(v) for v in value]
+        if isinstance(value, str) and value.startswith(secretbox.PREFIX):
+            return secretbox.PREFIX + again(value[len(secretbox.PREFIX):])
+        return value
+
+    def raw(table, column: str, prefix: str) -> None:
+        pk = list(table.primary_key.columns)[0].name
+        for key, value in sync_conn.execute(text(f'select "{pk}", "{column}" from "{table.name}" where "{column}" like :p'),
+                                            {"p": prefix + "%"}).all():
+            fresh = prefix + again(value[len(prefix):])
+            if fresh != value:
+                sync_conn.execute(text(f'update "{table.name}" set "{column}" = :v where "{pk}" = :k'), {"v": fresh, "k": key})
+
+    for table in metadata.sorted_tables:
+        for column in table.columns:
+            if isinstance(column.type, secretbox.EncryptedText):
+                raw(table, column.name, secretbox.PREFIX)
+    for name, column in SEALED_TEXT:
+        raw(metadata.tables[name], column, "")
+    for name, column in SEALED_JSON:
+        table = metadata.tables[name]
+        pk = list(table.primary_key.columns)[0]
+        for key, value in sync_conn.execute(select(pk, table.c[column]).where(table.c[column].is_not(None))).all():
+            fresh = inside(value)
+            if fresh != value:
+                sync_conn.execute(table.update().where(pk == key).values({column: fresh}))
+    print(f"[DB] Secrets moved to the current key: {changed}; unreadable with any key: {unreadable}")
 
 
 # Columns stored with secretbox.EncryptedText: (table, primary key, columns).

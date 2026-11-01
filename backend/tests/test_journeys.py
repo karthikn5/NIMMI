@@ -302,6 +302,7 @@ def test_messages_keep_to_quiet_hours_but_a_new_lead_hears_back_at_once(make_use
         assert [e.subject for e in await _emails(user)] == ["Thanks"]
         r = await _run(jid)
         assert r.step == 1 and r.next_at.replace(tzinfo=None) == datetime(2026, 11, 4, 3, 30), "9 am India"
+        assert r.history[-1]["what"].startswith("Waiting for 9 am"), "the team can see why it waits"
     run(go)
 
 
@@ -953,6 +954,8 @@ def test_a_clicked_link_is_seen_by_the_journey(make_user, client, run, monkeypat
     opened = client.get("/api/email/l/" + link.rsplit("/", 1)[1], follow_redirects=False)
     assert opened.status_code in (302, 303, 307) and opened.headers["location"] == "https://example.com/prices?a=1&b=2"
     async def after():
+        from mail import clicks
+        assert await clicks.settle_due(datetime.utcnow() + clicks.SETTLE + timedelta(seconds=1)) >= 1  # a click counts once it's settled
         r = await _run(jid)
         await journeys.tick(r.next_at.replace(tzinfo=None) + timedelta(hours=1))
         async with async_session() as db:

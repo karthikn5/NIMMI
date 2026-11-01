@@ -147,6 +147,28 @@ export function AssistantEmails() {
     };
 
     const kind = s?.kinds.find((k) => k.kind === editing);
+    const fastCall = () => {
+        if (!s?.settings.fast_call) return null;
+        const pro = plan ? plan.schedule : limits?.includes?.schedule ?? true;
+        return (
+            <li className="border-t border-line px-5 py-3.5">
+                <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex-1 min-w-48 pl-[27px]">
+                        <span className="flex flex-wrap items-center gap-x-2.5">
+                            <span className="text-sm">A call when they look and don&apos;t book</span>
+                            {pro ? <Status tone={s.settings.fast_call.enabled ? "good" : "neutral"}>{s.settings.fast_call.enabled ? "On" : "Off"}</Status>
+                                : <span className="text-xs text-stone-500">Comes with Pro</span>}
+                        </span>
+                        <span className="block text-[13px] text-stone-500 mt-0.5">
+                            Someone opens Book a time from an email and doesn&apos;t book within 10 minutes: the phone agent calls to help them pick one. Uses Schedule&apos;s
+                            follow-up hours; at most once a week.
+                        </span>
+                    </div>
+                    <Switch checked={s.settings.fast_call.enabled && pro} disabled={!pro || saving} onChange={(v) => setSetting("fast_call", { enabled: v })} label="A call when they look and don't book" />
+                </div>
+            </li>
+        );
+    };
     const duringCall = () => {
         if (!s?.settings.during_call) return null;
         return (
@@ -293,6 +315,7 @@ export function AssistantEmails() {
                     {row("chat_lead", "Welcome email", "When someone gives their email in a chat. It goes when the chat goes quiet.", false, true)}
                     {afterCall()}
                     {duringCall()}
+                    {fastCall()}
                     {replies()}
                     {meetingEmails()}
                     {SMALL.map(small)}

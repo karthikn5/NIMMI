@@ -15,6 +15,7 @@ async def email_overview(tc, db):
     o = await overview(ctx=tc.ctx, db=db)
     return {"server": o["server"], "last_30_days": o["last_30_days"], "automations": o["automations"],
             "domains": o["domains"], "addresses_not_emailed": o["stopped"], "spam_report_rate": o["complaint_rate"],
+            "hot_now": [{k: h.get(k) for k in ("name", "email", "score", "at", "did")} for h in o.get("hot") or []],
             "problems": [{k: p.get(k) for k in ("to", "subject", "label", "status", "error", "event", "event_detail")}
                          for p in o["problems"]]}
 
@@ -571,4 +572,17 @@ async def update_lead_tool(tc, db, lead_id, stage=None, assigned_to=None, tags=N
     except HTTPException as e:
         raise ToolError(str(e.detail))
     return Change(f"Lead changed: {', '.join(changes)}", "lead", lead_id, before, await _read_lead(tc.ctx, db, lead_id, list(changes)), {"kind": "lead", "id": lead_id})
+
+
+# ─── Reports ────────────────────────────────────────────────────────
+
+@tool("email_reports", "Email reports over the last 7, 30 or 90 days, for one assistant or all: each kind of email, journey and bulk email (sent, delivered, clicked by people, "
+      "replied, unsubscribed, bounced, spam reports); the funnel from leads to customers; each team member's answers and how long people waited; deliverability "
+      "(bounce and spam rates against Gmail's limits, scanner clicks left out, each sending domain's DMARC).", "Reading email reports",
+      {"type": "object", "properties": {"assistant_id": {"type": "string"}, "days": {"type": "integer", "enum": [7, 30, 90]}}},
+      roles=MANAGERS, screens=AREAS["email"], routes=("GET /api/email/reports",))
+async def email_reports(tc, db, assistant_id=None, days=30):
+    from mail.api import reports
+    bot_id = (await get_owned_bot(assistant_id, tc.ctx, db)).bot_id if assistant_id else None
+    return await reports(days=int(days or 30), bot_id=bot_id, ctx=tc.ctx, db=db)
 

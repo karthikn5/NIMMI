@@ -1092,6 +1092,36 @@ Phase 5, as of 1 Nov 2026 (built locally):
   124 in each full minute), all 1,000 reported delivered, no database errors.
 - Not tried yet: a real send through Resend (it needs the owner's OK), and the marketing subdomain (it needs `news.nimmiai.in` verified in Resend).
 
+Phase 6, as of 1 Nov 2026 (built locally):
+- Built:
+  - **Scanner filtering.** Each click is kept with its signals and judged half a minute later. A scanner's or an HTTP library's name in the user agent decides by
+    itself, and so do three of an email's links within three seconds. Otherwise points add up: a click within 20 seconds of sending, three links within ten seconds,
+    one network opening five or more people's emails within ten seconds, no user agent or no language header. HEAD requests are never clicks. Scanners still get the
+    page. The network is kept only as a keyed hash.
+  - **The email score on each contact:** a reply 40, Book a time or Call me 30, prices 20, a download 15, any other link 5; each link once; the week before counts
+    half; gone after two weeks; opens count for nothing.
+  - **Hot now** on Email > Overview; the team's alert ("Meena Iyer just opened Book a time"), once a day per person and action, with a switch.
+  - **On Pro, off by default,** a follow-up call ten minutes after someone opens Book a time and doesn't book. Schedule calls it off if they book meanwhile. At most
+    once a week.
+  - **"In about 5 minutes"** on the email's Call me page during calling hours.
+  - **Email > Reports:** each kind of email, journey and bulk email; the funnel from lead to customer; the team's answers and waiting times; deliverability against
+    Gmail's limits, scanner clicks left out, DMARC on each domain, the steps for Postmaster Tools.
+  - **Events to the business's webhook** (email.sent, replied, clicked, bounced, unsubscribed) **and to LeadSquared** as activities found by email (all but sent),
+    kept first and sent with retries, shown in Integrations > Activity.
+  - Nimmi's reports tool.
+- Changed from the plan:
+  - The dashboard alert is the Hot now list: the dashboard has no notification area.
+  - The email score is its own number on the contact, beside the AI's rating from calls, not added into the chat and call score (that one is worked out per chat or
+    call; the contact is where a lead's emails meet them).
+  - Reports per template are the rows per kind of email.
+- Left for later: the business's own link domain (`links.theirdomain.in`). It needs a certificate per business on Nimmi's side, like custom domains in Deployments,
+  through Cloudflare for SaaS, which isn't set up on live yet.
+- Checks: `test_clicks.py` (real scanner patterns: a Safe Links sweep, gateways, scanners and libraries that name themselves, HEAD; and people: a fast click, two
+  links in a row, one office clicking minutes apart), `test_engagement.py`, `test_outbox.py`, `test_reports.py` (every number against the raw events); 35 safeguards
+  each switched off once to confirm a test fails; browser `email_reports_ui.mjs`. The test browser itself, which says HeadlessChrome, was rightly filtered as a
+  scanner until the check gave it a person's browser identity.
+- Not tried yet: real scanners on real mail (it needs live sending), a real LeadSquared account.
+
 ## Words used
 
 - **SPF, DKIM, DMARC:** DNS records that prove an email really comes from the domain it says. DMARC tells mail

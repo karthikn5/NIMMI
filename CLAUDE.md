@@ -330,7 +330,7 @@ only on the owner's machines): @.claude/private-notes.md
 
 - Phases 0-9 in `mail_plan.md` (written 1 Nov 2026 from the owner's idea, with market research). Phase 0 live 1 Nov
   2026: sending foundations and the dashboard's Email section (Overview, Inbox, Automations, Journeys, Lead board, Drafts, Lead sources, Bulk email, History,
-  Settings; Integrations > Email points there). Phases 1 to 5 in progress: the status is in mail_plan.md section 11.
+  Settings, Reports; Integrations > Email points there). Phases 1 to 6 in progress: the status is in mail_plan.md section 11.
 - Sending: `notify/email.py` `deliver()` (Resend, else SMTP) returns Resend's email id; `send_email()` wraps it. Every
   customer email carries tags (`ws`, `job`, `kind`: customer / alert) and an idempotency key (`email-<job>-<attempt>`, so
   "Send again" really sends). Nimmi's own emails come from `EMAIL_FROM`; customer emails from `CUSTOMER_EMAIL_FROM`
@@ -429,11 +429,23 @@ only on the owner's machines): @.claude/private-notes.md
   "held". Invitations (`event`) link to `/api/email/p/rsvp` (GET only asks), answers in `EmailRsvp` and the contact's details, a reminder the day before to yes and maybe.
   Imports: CSV up to 5,000 rows, "how they agreed" required and kept per person. From Nimmi's address a workspace sends `BROADCAST_SHARED_DAILY` (200) a day; its own
   domain only warms up. `BULK_EMAIL_FROM` (a marketing subdomain, e.g. news.nimmiai.in, once verified in Resend) keeps offers off the address of confirmations.
+- Clicks, score, reports (phase 6): links go through `/api/email/l/{token}`, which keeps an `EmailClick` (`mail/clicks.py`) and redirects; HEAD isn't a click. The
+  scheduler settles clicks 30 s on (`settle_due`, claimed): a scanner's or an HTTP library's name in the user agent, or 3 of the email's links within 3 s, decide alone;
+  otherwise points (20 s after sending 40, 3 links in 10 s 45, one network across 5+ people in 10 s 60, no UA 20, no Accept-Language 10; 60+ is a scanner). Only a
+  person's click sets `EmailJob.clicked_at`, `EmailLink.clicks` (scanners: `scanner_clicks`), and so journeys, subject tests and reports never see scanners. The network
+  is a keyed hash, never the address. A browser check's own Chrome says HeadlessChrome: set a normal user agent before opening a tracked link. `mail/engagement.py`:
+  `Contact.engagement` (reply 40, book/call 30, prices 20, download 15, link 5; once per link; the week before half; two weeks gone; `decay` every 6 h), Hot now
+  (30+ in 48 h, on the overview), the team's alert (`alert_engaged`, once a day per person and kind), the Pro fast call (`settings.fast_call`, a follow_up with
+  `variables.from_email`, which Schedule's staleness rules treat like a journey's pick). `mail/outbox.py`: `IntegrationEvent` rows for the webhook (5 events) and
+  LeadSquared (`leadsquared_activity`, ProspectActivity.svc/Create by EmailAddress, keys in headers), drained by the scheduler with retries (1, 5, 30, 120, 360 min,
+  6 tries) and logged in Integrations > Activity. `mail/reports.py` (`/api/email/reports`): a reply or an unsubscribe goes to the last email that address got within a
+  week; DMARC through `address.dmarc_of` (the organisation's record when a subdomain has none).
 - A reply address must take mail (`address.reply_address_works`): on live, `admin@nimmai.in` was saved, a domain that doesn't exist.
 - Tests: `tests/test_mail_foundation.py`, `test_mail_designs.py`, `test_after_call_email.py`, `test_email_replies.py`,
-  `test_call_emails.py`, `test_email_pages.py`, `test_small_emails.py`, `test_lead_intake.py`, `test_journeys.py`, `test_question_answers.py`, `test_broadcasts.py`;
+  `test_call_emails.py`, `test_email_pages.py`, `test_small_emails.py`, `test_lead_intake.py`, `test_journeys.py`, `test_question_answers.py`, `test_broadcasts.py`,
+  `test_clicks.py`, `test_engagement.py`, `test_outbox.py`, `test_reports.py`;
   browser: `dev-scripts/ui-checks/email_ui.mjs`, `email_design_ui.mjs`, `email_drafts_ui.mjs`, `email_inbox_ui.mjs`, `email_pages_ui.mjs`, `email_leads_ui.mjs`,
-  `email_journeys_ui.mjs`, `email_bulk_ui.mjs` with `email_seed.py`, `dev-scripts/email/bulk_probe.py` (1,000 people, run the trial with `--workers 2`) and
+  `email_journeys_ui.mjs`, `email_bulk_ui.mjs`, `email_reports_ui.mjs` with `email_seed.py`, `dev-scripts/email/bulk_probe.py` (1,000 people, run the trial with `--workers 2`) and
   `dev-scripts/email/fake_resend.py` (domains, keys, sending, received emails, and Resend's signed reports back to the backend).
 - Backups (`ops/backup.py`) never run with LOCAL_DEV: a developer's .env can hold the live storage keys.
 

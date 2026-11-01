@@ -338,6 +338,9 @@ async def _loop() -> None:
             fire_and_forget(intake.process_due())  # leads from other places, the same
             fire_and_forget(journeys.tick())  # leads' journeys, step by step
             fire_and_forget(broadcasts.tick())  # bulk emails: due ones, subject tests, an eye on those going out
+            from mail import clicks, outbox
+            fire_and_forget(clicks.settle_due())  # clicks old enough to tell a person from a scanner
+            fire_and_forget(outbox.drain())  # email events for the businesses' webhooks and LeadSquared
             from whatsapp import memory as whatsapp_memory, replies as whatsapp_replies
             await whatsapp_replies.sweep()  # WhatsApp answers whose timer was lost (a restart)
             if datetime.utcnow() - last_summaries > timedelta(minutes=2):
@@ -356,6 +359,10 @@ async def _loop() -> None:
             if datetime.utcnow() - last_purge > timedelta(hours=6):
                 await purge_expired_recordings()
                 await purge_email_events()
+                from mail import clicks, engagement, outbox
+                await clicks.purge()
+                await outbox.purge()
+                await engagement.decay()  # scores of people who went quiet
                 if twilio.configured():
                     await renew_numbers()
                 last_purge = datetime.utcnow()

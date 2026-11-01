@@ -34,7 +34,7 @@ GROUPS: dict[str, tuple[str, str]] = {  # name -> (what it's for, its tools)
               "email_overview email_history email_bulk_sends email_audience email_domains email_senders set_email_sender "
               "email_stopped_addresses assistant_emails set_assistant_emails email_design set_email_design email_drafts "
               "edit_email_draft send_email_draft discard_email_draft email_inbox update_email_conversation answer_email drop_email_draft "
-              "email_lead_sources set_lead_sources email_journeys set_journey lead_board update_lead"),
+              "email_lead_sources set_lead_sources email_journeys set_journey lead_board update_lead email_reports"),
     "connect": ("connecting WhatsApp, a phone number (Twilio or Exotel) or Cal.com, and what's connected now",
                 "connection_guide connection_status"),
     "account": ("the plan and its limits, the team, business hours",

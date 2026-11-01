@@ -297,11 +297,15 @@ def test_links_and_files_in_emails_are_counted_then_opened(client, make_user, ru
     assert client.get("/api/email/l/nope").status_code == 404
 
     async def counted():
+        from mail import clicks
+        from backend.models import EmailClick
+        assert await clicks.settle_due(datetime.utcnow() + clicks.SETTLE + timedelta(seconds=1)) >= 2  # a click counts once it's settled
         async with async_session() as db:
             link = await db.get(EmailLink, "tok_link")
             job = await db.get(EmailJob, job_id)
-            return link.clicks, job.clicked_at is not None
-    assert run(counted) == (1, True)
+            refused = (await db.execute(select(EmailClick).where(EmailClick.token == "tok_bad"))).scalars().all()
+            return link.clicks, job.clicked_at is not None, len(refused)
+    assert run(counted) == (1, True, 0), "a link that doesn't open isn't a click"
 
 
 # ─── the dashboard's API ─────────────────────────────────────────

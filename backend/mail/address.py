@@ -109,6 +109,58 @@ async def _lookup(domain: str) -> Optional[bool]:
         return None
 
 
+# Public suffixes of two labels that people in India use most: the organisation's domain is one label more.
+TWO_LABEL_SUFFIXES = {"co.in", "net.in", "org.in", "firm.in", "gen.in", "ind.in", "ac.in", "edu.in", "res.in", "gov.in", "nic.in", "co.uk", "org.uk", "com.au",
+                      "net.au", "co.nz", "com.sg", "com.my", "co.za", "com.br", "ae.org", "co.ae"}
+_dmarc_cache: dict[str, tuple[float, Optional[str]]] = {}
+
+
+def organisation(domain: str) -> str:
+    """news.sunrise.co.in -> sunrise.co.in: where DMARC is looked up when a subdomain has none of its own."""
+    labels = domain.lower().strip(".").split(".")
+    keep = 3 if ".".join(labels[-2:]) in TWO_LABEL_SUFFIXES else 2
+    return ".".join(labels[-keep:])
+
+
+async def _dmarc_lookup(name: str) -> Optional[str]:
+    """The DMARC record at _dmarc.<name>, or None. "" when the lookup couldn't be made."""
+    try:
+        import dns.asyncresolver
+        import dns.resolver
+        resolver = dns.asyncresolver.Resolver()
+        resolver.timeout, resolver.lifetime = 2.0, 4.0
+        answer = await resolver.resolve(f"_dmarc.{name}", "TXT")
+    except Exception as e:
+        if e.__class__.__name__ in ("NXDOMAIN", "NoAnswer"):
+            return None
+        return ""
+    for record in answer:
+        text = b"".join(record.strings).decode(errors="replace")
+        if text.lower().startswith("v=dmarc1"):
+            return text
+    return None
+
+
+async def dmarc_of(domain: str) -> Optional[str]:
+    """The DMARC record that covers a sending domain: its own, else its organisation's (RFC 7489). None: there's none; "": couldn't tell. Cached a day."""
+    domain = domain.lower().strip(".")
+    hit = _dmarc_cache.get(domain)
+    if hit and hit[0] > time.monotonic():
+        return hit[1]
+    found = await _dmarc_lookup(domain)
+    if found is None and organisation(domain) != domain:
+        found = await _dmarc_lookup(organisation(domain))
+    if found != "":
+        _dmarc_cache[domain] = (time.monotonic() + _CACHE_SECONDS, found)
+    return found
+
+
+def dmarc_policy(record: Optional[str]) -> Optional[str]:
+    """none, quarantine or reject, from a DMARC record."""
+    m = re.search(r"(?:^|;)\s*p\s*=\s*(none|quarantine|reject)", record or "", re.I)
+    return m.group(1).lower() if m else None
+
+
 async def receives_mail(domain: str) -> Optional[bool]:
     domain = domain.lower().strip().rstrip(".")
     if domain in REAL:

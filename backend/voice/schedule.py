@@ -755,7 +755,7 @@ async def _follow_up_stale(db: AsyncSession, job: CallbackJob, settings: dict, n
         return "They're no longer in Contacts"
     if contact.follow_ups_off:
         return "Follow-ups were stopped for them"
-    journey = (job.variables or {}).get("journey")  # a journey picked this person, rated or not
+    journey = (job.variables or {}).get("journey") or (job.variables or {}).get("from_email")  # a journey, or what they did in an email, picked them
     if contact.lead_status == "not_interested" or (contact.lead_status not in FOLLOWED_UP and not journey):
         return f"They're now marked {LEAD_LABELS.get(contact.lead_status, 'not rated').lower()}"
     last = max([t for t in (utc(contact.last_call_at), utc(contact.last_chat_at)) if t], default=utc(contact.created_at) if journey else None)

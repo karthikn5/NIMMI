@@ -25,6 +25,7 @@ EXCLUDED = {
     "POST /api/integrations/email/unsubscribe": "the unsubscribe link in emails (public)",
     "POST /api/email/webhooks/resend": "Resend's reports on sent emails (signed)",
     "GET /api/email/l/{token}": "links and files in customers' emails (public)",
+    "HEAD /api/email/l/{token}": "scanners checking where a link in an email goes (public): not a click",
     "/api/email/p/": "the pages customers open from an email: their meeting, booking a time, asking for a call, feedback (public, signed)",
     "/api/leads/in/": "leads arriving from IndiaMART and website forms (public, by the assistant's link)",
     "/api/email/broadcasts/": "writing, trying and sending a bulk email: the person does it on the page, where they see who it reaches",

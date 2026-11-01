@@ -43,6 +43,7 @@ const ROUTES: [RegExp, string, string, string?][] = [
     [/^\/dashboard\/email\/automations/, "email_automations", "Email: Automations"],
     [/^\/dashboard\/email\/journeys/, "email_journeys", "Email: Journeys"],
     [/^\/dashboard\/email\/board/, "email_board", "Email: Lead board"],
+    [/^\/dashboard\/email\/reports/, "email_reports", "Email: Reports"],
     [/^\/dashboard\/email\/drafts/, "email_drafts", "Email: Drafts"],
     [/^\/dashboard\/email\/leads/, "email_leads", "Email: Lead sources"],
     [/^\/dashboard\/email\/bulk/, "email_bulk", "Email: Bulk email"],

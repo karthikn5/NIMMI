@@ -536,6 +536,7 @@ async def _step(db, run: JourneyRun, journey: Journey, contact: Contact, bot: Bo
         quiet = _quiet_until(run, journey, now, tz)
         if quiet:
             run.next_at = quiet
+            _note(run, f"Waiting for {int(QUIET[0][:2])} am: no messages from {int(QUIET[1][:2]) - 12} pm to {int(QUIET[0][:2])} am", now)
             return False
     if kind == "email":
         if not contact.email:

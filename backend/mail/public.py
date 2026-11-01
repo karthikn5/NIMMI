@@ -64,8 +64,9 @@ def _call_options(settings: dict) -> list[tuple[str, str]]:
     from voice import schedule
     tz, hours = schedule.zone(settings), settings["callbacks"]["hours"]
     now = schedule.now_utc().astimezone(tz)
+    soon = now + timedelta(minutes=5)
+    found = [(SOON, "In about 5 minutes")] if schedule.allowed(soon, hours, schedule.DAYS, tz) else []
     at = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-    found = []
     while len(found) < 9 and at < now + timedelta(days=4):
         if schedule.allowed(at, hours, schedule.DAYS, tz):
             found.append((at.astimezone(timezone.utc).isoformat(), _text_of(at, tz)))
@@ -73,9 +74,14 @@ def _call_options(settings: dict) -> list[tuple[str, str]]:
     return found
 
 
+SOON = "soon"  # "In about 5 minutes": the time is taken when they press the button
+
+
 def _picked(value: Optional[str], options: list[tuple[str, str]]) -> Optional[datetime]:
     """Only a time that was on offer."""
-    return datetime.fromisoformat(value) if value and value in {v for v, _ in options} else None
+    if not value or value not in {v for v, _ in options}:
+        return None
+    return datetime.now(timezone.utc) + timedelta(minutes=5) if value == SOON else datetime.fromisoformat(value)
 
 
 async def _meeting(token: str) -> Optional[Meeting]:

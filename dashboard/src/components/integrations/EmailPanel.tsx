@@ -31,11 +31,12 @@ export function EmailMovedPanel() {
 
 /** Alerts to the workspace's team (Email > Automations). Customers' emails are per assistant: AssistantEmails. */
 export function TeamAlerts({ draft, set, test, testing }: PanelProps) {
-    const alerts: { key: "email_alerts" | "alert_calls" | "alert_handoffs" | "alert_daily"; label: string; hint: string }[] = [
+    const alerts: { key: "email_alerts" | "alert_calls" | "alert_handoffs" | "alert_daily" | "alert_engaged"; label: string; hint: string }[] = [
         { key: "email_alerts", label: "New leads", hint: "Someone shares a phone number or email in chat, on WhatsApp or on a call" },
         { key: "alert_calls", label: "Call summaries", hint: "Every answered or transferred call, with the summary and a link to the recording" },
         { key: "alert_handoffs", label: "A customer asks for a person", hint: "So someone can reply from Live chat while they're still there" },
         { key: "alert_daily", label: "Daily summary", hint: "Each morning: yesterday's leads and calls, and what's waiting for you" },
+        { key: "alert_engaged", label: "Someone acts on your email", hint: "They download a file, look at prices or open Book a time. Once a day for each person; security scanners' clicks don't count" },
     ];
 
     return (
@@ -59,7 +60,7 @@ export function TeamAlerts({ draft, set, test, testing }: PanelProps) {
                             <p className="text-sm">{a.label}</p>
                             <p className="text-[13px] text-stone-500 mt-0.5">{a.hint}</p>
                         </div>
-                        <Switch checked={draft[a.key]} onChange={(v) => set(a.key, v)} label={`Email the team: ${a.label}`} />
+                        <Switch checked={draft[a.key] ?? true} onChange={(v) => set(a.key, v)} label={`Email the team: ${a.label}`} />
                     </li>
                 ))}
             </ul>

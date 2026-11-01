@@ -212,8 +212,11 @@ async def _their_reply(db, row: ThreadMessage, thread: EmailThread) -> None:
         EmailJob.to_email.ilike(thread.email)))).scalars().all()
     for job in jobs:
         job.status, job.error = "cancelled", "They replied"
-    from mail import journeys
+    from mail import engagement, journeys, outbox
     await journeys.stopped_by_reply(db, thread)
+    await engagement.replied(db, thread)
+    await outbox.emit(db, thread.user_id, "email.replied", {"from": row.sender, "lead": row.sender, "subject": row.subject, "text": (row.text or "")[:1000],
+                                                          "conversation_id": thread.id, "assistant_id": thread.bot_id, "at": datetime.utcnow().isoformat()})
 
 
 async def forward(thread_id: str, message_id: str) -> None:

@@ -21,7 +21,7 @@ from auth import AuthContext, rate_limit, require_manager
 from backend.models import (Bot, EmailDomain, EmailJob, EmailLink, EmailSender, EmailSetup, EmailTemplate, EmailUnsubscribe,
                             IntegrationSettings, User, WhatsAppFile)
 from database import get_db
-from mail import address, after_call, compose, designs, domains, links, render, senders, setup, suppress, threads, webhooks
+from mail import engagement, address, after_call, compose, designs, domains, links, render, senders, setup, suppress, threads, webhooks
 from notify import automations, email
 
 router = APIRouter(prefix="/api/email", tags=["email"])
@@ -46,7 +46,7 @@ async def overview(ctx: AuthContext = Depends(require_manager), db: AsyncSession
     counted = {}
     for name, column in (("delivered", EmailJob.delivered_at), ("bounced", EmailJob.bounced_at),
                          ("complained", EmailJob.complained_at), ("opened", EmailJob.opened_at),
-                         ("clicked", EmailJob.clicked_at)):
+                         ("clicked", EmailJob.clicked_at)):  # clicked: by people (mail/clicks.py)
         counted[name] = (await db.execute(select(func.count()).select_from(EmailJob).where(*mine, column.isnot(None)))).scalar_one()
     problems = (await db.execute(select(EmailJob).where(
         EmailJob.user_id == ctx.owner_id, EmailJob.created_at >= since,
@@ -71,7 +71,19 @@ async def overview(ctx: AuthContext = Depends(require_manager), db: AsyncSession
         "drafts": by_status.get("draft", 0),
         "complaint_rate": await complaint_rate(db, ctx.owner_id),
         "problems": [_job_json(j) for j in problems],
+        "hot": await engagement.hot(db, None, owner_id=ctx.owner_id, limit=10),
     }
+
+
+@router.get("/reports")
+async def reports(days: int = 30, bot_id: Optional[str] = None, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    """Email > Reports."""
+    from mail import reports as mail_reports
+    if days not in mail_reports.PERIODS:
+        raise HTTPException(status_code=400, detail="Choose 7, 30 or 90 days")
+    if bot_id:
+        await _own_bot(bot_id, ctx, db)
+    return await mail_reports.build(db, ctx.owner_id, bot_id, days)
 
 
 # ─── sending domains ─────────────────────────────────────────────
@@ -274,7 +286,7 @@ class SetupIn(BaseModel):
     settings: Optional[dict] = None     # {"after_call": {...}, "welcome": {...}}
 
 
-GROWTH_SETTINGS = {"after_call", "replies", "journeys", "question_answer", "consent", "during_call", "lead_email", "lead_call", "callback_booked", "voicemail", "missed_chat", "chat_copy"}
+GROWTH_SETTINGS = {"after_call", "replies", "journeys", "question_answer", "consent", "fast_call", "during_call", "lead_email", "lead_call", "callback_booked", "voicemail", "missed_chat", "chat_copy"}
 
 
 @router.put("/setup/{bot_id}")
@@ -309,6 +321,8 @@ async def save_setup(bot_id: str, data: SetupIn, ctx: AuthContext = Depends(requ
                 raise HTTPException(status_code=400, detail="Add where replies go (Email > Settings) so customers can answer you")
         if kind == "after_call" and any(allowed.get(d) not in (None, "off", "review", "auto") for d in ("inbound", "outbound")):
             raise HTTPException(status_code=400, detail="The after-call email is off, review first, or automatic")
+        if kind == "fast_call" and allowed.get("enabled"):
+            await plans.require_feature(db, bot.bot_id, "schedule")  # calls are Pro
         if kind == "consent" and "words" in allowed and not 5 <= len(str(allowed["words"] or "").strip()) <= 200:
             raise HTTPException(status_code=400, detail="Write the words next to the box, in 5 to 200 characters")
         if kind == "consent" and "ask" in allowed:
@@ -600,22 +614,27 @@ async def answer_suggestion(data: SuggestionIn, ctx: AuthContext = Depends(requi
 
 
 # ─── links in emails (public) ────────────────────────────────────
+@router.head("/l/{token}")
+async def check_link(token: str, db: AsyncSession = Depends(get_db)):
+    """A HEAD request: scanners check where a link goes this way, people never do. Not a click."""
+    row = await db.get(EmailLink, token[:32])
+    if row is None or not row.target.startswith(("https://", "http://")):
+        return Response(status_code=404 if row is None else 200)
+    return RedirectResponse(row.target, status_code=302)
+
+
 @router.get("/l/{token}")
-async def open_link(token: str, db: AsyncSession = Depends(get_db)):
-    """A link or a file from a customer email: counted, then opened (a redirect) or downloaded."""
+async def open_link(token: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """A link or a file from a customer email: kept as a click (mail/clicks.py tells a person from a scanner later), then opened (a redirect) or downloaded."""
+    from auth import client_ip
+    from mail import clicks
     row = await db.get(EmailLink, token[:32])
     if row is None:
         return HTMLResponse("<!doctype html><title>Link not found</title><p style='font-family:sans-serif;margin:15vh auto;"
                             "max-width:420px'>This link isn't available any more.</p>", status_code=404)
-    now = datetime.utcnow()
-    row.clicks = (row.clicks or 0) + 1
-    row.first_at = row.first_at or now
-    row.last_at = now
-    if row.job_id:
-        job = await db.get(EmailJob, row.job_id)
-        if job is not None:
-            job.clicked_at = job.clicked_at or now
-    await db.commit()
+    async def counted():  # only what really opens
+        clicks.record(db, row, client_ip(request), request.headers.get("user-agent"), bool(request.headers.get("accept-language")))
+        await db.commit()
     if row.kind == "file" and row.target.startswith("file:"):
         f = await db.get(WhatsAppFile, row.target[len("file:"):])
         from whatsapp import storage
@@ -624,11 +643,13 @@ async def open_link(token: str, db: AsyncSession = Depends(get_db)):
             return HTMLResponse("<!doctype html><title>File not available</title><p style='font-family:sans-serif;margin:15vh auto;"
                                 "max-width:420px'>This file isn't available any more. Reply to the email to ask for it.</p>",
                                 status_code=404)
+        await counted()
         safe = "".join(ch for ch in f.filename if ch.isalnum() or ch in "._- ")[:120] or "file"
         return Response(content, media_type=f.mime, headers={"Content-Disposition": f'attachment; filename="{safe}"',
                                                                "Cache-Control": "private, no-store"})
     if not row.target.startswith(("https://", "http://")):
         raise HTTPException(status_code=404, detail="Link not found")
+    await counted()
     return RedirectResponse(row.target, status_code=302)
 
 

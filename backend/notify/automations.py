@@ -279,7 +279,7 @@ async def _reached_goal_since(db, job: EmailJob) -> bool:
 async def process_due() -> None:
     """Send queued customer emails whose time has come (called by the background loop)."""
     from notify.events import _once  # the delivery log, one row per (kind, ref)
-    from mail import after_call, broadcasts, compose, consent, journeys, small
+    from mail import after_call, broadcasts, compose, consent, journeys, outbox, small
     now = datetime.utcnow()
     async with async_session() as db:
         jobs = (await db.execute(select(EmailJob).where(EmailJob.status == "queued", EmailJob.send_at <= now)  # bulk email after everything else
@@ -374,6 +374,8 @@ async def process_due() -> None:
                 job.status, job.error, job.sent_at, job.provider_id = "sent", None, datetime.utcnow(), sent.id
                 if thread:
                     threads.note_sent(db, thread, job)
+                await outbox.emit(db, job.user_id, "email.sent", {"email_id": job.id, "to": job.to_email, "subject": job.subject, "kind": job.automation or job.kind,
+                                                                 "assistant_id": job.bot_id, "broadcast_id": job.broadcast_id, "at": job.sent_at.isoformat()})
             elif result.get("called"):
                 job.status, job.error = "failed", (sent.error if sent else None) or "Email provider not configured or rejected the message"
             else:  # another process sent it already (its claim was there first)
@@ -404,6 +406,9 @@ async def unsubscribe(owner_id: str, to: str, scope: str = "all", bot_id: Option
             await stop_for(db, owner_id, to, "They unsubscribed")
         else:
             await suppress.cancel_queued_bulk(db, owner_id, to)
+        from mail import outbox
+        await outbox.emit(db, owner_id, "email.unsubscribed", {"to": to, "lead": to, "assistant_id": bot_id, "scope": scope, "reason": "unsubscribed",
+                                                               "at": datetime.utcnow().isoformat(), "detail": "Only offers and news" if scope == "marketing" else "All emails"})
         await suppress.commit_quietly(db)
 
 

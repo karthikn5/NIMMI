@@ -222,6 +222,10 @@ class Contact(Base):
     follow_ups = Column(Integer, nullable=True)        # follow-up calls placed to them, in all
     follow_ups_off = Column(Boolean, nullable=True)    # the team stopped follow-ups for them
     source = Column(String, nullable=True)             # how they first came: chat (website); None = a call or WhatsApp
+    # What they did with the business's emails (mail/engagement.py): a reply counts most; scanners and opens count for nothing.
+    engagement = Column(Integer, nullable=True)        # 0-100, over the last 14 days
+    engaged_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    engaged_by = Column(JSON, nullable=True)           # the latest things they did: [{"what", "at"}]
 
 
 class PhoneNumber(Base):
@@ -531,6 +535,8 @@ class IntegrationSettings(Base):
     alert_calls = Column(Boolean, nullable=True)        # call summaries (None = on, the original behaviour)
     alert_handoffs = Column(Boolean, nullable=True)     # "a customer asked for a person"
     alert_daily = Column(Boolean, nullable=True)        # the owner's daily summary (notify/digest.py)
+    alert_engaged = Column(Boolean, nullable=True)      # "Karthi just downloaded the price list" (mail/engagement.py; None = on)
+    leadsquared_activity = Column(Integer, nullable=True)  # LeadSquared's code for a custom activity: email events go there (mail/outbox.py)
     sender_name = Column(String, nullable=True)         # shown as the From name on customer emails
     reply_to = Column(String, nullable=True)            # where customers' replies go
     email_automations = Column(JSON, nullable=True)     # {"chat_lead": {...}, "call_lead": {...}}
@@ -875,10 +881,46 @@ class EmailLink(Base):
     kind = Column(String, nullable=False)   # link, file, book, call, whatsapp
     target = Column(Text, nullable=False)   # the address it opens, or the file's id
     label = Column(String(200), nullable=True)
-    clicks = Column(Integer, default=0)
+    clicks = Column(Integer, default=0)                # by people (mail/clicks.py)
     first_at = Column(DateTime(timezone=True), nullable=True)
     last_at = Column(DateTime(timezone=True), nullable=True)
+    scanner_clicks = Column(Integer, nullable=True)    # by email security scanners, left out of everything
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class EmailClick(Base):
+    """One request for a link in a customer email (mail/clicks.py): kept to tell a person from an email security scanner, then settled half a minute later."""
+    __tablename__ = "email_clicks"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token = Column(String(32), nullable=False, index=True)
+    job_id = Column(String(36), nullable=True, index=True)
+    kind = Column(String(12), nullable=True)            # the link's kind: link, file, book, call, whatsapp
+    at = Column(DateTime(timezone=True), nullable=False, index=True)
+    network = Column(String(16), nullable=True, index=True)  # a keyed hash of the address it came from: compared, never shown
+    agent = Column(String(300), nullable=True)          # the user agent
+    language = Column(Boolean, nullable=True)           # an Accept-Language header came with it
+    person = Column(Boolean, nullable=True)             # None until settled
+    score = Column(Integer, nullable=True)
+    reasons = Column(JSON, nullable=True)
+    settled_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
+
+class IntegrationEvent(Base):
+    """An email event for the business's own systems (mail/outbox.py): its webhook, or an activity in LeadSquared. Kept, then sent by the scheduler, with retries."""
+    __tablename__ = "integration_events"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    target = Column(String(12), nullable=False)          # webhook, leadsquared
+    event = Column(String(30), nullable=False)           # email.sent, email.replied, email.clicked, email.bounced, email.unsubscribed
+    data = Column(JSON, nullable=False)
+    status = Column(String(10), default="new", index=True)  # new, sent, failed
+    attempts = Column(Integer, default=0)
+    next_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    error = Column(String(300), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    sent_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class EmailSender(Base):

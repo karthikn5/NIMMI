@@ -34,6 +34,8 @@ export interface IntegrationSettings {
     alert_calls: boolean;           // call summaries
     alert_handoffs: boolean;        // a customer asked for a person
     alert_daily: boolean;           // the owner's daily summary
+    alert_engaged: boolean;         // someone downloads a file, looks at prices or opens Book a time from an email
+    leadsquared_activity: number | null;  // LeadSquared's code for the custom activity email events go to
     alert_email: string;            // comma-separated, up to 5
     default_email: string;
     // Email: to customers

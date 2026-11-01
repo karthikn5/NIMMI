@@ -55,6 +55,30 @@ export default function EmailOverviewPage() {
                 )}
             </section>
 
+            {!!d.hot?.length && (
+                <Card>
+                    <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-2">
+                        <div>
+                            <h2 className="text-sm font-medium">Hot now</h2>
+                            <p className="text-[13px] text-stone-500 mt-0.5">People who acted on your emails in the last two days. A good moment to call.</p>
+                        </div>
+                        <Link href="/dashboard/email/board" className="text-[13px] text-plum hover:underline shrink-0">Lead board</Link>
+                    </div>
+                    <ul>
+                        {d.hot.map((h) => (
+                            <li key={h.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 border-t border-line text-[13px]">
+                                <span className="min-w-40 flex-1">
+                                    <span className="block text-sm text-ink truncate">{h.name || h.email || h.phone}</span>
+                                    <span className="block text-stone-500 truncate">{[h.phone, h.email].filter(Boolean).join(" · ")}</span>
+                                </span>
+                                <span className="text-stone-700">{h.did[0]?.what ? h.did[0].what[0].toUpperCase() + h.did[0].what.slice(1) : ""}</span>
+                                {h.at && <span className="text-stone-500 shrink-0">{formatWhen(h.at)}</span>}
+                            </li>
+                        ))}
+                    </ul>
+                </Card>
+            )}
+
             <div className="grid lg:grid-cols-2 gap-6 items-start">
                 <Card>
                     <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-2">

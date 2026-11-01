@@ -13,7 +13,7 @@ export function WebhookPanel({ draft, saved, set, test, testing }: PanelProps) {
         <>
             <PanelHeader title="Webhook" description="Send every lead and call to your own system, or to Zapier, Make or Zoho Flow." />
             <Card className="px-5 py-1">
-                <SettingRow label="Endpoint URL" htmlFor="hook" hint="We POST JSON with an event name: lead.captured or call.completed. Leave empty to turn off.">
+                <SettingRow label="Endpoint URL" htmlFor="hook" hint="We POST JSON with an event name: lead.captured, call.completed, and on Pro email.sent, email.replied, email.clicked, email.bounced and email.unsubscribed. Leave empty to turn off.">
                     <div className="flex gap-2">
                         <Input id="hook" type="url" placeholder="https://hooks.example.com/nimmi" value={draft.webhook_url} onChange={(e) => set("webhook_url", e.target.value)} />
                         <Button onClick={() => test("webhook")} disabled={!saved?.webhook_url || testing === "webhook"}>{testing === "webhook" ? "Sending…" : "Send test"}</Button>
@@ -52,6 +52,11 @@ export function LeadSquaredPanel({ draft, set, test, testing }: PanelProps) {
                 </SettingRow>
                 <SettingRow label="Access key" htmlFor="lsq-key">
                     <Input id="lsq-key" value={draft.leadsquared_access_key} onChange={(e) => set("leadsquared_access_key", e.target.value)} />
+                </SettingRow>
+                <SettingRow label="Email activity code" htmlFor="lsq-activity"
+                            hint="Optional, on Pro. In LeadSquared: Settings, Leads, Activities and Scores, Custom Activities and Scores: add one called Nimmi email and paste its code. Replies, clicks, bounces and unsubscribes then show on the lead.">
+                    <Input id="lsq-activity" type="number" inputMode="numeric" min={1} className="w-40" value={draft.leadsquared_activity ?? ""}
+                           onChange={(e) => set("leadsquared_activity", e.target.value ? Number(e.target.value) : null)} />
                 </SettingRow>
                 <SettingRow label="Secret key" htmlFor="lsq-secret" hint={draft.leadsquared_has_secret ? "Saved. Enter a new one to replace it." : undefined}>
                     <div className="flex gap-2">

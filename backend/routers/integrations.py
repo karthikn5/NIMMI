@@ -37,6 +37,7 @@ def _json(s: IntegrationSettings, owner_email: str, whatsapp_number: bool = Fals
         "leadsquared_has_secret": bool(s.leadsquared_secret_key),
         # Email automation
         "alert_calls": s.alert_calls is not False, "alert_handoffs": bool(s.alert_handoffs), "alert_daily": bool(s.alert_daily),
+        "alert_engaged": s.alert_engaged is not False, "leadsquared_activity": s.leadsquared_activity,
         "sender_name": s.sender_name or "", "reply_to": s.reply_to or "",
         "automations": automations.automations(s), "placeholders": automations.PLACEHOLDERS,
         "server": {
@@ -88,10 +89,12 @@ class IntegrationUpdate(BaseModel):
     leadsquared_host: str = ""
     leadsquared_access_key: str = ""
     leadsquared_secret_key: Optional[str] = None  # blank keeps the saved one
+    leadsquared_activity: Optional[int] = Field(None, ge=1, le=99999)  # the business's custom activity for email events
     # Email automation
     alert_calls: bool = True
     alert_handoffs: bool = False
     alert_daily: bool = False
+    alert_engaged: bool = True
     sender_name: str = Field("", max_length=60)
     reply_to: str = Field("", max_length=200)
     automations: dict[str, AutomationIn] = {}
@@ -137,7 +140,8 @@ async def update_settings(data: IntegrationUpdate, ctx: AuthContext = Depends(re
 
     s.email_alerts = data.email_alerts
     s.alert_email = ", ".join(alert_list) or None
-    s.alert_calls, s.alert_handoffs, s.alert_daily = data.alert_calls, data.alert_handoffs, data.alert_daily
+    s.alert_calls, s.alert_handoffs, s.alert_daily, s.alert_engaged = data.alert_calls, data.alert_handoffs, data.alert_daily, data.alert_engaged
+    s.leadsquared_activity = data.leadsquared_activity
     s.sender_name = data.sender_name.strip() or None
     s.reply_to = data.reply_to.strip() or None
     if autos:

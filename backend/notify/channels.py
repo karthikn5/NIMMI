@@ -147,3 +147,26 @@ async def push_leadsquared(host: str, access_key: str, secret_key: str, lead: di
         )
     if resp.status_code >= 300:
         raise ChannelError(f"LeadSquared {resp.status_code}: {resp.text[:300]}")
+
+
+async def post_leadsquared_activity(host: str, access_key: str, secret_key: str, email: str, activity: int, note: str, at: Optional[str] = None) -> None:
+    """An activity on the lead with this email (LeadSquared creates the lead when there's none): ProspectActivity.svc/Create, with the business's own
+    custom activity code. The time goes in UTC as "yyyy-MM-dd HH:mm:ss"."""
+    from datetime import datetime
+    host = host.replace("https://", "").replace("http://", "").strip("/").lower()
+    if not re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)*\.leadsquared\.com", host):
+        raise ChannelError("LeadSquared host should look like api-in21.leadsquared.com")
+    if not email:
+        raise ChannelError("No email address to find the lead by")
+    when = datetime.fromisoformat(at) if at else datetime.utcnow()
+    body = {"EmailAddress": email, "ActivityEvent": int(activity), "ActivityNote": note, "ActivityDateTime": f"{when:%Y-%m-%d %H:%M:%S}"}
+    async with safe_client(timeout=15) as client:
+        resp = await client.post(f"https://{host}/v2/ProspectActivity.svc/Create", headers={"x-LSQ-AccessKey": access_key, "x-LSQ-SecretKey": secret_key}, json=body)
+    if resp.status_code >= 300:
+        raise ChannelError(f"LeadSquared {resp.status_code}: {resp.text[:300]}")
+    try:
+        if resp.json().get("Status") == "Error":
+            raise ChannelError(f"LeadSquared: {str(resp.json().get('ExceptionMessage') or resp.json().get('Message'))[:300]}")
+    except ValueError:
+        pass
+

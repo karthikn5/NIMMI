@@ -140,8 +140,13 @@ async def handle(event_id: str, payload: dict) -> None:
                                           if isinstance(data.get("suppressed"), dict) else None)
         elif kind == "email.opened" and job:
             job.opened_at = job.opened_at or now
-        elif kind == "email.clicked" and job:
-            job.clicked_at = job.clicked_at or now
+        elif kind == "email.clicked":
+            pass  # Nimmi's own links count clicks, without scanners (mail/clicks.py); Resend's tracking is off
+        if customer and job is not None and kind in ("email.bounced", "email.complained"):
+            from mail import outbox
+            await outbox.emit(db, owner, "email.unsubscribed" if kind == "email.complained" else "email.bounced",
+                              {"email_id": job.id, "to": job.to_email, "lead": job.to_email, "subject": job.subject, "assistant_id": job.bot_id, "at": now.isoformat(),
+                               "detail": job.event_detail, **({"reason": "complaint"} if kind == "email.complained" else {})})
         await suppress.commit_quietly(db)
 
 

@@ -9,6 +9,43 @@ export interface EmailOverview {
     stopped: number;
     complaint_rate: number | null;
     problems: EmailRow[];
+    hot?: HotLead[];              // who acted on an email in the last two days (backend mail/engagement.py)
+}
+
+/* What people did with the emails, and the reports (backend mail/engagement.py, mail/reports.py). Clicks are people's only: scanners are left out. */
+export interface HotLead {
+    id: string;
+    bot_id: string;
+    name: string | null;
+    email: string | null;
+    phone: string | null;
+    score: number;
+    at: string | null;
+    did: { what: string; kind: string; at: string }[];
+    status: string | null;
+    stage: string;
+}
+
+export interface ReportRow {
+    key: string;
+    label: string;
+    type: "automatic" | "journey" | "bulk";
+    sent: number; delivered: number; bounced: number; complained: number; clicked: number; replied: number; unsubscribed: number;
+}
+
+export interface EmailReports {
+    days: number;
+    since: string;
+    emails: ReportRow[];
+    funnel: { leads: number; emailed: number; engaged: number; meetings: number; customers: number };
+    team: { id: string; name: string; answers: number; median_minutes: number | null }[];
+    deliverability: {
+        sent: number; delivered: number; bounced: number; complained: number;
+        bounce_rate: number | null; complaint_rate: number | null;
+        bounce_level: "good" | "warn" | "bad" | "unknown"; complaint_level: "good" | "warn" | "bad" | "unknown";
+        scanner_clicks: number;
+        domains: { name: string; status: string; dmarc: string | null; checked: boolean }[];
+    };
 }
 
 export interface DnsRecord {
@@ -88,6 +125,7 @@ export interface AssistantEmails {
         after_call: { inbound: AfterCallMode; outbound: AfterCallMode; approved: number; approved_unchanged: number; suggested: boolean };
         replies: { mode: ReplyMode };
         during_call: { enabled: boolean };
+        fast_call?: { enabled: boolean };
         lead_email: { enabled: boolean }; lead_call: { enabled: boolean; minutes: number };
         callback_booked: { enabled: boolean }; voicemail: { enabled: boolean }; missed_chat: { enabled: boolean; minutes: number };
         chat_copy: { enabled: boolean }; meeting: { thanks: boolean; missed: boolean };

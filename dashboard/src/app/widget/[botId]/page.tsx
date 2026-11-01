@@ -722,7 +722,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                         <span>Chat history is kept for 24 hours</span>
                     </div>
                 )}
-                {botConfig?.email_copy && mode === "ai" && !pending && chatCopy !== "hidden" && (
+                {botConfig?.email_copy && mode === "ai" && chatCopy !== "hidden" && (chatCopy !== "idle" || !pending) && (  // what came of a press shows even when a question follows
                     chatCopy === "idle" ? (
                         <button onClick={emailCopy} className={`self-start text-[11px] underline underline-offset-2 px-1 ${onFooter("text-stone-500", "text-white/60")}`}>
                             Email me this chat

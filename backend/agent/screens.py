@@ -124,6 +124,10 @@ SCREENS: dict[str, dict] = {
         "its goal; a reply ends it, and so does an unsubscribe or the do-not-call list. One cap limits emails to one person.")},
     "email_board": {"title": "Email: Lead board", "path": "/dashboard/email/board", "about": (
         "Every lead by stage: new, contacted, interested, meeting, customer, lost, with who looks after them and their tags. Stages move forward by themselves; the team can move anyone.")},
+    "email_reports": {"title": "Email: Reports", "path": "/dashboard/email/reports", "about": (
+        "How email did over 7, 30 or 90 days: each kind of email, journey and bulk email (sent, delivered, clicked by people, replied, unsubscribed); the funnel from "
+        "leads to customers; the team's answers and waiting times; deliverability against Gmail's limits, DMARC on each domain, and how to set up Postmaster Tools. "
+        "Clicks by email security scanners are left out.")},
     "email_drafts": {"title": "Email: Drafts", "path": "/dashboard/email/drafts", "about": (
         "The AI's emails after calls that wait for the team: read each with the reason it was held, change the recap, "
         "answers, next step, files or subject, then send or discard it, or have it written again. After 20 approved "

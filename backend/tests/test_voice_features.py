@@ -268,7 +268,8 @@ def test_campaign_create_dispatch_and_finish(client, make_user, run, monkeypatch
     monkeypatch.setattr(twilio, "place_call", fake_place)
 
     run(scheduler.dispatch_due_callbacks)
-    assert dialled == [("+919800000001", True)]  # concurrency 1, voicemail detection on
+    # Concurrency 1, voicemail detection on. Both are due at the same moment, so either can go first: Postgres promises no order among equals.
+    assert len(dialled) == 1 and dialled[0][1] is True and dialled[0][0] in ("+919800000001", "+919800000002")
     run(scheduler.dispatch_due_callbacks)
     assert len(dialled) == 1                      # still one call in flight
 
@@ -278,14 +279,14 @@ def test_campaign_create_dispatch_and_finish(client, make_user, run, monkeypatch
         async with async_session() as db:
             j = (await db.execute(select(CallbackJob).where(CallbackJob.provider_call_id == "CA-1"))).scalars().first()
             j.status = "done"
-            assert j.variables == {"unit": "B-204", "name": "Ravi"}
+            assert j.e164 != "+919800000001" or j.variables == {"unit": "B-204", "name": "Ravi"}
             await db.commit()
     run(finish_first)
     run(scheduler.dispatch_due_callbacks)
     assert len(dialled) == 1                      # paused: nobody else is called
     client.post(f"/api/voice/campaigns/{camp['id']}/resume", headers=u.h())
     run(scheduler.dispatch_due_callbacks)
-    assert dialled[-1][0] == "+919800000002"
+    assert len(dialled) == 2 and {d[0] for d in dialled} == {"+919800000001", "+919800000002"}
 
     async def finish_second():
         async with async_session() as db:

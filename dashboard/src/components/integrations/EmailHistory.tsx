@@ -33,6 +33,7 @@ function shown(row: EmailRow): { label: string; tone: "good" | "neutral" | "warn
 function outcome(row: EmailRow): string | null {
     const at = (iso: string | null) => (iso ? formatWhen(iso) : "");
     const parts: string[] = [];
+    if (row.sent_from) parts.push(`Sent from ${row.sent_from}`);
     if (row.delivered_at) parts.push(`Delivered ${at(row.delivered_at)}`);
     if (row.event === "delayed") parts.push(row.event_detail || "Delayed: Resend keeps trying");
     if (row.bounced_at) parts.push(`Bounced ${at(row.bounced_at)}${row.event_detail ? `: ${row.event_detail}` : ""}`);

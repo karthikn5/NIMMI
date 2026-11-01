@@ -191,6 +191,10 @@ export function MeetingSheet({ id, onClose, onChanged }: { id: string | null; on
                             {m.kind === "phone" ? "Your team calls them" : m.place || <span className="text-signal">Not set yet</span>}
                             {m.kind !== "phone" && !m.link && m.place && <span className="text-stone-500"> (the default)</span>}
                         </dd>
+                        {m.calendar && (m.calendar.on || m.calendar.error) && <>
+                            <dt className="text-stone-500">Calendar</dt>
+                            <dd>{m.calendar.on ? "On your calendar" : `Not on your calendar yet: ${m.calendar.error}`}</dd>
+                        </>}
                         <dt className="text-stone-500">Host</dt>
                         <dd>{host ? host.name : "Not chosen"}</dd>
                         <dt className="text-stone-500">Writing to them</dt>
@@ -262,7 +266,7 @@ function ApproveDialog({ open, meeting: m, hosts, busy, onClose, onApprove }: {
     const [link, setLink] = useState("");
     const [host, setHost] = useState("");
     useEffect(() => { if (open) { setLink(m.link); setHost(m.host_id ?? ""); } }, [open, m.link, m.host_id]);
-    const needsLink = m.kind === "online" && !m.setup.default_link && !link.trim();
+    const needsLink = m.kind === "online" && !m.setup.default_link && !m.setup.calendar_video && !link.trim();
     const writes = [m.channels.whatsapp ? "WhatsApp" : null, m.channels.email ? "email" : null].filter(Boolean).join(" and ");
 
     return (

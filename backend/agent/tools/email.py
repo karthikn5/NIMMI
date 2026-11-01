@@ -634,6 +634,14 @@ async def email_agent_activity(tc, db, assistant_id):
     return {"actions": await activity(bot_id, ctx=tc.ctx, db=db), "waiting": [{k: d[k] for k in ("id", "to", "subject", "why", "note")} for d in waiting]}
 
 
+@tool("email_mailboxes", "The Gmail and Outlook mailboxes and calendars connected to this workspace: who connected each, whether it sends one-to-one emails and holds meetings, and "
+      "whether it needs connecting again. Connecting one happens on Email > Settings, in the person's own browser.", "Reading connected mailboxes",
+      {"type": "object", "properties": {}}, roles=MANAGERS, screens=AREAS["email"], routes=("GET /api/email/connections",))
+async def email_mailboxes(tc, db):
+    from mail.connections_api import connections
+    return await connections(ctx=tc.ctx, db=db)
+
+
 async def _read_bulk(ctx, db, entity: str, keys: list) -> dict:
     from sqlalchemy.future import select
     from backend.models import EmailBroadcast

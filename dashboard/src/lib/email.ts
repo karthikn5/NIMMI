@@ -127,6 +127,7 @@ export interface AssistantEmails {
         during_call: { enabled: boolean };
         fast_call?: { enabled: boolean };
         agent?: { level: AgentLevel; per_day: number };
+        mailbox?: { connection_id: string | null };
         lead_email: { enabled: boolean }; lead_call: { enabled: boolean; minutes: number };
         callback_booked: { enabled: boolean }; voicemail: { enabled: boolean }; missed_chat: { enabled: boolean; minutes: number };
         chat_copy: { enabled: boolean }; meeting: { thanks: boolean; missed: boolean };
@@ -443,6 +444,27 @@ export const AGENT_LEVELS: { value: AgentLevel; label: string; about: string }[]
     { value: "morning", label: "Morning approval", about: "At 8 am it writes the day's emails; what you approve goes, the rest is dropped at night." },
     { value: "auto", label: "Automatic", about: "Its emails go by themselves, within the limits. Anything a check doubts waits for you." },
 ];
+
+/** Someone's own Gmail or Outlook (backend/mail/mailbox.py). */
+export interface MailConnection {
+    id: string;
+    provider: "google" | "microsoft";
+    address: string;
+    name: string | null;
+    person: string | null;
+    mine: boolean;
+    can_send: boolean;
+    has_calendar: boolean;
+    status: "connected" | "reconnect";
+    error: string | null;
+    sent_today: number;
+}
+
+export interface MailConnections {
+    available: { google: boolean; microsoft: boolean };
+    daily_limit: number;
+    items: MailConnection[];
+}
 
 export interface AgentDraft {
     id: string;

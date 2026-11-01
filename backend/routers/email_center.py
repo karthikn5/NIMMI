@@ -30,7 +30,7 @@ def _iso(d: Optional[datetime]) -> Optional[str]:
 def _job_json(j: EmailJob) -> dict:
     key = j.automation or ("broadcast" if j.broadcast_id else j.kind.split("#")[0])
     return {"id": j.id, "to": j.to_email, "subject": j.subject, "automation": key, "label": automations.LABELS.get(key, key),
-            "step": j.step or 1, "status": j.status, "error": j.error, "broadcast_id": j.broadcast_id,
+            "step": j.step or 1, "status": j.status, "error": j.error, "broadcast_id": j.broadcast_id, "sent_from": (j.merge_data or {}).get("sent_from"),
             "send_at": _iso(j.send_at), "sent_at": _iso(j.sent_at), "created_at": _iso(j.created_at),
             # What Resend reported after sending (mail/webhooks.py). Opens are a hint: mail apps open emails by themselves.
             "event": j.event, "event_detail": j.event_detail, "delivered_at": _iso(j.delivered_at),

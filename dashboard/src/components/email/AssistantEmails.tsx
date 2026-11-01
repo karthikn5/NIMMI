@@ -6,7 +6,7 @@ import { ChevronDown, Pencil } from "lucide-react";
 import { Button, Card, Select, Skeleton, Status, Switch, cn, useToast } from "@/components/ui";
 import { SequenceEditor, summary } from "@/components/integrations/EmailPanel";
 import { apiJson } from "@/lib/api";
-import { REPLY_MODES, type AfterCallMode, type AssistantEmails as Setup, type EmailKind, type ReplyMode, type Senders, AGENT_LEVELS, DRAFTS_CHANGED } from "@/lib/email";
+import { REPLY_MODES, type AfterCallMode, type AssistantEmails as Setup, type EmailKind, type MailConnections, type ReplyMode, type Senders, AGENT_LEVELS, DRAFTS_CHANGED } from "@/lib/email";
 import { AUTOMATIONS, type Automation, type AutomationKey, type EmailStep } from "@/lib/integrations";
 import { useLimits } from "@/lib/plan";
 import { useApi } from "@/lib/useApi";
@@ -32,6 +32,7 @@ export function AssistantEmails() {
     const senders = useApi<Senders>("/api/email/senders");
     const [botId, setBotId] = useState("");
     const setup = useApi<Setup>(botId ? `/api/email/setup/${botId}` : null);
+    const connections = useApi<MailConnections>("/api/email/connections");
     const [open, setOpen] = useState<AutomationKey | null>(null);
     const [draft, setDraft] = useState<EmailStep[] | null>(null);
     const [saving, setSaving] = useState(false);
@@ -191,6 +192,28 @@ export function AssistantEmails() {
                         </Select>
                         <Button size="sm" disabled={saving || looking} onClick={lookNow}>{looking ? "Looking…" : "Look now"}</Button>
                     </>}
+                </div>
+            </li>
+        );
+    };
+    const mailboxRow = () => {
+        const chosen = s?.settings.mailbox;
+        const choices = (connections.data?.items ?? []).filter((c) => c.can_send);
+        if (!chosen || !choices.length) return null;
+        return (
+            <li className="border-t border-line px-5 py-3.5">
+                <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex-1 min-w-48 pl-[27px]">
+                        <span className="text-sm">One-to-one emails come from</span>
+                        <span className="block text-[13px] text-stone-500 mt-0.5">
+                            The email agent, after-call emails, journeys and answers. Welcome and bulk emails stay on your usual address.
+                        </span>
+                    </div>
+                    <Select aria-label="One-to-one emails come from" className="w-64" value={chosen.connection_id ?? ""} disabled={saving}
+                            onChange={(e) => setSetting("mailbox", { connection_id: e.target.value || null })}>
+                        <option value="">Your usual address</option>
+                        {choices.map((c) => <option key={c.id} value={c.id}>{c.address}</option>)}
+                    </Select>
                 </div>
             </li>
         );
@@ -363,6 +386,7 @@ export function AssistantEmails() {
                     {row("chat_lead", "Welcome email", "When someone gives their email in a chat. It goes when the chat goes quiet.", false, true)}
                     {afterCall()}
                     {emailAgent()}
+                    {mailboxRow()}
                     {duringCall()}
                     {fastCall()}
                     {replies()}

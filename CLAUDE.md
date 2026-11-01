@@ -447,14 +447,22 @@ only on the owner's machines): @.claude/private-notes.md
   day counts (models got them wrong). A held email is a draft on every level. A hand-over: `Contact.brief`, a `person` to-do, the team's email once a day. Drafts: `EmailJob` automation
   "agent", `/api/email/agent/...`, top of Email > Drafts, dropped after 7 days (a morning's at midnight). `ai.METER` records tokens per model call. Real models: `dev-scripts/email/agent_eval.py`
   (50 leads, tuned on them: 50/50 right steps, nothing invented, Rs 0.117 an email, 3.1 s).
+- Someone's own Gmail or Outlook (phase 8, `mail/mailbox.py`, `connections_api.py`, Email > Settings; not shown until `GOOGLE_MAIL_CLIENT_ID` / `_SECRET` or `MICROSOFT_MAIL_...` are set): `MailConnection`, per person in a
+  workspace, tokens sealed. Send-only on purpose (`gmail.send`, `Mail.Send`): a read scope would make the whole app restricted, with a yearly audit. The provider returns to the dashboard's page, which finishes
+  with the signed-in person's token (`/finish`), so nobody can attach your mailbox to their workspace. `ONE_TO_ONE` kinds (agent, after_call, journey) go from the assistant's `settings.mailbox`; Inbox answers from the
+  person's own, else the assistant's; never bulk or welcome. `send` returns None when it can't (reconnect, its 200 a day, the provider's limit): the caller sends the usual way, so an email never waits. Reply-To stays
+  `threads.address`. No delivery or bounce events come back for these. `MAILBOX_API_URL` points at `dev-scripts/email/fake_mailbox.py`. Never tried on real Google or Microsoft yet.
+- Calendars (phase 8, `voice/calendars.py`, Schedule > Settings `meetings.calendar`, `calendar_video`): busy times read every 5 minutes onto the connection (a live call never waits), off `free_times` and `_why_not`; `wanted`
+  says what the calendar should show and `sync` makes it so (claimed, retried by `tick`), first thing in `send_confirmation` so a Meet or Teams link gets into `Meeting.link`. Its own events aren't busy (they count as seats). Nobody is
+  invited on the provider's side. Outlook reads calendarView: getSchedule refuses personal accounts.
 - Before a push that changes tables or queries: `dev-scripts/postgres` (README there): the same tests on a local Postgres (`TEST_DATABASE_URL`), and the upgrade from what's live compared
   with a fresh schema. `init_db` prints errors and goes on, and SQLite accepts things Postgres doesn't.
 - A reply address must take mail (`address.reply_address_works`): on live, `admin@nimmai.in` was saved, a domain that doesn't exist.
 - Tests: `tests/test_mail_foundation.py`, `test_mail_designs.py`, `test_after_call_email.py`, `test_email_replies.py`,
   `test_call_emails.py`, `test_email_pages.py`, `test_small_emails.py`, `test_lead_intake.py`, `test_journeys.py`, `test_question_answers.py`, `test_broadcasts.py`,
-  `test_clicks.py`, `test_engagement.py`, `test_outbox.py`, `test_reports.py`, `test_email_agent.py`;
+  `test_clicks.py`, `test_engagement.py`, `test_outbox.py`, `test_reports.py`, `test_email_agent.py`, `test_mailbox.py`;
   browser: `dev-scripts/ui-checks/email_ui.mjs`, `email_design_ui.mjs`, `email_drafts_ui.mjs`, `email_inbox_ui.mjs`, `email_pages_ui.mjs`, `email_leads_ui.mjs`,
-  `email_journeys_ui.mjs`, `email_bulk_ui.mjs`, `email_reports_ui.mjs` with `email_seed.py`, `email_agent_ui.mjs` (+ `email_agent_seed.py`), `dev-scripts/email/bulk_probe.py` (1,000 people, run the trial with `--workers 2`) and
+  `email_journeys_ui.mjs`, `email_bulk_ui.mjs`, `email_reports_ui.mjs` with `email_seed.py`, `email_agent_ui.mjs` (+ `email_agent_seed.py`), `email_mailbox_ui.mjs` (+ `fake_mailbox.py`), `dev-scripts/email/bulk_probe.py` (1,000 people, run the trial with `--workers 2`) and
   `dev-scripts/email/fake_resend.py` (domains, keys, sending, received emails, and Resend's signed reports back to the backend).
 - Backups (`ops/backup.py`) never run with LOCAL_DEV: a developer's .env can hold the live storage keys.
 

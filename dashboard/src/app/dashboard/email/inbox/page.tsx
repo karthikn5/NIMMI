@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Paperclip, Sparkles } from "lucide-react";
 import { Button, Card, EmptyState, Input, Notice, Select, Skeleton, Status, Textarea, cn, useToast } from "@/components/ui";
 import { apiJson } from "@/lib/api";
-import { DRAFTS_CHANGED, KIND_LABEL, type Thread, type ThreadMessageRow, type ThreadRow, type Threads, type ThreadStatus } from "@/lib/email";
+import { DRAFTS_CHANGED, KIND_LABEL, type MailConnections, type Thread, type ThreadMessageRow, type ThreadRow, type Threads, type ThreadStatus } from "@/lib/email";
 import { useApi } from "@/lib/useApi";
 import { formatWhen } from "@/lib/voice/api";
 
@@ -76,6 +76,8 @@ function Message({ m, threadId }: { m: ThreadMessageRow; threadId: string }) {
 function Conversation({ id, onBack, onChanged }: { id: string; onBack: () => void; onChanged: () => void }) {
     const toast = useToast();
     const thread = useApi<Thread>(`/api/email/inbox/${id}`);
+    const connections = useApi<MailConnections>("/api/email/connections");
+    const mine = connections.data?.items.find((c) => c.mine && c.can_send && c.status === "connected")?.address;
     const [text, setText] = useState("");
     const [draftText, setDraftText] = useState("");
     const [notes, setNotes] = useState("");
@@ -154,6 +156,7 @@ function Conversation({ id, onBack, onChanged }: { id: string; onBack: () => voi
                 ) : (
                     <section aria-label="Your answer">
                         <Textarea aria-label="Your answer" rows={4} maxLength={10000} placeholder="Write your answer" value={text} onChange={(e) => setText(e.target.value)} />
+                        {mine && <p className="text-xs text-stone-500 mt-1">It goes from {mine}.</p>}
                         <div className="flex flex-wrap justify-end gap-2 mt-2">
                             {t.bot_id && (
                                 <Button variant="ghost" disabled={busy || waiting} onClick={() => act(async () => { await apiJson(`${url}/write`, { method: "POST" }); setWaiting(true); })}>

@@ -455,6 +455,8 @@ export interface ScheduleSettings {
         no_show_call: boolean;
         whatsapp_template: string;
         template_language: string;
+        calendar?: string | null;       // a connected calendar (backend/voice/calendars.py)
+        calendar_video?: boolean;
     };
 }
 
@@ -462,6 +464,8 @@ export interface ScheduleSettingsView {
     settings: ScheduleSettings;
     numbers: { id: string; number: string; own: boolean }[];
     whatsapp: boolean;
+    calendars?: { id: string; address: string; provider: string; status: string }[];
+    can_connect_calendar?: boolean;
 }
 
 export interface ScheduleItem {
@@ -517,7 +521,8 @@ export interface MeetingDetail extends MeetingSummary {
     messages: { kind: string; status: string; note: string | null; at: string | null }[];
     calls: { id: string; kind: string; status: ScheduleStatus; due_at: string | null; about: string | null; last_error: string | null; call_id: string | null }[];
     channels: { whatsapp: "window" | "template" | null; email: boolean };
-    setup: { confirm_call: boolean; link_minutes: number; default_link: string; address: string; template: boolean };
+    setup: { confirm_call: boolean; link_minutes: number; default_link: string; address: string; template: boolean; calendar_video?: boolean };
+    calendar?: { on: boolean; error: string | null };
 }
 
 export interface ScheduleAttention { approve: number; review: number; people: number; mark: number; total: number }

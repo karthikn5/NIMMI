@@ -28,7 +28,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 
 from database import async_session
-from backend.models import CallLog, Conversation, EmailJob, IntegrationSettings, NotificationLog
+from backend.models import CallLog, Conversation, EmailJob, IntegrationSettings, MailConnection, NotificationLog
 from mail import address as mail_address, senders, setup, suppress, threads
 from notify import email
 from phone import display, extract_contact
@@ -279,7 +279,7 @@ async def _reached_goal_since(db, job: EmailJob) -> bool:
 async def process_due() -> None:
     """Send queued customer emails whose time has come (called by the background loop)."""
     from notify.events import _once  # the delivery log, one row per (kind, ref)
-    from mail import after_call, agent, broadcasts, compose, consent, journeys, outbox, small
+    from mail import after_call, agent, broadcasts, compose, consent, journeys, mailbox, outbox, small
     now = datetime.utcnow()
     async with async_session() as db:
         jobs = (await db.execute(select(EmailJob).where(EmailJob.status == "queued", EmailJob.send_at <= now)  # bulk email after everything else
@@ -362,10 +362,13 @@ async def process_due() -> None:
                 html_body = html_email(plain, sender.name, link)
             job.attempts = (job.attempts or 0) + 1
             result: dict = {}
+            via = await mailbox.of_assistant(db, job.user_id, bot_id) if job.automation in mailbox.ONE_TO_ONE and not job.broadcast_id else None
 
-            async def send(job=job, text=text, html_body=html_body, sender=sender, link=link, result=result, reply_to=reply_to):
+            async def send(job=job, text=text, html_body=html_body, sender=sender, link=link, result=result, reply_to=reply_to, via=via):
                 result["called"] = True
-                sent = await email.deliver(
+                sent = await mailbox.send(via, job.to_email, job.subject, text, html_body, reply_to=reply_to, from_name=None, unsubscribe_url=link) if via else None
+                result["via"] = via if sent is not None else None
+                sent = sent or await email.deliver(  # no mailbox, or it can't send now: the usual way
                     job.to_email, job.subject, text, html_body, reply_to=reply_to,
                     from_name=sender.name, from_address=broadcasts.bulk_address(sender) if job.broadcast_id else sender.address, api_key=sender.api_key, unsubscribe_url=link,
                     tags={"ws": job.user_id, "job": job.id, "kind": "customer"},
@@ -377,6 +380,8 @@ async def process_due() -> None:
             sent = result.get("sent")
             if sent is not None and sent.ok:
                 job.status, job.error, job.sent_at, job.provider_id = "sent", None, datetime.utcnow(), sent.id
+                if result.get("via"):
+                    job.merge_data = {**(job.merge_data or {}), "sent_from": (await db.get(MailConnection, result["via"])).address}
                 if thread:
                     threads.note_sent(db, thread, job)
                 await outbox.emit(db, job.user_id, "email.sent", {"email_id": job.id, "to": job.to_email, "subject": job.subject, "kind": job.automation or job.kind,

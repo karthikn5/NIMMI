@@ -121,6 +121,10 @@ async def remove_member(member_id: str, ctx: AuthContext = Depends(get_ctx), db:
     member = (await db.execute(select(TeamMember).where(TeamMember.id == member_id))).scalars().first()
     if not member or (member.owner_id != ctx.user_id and member.member_id != ctx.user_id):
         raise HTTPException(status_code=404, detail="Member not found")
+    owner_id, person_id = member.owner_id, member.member_id
     await db.delete(member)
     await db.commit()
+    if person_id:  # their mailbox and calendar leave with them
+        from mail import mailbox
+        await mailbox.drop_person(owner_id, person_id)
     return {"status": "removed"}

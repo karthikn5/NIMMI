@@ -40,6 +40,7 @@ EXCLUDED = {
     "POST /api/email/consent/{contact_id}": "noting that someone agreed: the person does it, saying how",
     "/api/email/agent/drafts/": "approving, changing or dropping the agent's emails: the person does it in Drafts, where they read each one",
     "POST /api/email/agent/{bot_id}/run": "running the email agent now: from its card on the page; set_email_agent turns it on",
+    "/api/email/connections/": "connecting or disconnecting a mailbox: the person does it in their own browser, on the provider's permission page",
     "GET /api/email/questions/{gap_id}/people": "who asked a question, for the team to tick on the Questions page",
     "POST /api/email/questions/{gap_id}/send": "sending an answer to people: the team ticks who on the Questions page",
     "POST /api/email/journeys": "making a journey: the person picks one on the page; set_journey turns one on or off",

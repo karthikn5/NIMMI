@@ -1164,6 +1164,45 @@ Phase 7, as of 1 Nov 2026 (built; the default level waits for the owner):
 - Checks: `test_email_agent.py` (34); 26 safeguards each switched off once to confirm a test fails (two were found untested and got tests); the isolation test now covers its
   drafts and also fails if one workspace adds rows to another's; browser `email_agent_ui.mjs` (39 steps).
 - **The owner's part:** approve the default level (decision 12). It stays off, for everyone, until then.
+- Pushed to live 2 Nov 2026 with phases 1 to 6, after every test and browser check ran on a real Postgres (`dev-scripts/postgres`).
+
+Phase 8, as of 2 Nov 2026 (built and tested against fakes; nothing shows on live until the owner has apps at Google and Microsoft):
+- Built:
+  - **Connecting** (Email > Settings > Mailboxes and calendars, `mail/mailbox.py`, `connections_api.py`): each person connects their own Gmail or Outlook. Send-only: `gmail.send`, `Mail.Send`. Asking
+    to read mail would be a restricted scope at Google, with a yearly security audit. Tokens sealed with secretbox. The provider sends them back to the dashboard page, which finishes with the
+    signed-in person's token, so a link someone else started can't attach their mailbox to another workspace.
+  - **What goes from a mailbox:** per assistant, the email agent's emails, after-call emails and journeys; the team's answers go from the mailbox of whoever answers, else the assistant's. Never bulk
+    or welcome emails. Reply-To stays Nimmi's reply address, so replies come back to the Inbox with no read access. Sent as whole MIME on both, because Graph's JSON form only takes `x-` headers.
+  - **It never holds up an email:** 200 a day per mailbox (`MAILBOX_DAILY_LIMIT`; Google allows 500 for a free Gmail, 2,000 for Workspace), an hour's pause after the provider's own limit, and when it needs
+    connecting again the person is told once. In all these cases the email goes the usual way.
+  - **Calendars** (`voice/calendars.py`, chosen in Schedule > Settings): busy times are read every 5 minutes and kept on the connection, so a live call never waits for Google. They come off the times
+    offered on calls and on the booking page. Each confirmed meeting becomes an event, with a Meet or Teams link when that's on; moved, cancelled and failed ones follow on the next pass. Nobody is
+    invited through Google or Microsoft: the person hears from Nimmi, once. Outlook's busy times come from calendarView, because getSchedule refuses personal accounts.
+- Facts checked 1 Nov 2026 (Google's and Microsoft's own pages):
+  - `gmail.send` is sensitive: verification, no security assessment. Asking for `gmail.readonly` as well would make the whole app restricted ([Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes)).
+  - The narrowest calendar pair is `calendar.freebusy` + `calendar.events.owned` ([Calendar scopes](https://developers.google.com/workspace/calendar/api/auth), [freeBusy](https://developers.google.com/workspace/calendar/api/v3/reference/freebusy/query)). Check the pages' labels in the Cloud console.
+  - While a Google app is in Testing, refresh tokens last 7 days and only listed test users can connect. A password change also ends tokens with Gmail scopes ([OAuth 2.0](https://developers.google.com/identity/protocols/oauth2)).
+  - Graph's sendMail takes base64 MIME with `Content-Type: text/plain` ([MIME](https://learn.microsoft.com/en-us/graph/outlook-send-mime-message)). getSchedule doesn't support personal accounts ([getSchedule](https://learn.microsoft.com/en-us/graph/api/calendar-getschedule?view=graph-rest-1.0)).
+  - Multi-tenant apps from unverified publishers can't get user consent ([consent](https://learn.microsoft.com/entra/identity-platform/application-consent-experience)). Teams links through `isOnlineMeeting` are documented for work accounts only.
+- Changed from the plan: the redirect goes to the dashboard, not an API callback, for the reason above; the customer isn't an attendee on the event (Outlook would email them an invitation of its own).
+- Honest limits:
+  - **Not tried against real Google or Microsoft.** Everything ran against `dev-scripts/email/fake_mailbox.py`, written from their documents. The first real connection is the real test.
+  - Delivery isn't reported for mailbox emails: Gmail and Outlook send no delivery or bounce events to Nimmi, and a bounce lands in that person's mailbox. So those emails show as sent, never as
+    delivered, in History and Reports. Clicks and replies are counted as usual.
+  - Personal Outlook accounts get the calendar event but may not get a Teams link; the default link stays.
+- Checks: `test_mailbox.py` (44, on SQLite and Postgres); 46 safeguards each switched off once (3 were covered only by a second layer and got tests of their own); browser `email_mailbox_ui.mjs` (46 steps on
+  Postgres, real AI for the agent's emails); the isolation test covers connections.
+- **The owner's part, Google** (decision 8; needs privacy policy and terms pages, and a demo video):
+  1. console.cloud.google.com > your project > APIs & Services > Library: enable Gmail API and Google Calendar API.
+  2. APIs & Services > Credentials > Create Credentials > OAuth client ID > Web application. Authorized redirect URI: `https://nimmiai.in/dashboard/email/settings`.
+  3. Google Auth Platform > Data Access > Add or remove scopes: `gmail.send`, `calendar.freebusy`, `calendar.events.owned`. Audience: add test users, then submit for verification.
+  4. Railway > backend service > Variables: `GOOGLE_MAIL_CLIENT_ID`, `GOOGLE_MAIL_CLIENT_SECRET`.
+- **The owner's part, Microsoft:**
+  1. entra.microsoft.com > App registrations > New registration. Supported account types: any organizational directory and personal Microsoft accounts. Redirect URI (Web): `https://nimmiai.in/dashboard/email/settings`.
+  2. API permissions > Add a permission > Microsoft Graph > Delegated: `Mail.Send`, `Calendars.ReadWrite`, `User.Read`, `offline_access`.
+  3. Certificates & secrets > New client secret. Note when it expires.
+  4. Branding & properties > Publisher verification (needs a Microsoft partner account).
+  5. Railway: `MICROSOFT_MAIL_CLIENT_ID`, `MICROSOFT_MAIL_CLIENT_SECRET`.
 
 ## Words used
 

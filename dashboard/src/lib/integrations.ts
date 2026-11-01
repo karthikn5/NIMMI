@@ -122,6 +122,7 @@ export interface EmailRow {
     send_at: string | null;
     sent_at: string | null;
     created_at: string | null;
+    sent_from?: string | null;  // someone's own mailbox (backend/mail/mailbox.py)
     /** What Resend reported after sending (backend/mail/webhooks.py). Opens are a hint only. */
     event: "delivered" | "delayed" | "bounced" | "complained" | "failed" | "suppressed" | null;
     event_detail: string | null;

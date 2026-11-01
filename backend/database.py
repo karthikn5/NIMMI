@@ -229,7 +229,7 @@ def _relax_not_null(sync_conn, table: str, column: str) -> None:
 
 
 # Where secrets are sealed outside EncryptedText columns: whole values, and values inside JSON ("enc:v1:...").
-SEALED_TEXT = [("telephony_accounts", "secrets"), ("twilio_keys", "secret")]
+SEALED_TEXT = [("telephony_accounts", "secrets"), ("twilio_keys", "secret"), ("mail_connections", "refresh_token"), ("mail_connections", "access_token")]
 SEALED_JSON = [("voice_agents", "functions"), ("voice_agents", "inbound")]
 
 

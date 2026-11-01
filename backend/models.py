@@ -479,6 +479,11 @@ class Meeting(Base):
     decided_at = Column(DateTime(timezone=True), nullable=True)
     sent = Column(JSON, nullable=True)              # what went out, once each: {"confirmed": iso, "day_before": iso, "link": iso}
     history = Column(JSON, nullable=True)           # [{at, what, by}]
+    calendar_id = Column(String(36), nullable=True)        # the MailConnection its calendar event is on (voice/calendars.py)
+    calendar_event_id = Column(String(300), nullable=True)
+    calendar_state = Column(String(40), nullable=True)     # what the calendar shows: "<start>:<minutes>", None = nothing yet
+    calendar_tried_at = Column(DateTime(timezone=True), nullable=True)
+    calendar_error = Column(String(300), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -919,6 +924,31 @@ class EmailAgentAction(Base):
     job_id = Column(String(36), nullable=True)
     language = Column(String(5), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class MailConnection(Base):
+    """Someone's Gmail or Outlook (mail/mailbox.py, phase 8): it can send, and hold meetings in its calendar. Nimmi never reads mail: only send and
+    calendar scopes are ever asked for. The tokens are sealed. `busy` is the calendar's busy times, read every few minutes, so a live call never waits for Google."""
+    __tablename__ = "mail_connections"
+    __table_args__ = (UniqueConstraint("user_id", "provider", "address", name="uq_mail_connection"),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)  # the workspace
+    person_id = Column(String(36), nullable=False, index=True)   # who connected it: the owner or a team member
+    provider = Column(String(10), nullable=False)                # google, microsoft
+    address = Column(String(320), nullable=False)
+    name = Column(String(120), nullable=True)
+    refresh_token = Column(Text, nullable=True)
+    access_token = Column(Text, nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    scopes = Column(JSON, nullable=True)                         # what was granted
+    status = Column(String(12), default="connected")             # connected, reconnect
+    error = Column(String(300), nullable=True)
+    paused_until = Column(DateTime(timezone=True), nullable=True)  # the provider's sending limit was reached
+    sent_day = Column(String(10), nullable=True)
+    sent_today = Column(Integer, default=0)
+    busy = Column(JSON, nullable=True)                           # [[start, end], ...] (ISO, UTC)
+    busy_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class IntegrationEvent(Base):

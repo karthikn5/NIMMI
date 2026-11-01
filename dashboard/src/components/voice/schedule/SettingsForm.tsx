@@ -201,6 +201,23 @@ export function ScheduleSettingsForm({ botId }: { botId: string }) {
                             <Input id="mt-link" value={mt.link} maxLength={500} placeholder="https://meet.google.com/abc-defg-hij" onChange={(e) => setMt({ link: e.target.value })} />
                         </SettingRow>
                     )}
+                    {(!!view.data.calendars?.length || view.data.can_connect_calendar) && (
+                        <SettingRow label="Calendar" htmlFor="mt-calendar" hint="Busy times there aren't offered, and confirmed meetings appear there.">
+                            {view.data.calendars?.length ? (
+                                <Select id="mt-calendar" value={mt.calendar ?? ""} onChange={(e) => setMt({ calendar: e.target.value || null })}>
+                                    <option value="">No calendar</option>
+                                    {view.data.calendars.map((c) => <option key={c.id} value={c.id}>{c.address}{c.status === "connected" ? "" : " (needs connecting again)"}</option>)}
+                                </Select>
+                            ) : (
+                                <p className="text-[13px] text-stone-600">Connect one in <Link href="/dashboard/email/settings" className="text-plum hover:underline">Email &gt; Settings</Link>.</p>
+                            )}
+                        </SettingRow>
+                    )}
+                    {!!mt.calendar && mt.kinds.includes("online") && (
+                        <SettingRow label="Make a video link for each meeting" hint="A Google Meet or Teams link, from the calendar. A link you give a meeting yourself comes first.">
+                            <Toggle checked={mt.calendar_video !== false} onChange={(v) => setMt({ calendar_video: v })} label="Make a video link for each meeting" />
+                        </SettingRow>
+                    )}
                     {mt.kinds.includes("in_person") && (
                         <SettingRow label="Address" htmlFor="mt-address" hint="Where in-person meetings happen. It's sent with the reminders.">
                             <Input id="mt-address" value={mt.address} maxLength={300} placeholder="12 Anna Salai, Chennai 600002" onChange={(e) => setMt({ address: e.target.value })} />

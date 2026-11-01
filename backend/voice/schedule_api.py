@@ -13,9 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from auth import AuthContext, get_ctx, get_owned_bot, require_manager
-from backend.models import (Bot, CallbackJob, CallLog, Contact, Meeting, NotificationLog, PhoneNumber, ScheduleSettings,
+from backend.models import (Bot, CallbackJob, CallLog, Contact, MailConnection, Meeting, NotificationLog, PhoneNumber, ScheduleSettings,
                             TeamMember, User)
 from database import get_db
+from mail import mailbox
 from notify.events import fire_and_forget
 from phone import display
 import plans
@@ -322,7 +323,7 @@ async def _meeting_detail(db: AsyncSession, meeting: Meeting, owner_id: str) -> 
     data["channels"] = await meetings.channels_for(db, meeting, settings)
     mt = settings["meetings"]
     data["setup"] = {"confirm_call": mt["confirm_call"], "link_minutes": mt["link_minutes"], "default_link": mt["link"],
-                     "address": mt["address"], "template": bool(mt["whatsapp_template"])}
+                     "address": mt["address"], "template": bool(mt["whatsapp_template"]), "calendar_video": bool(mt["calendar"] and mt["calendar_video"])}
     return data
 
 
@@ -487,8 +488,11 @@ async def _settings_json(db: AsyncSession, owner_id: str, bot_id: str) -> dict:
         .order_by(PhoneNumber.created_at))).scalars().all()
     from whatsapp.numbers import workspace_number
     whatsapp = await workspace_number(db, owner_id)
+    linked = (await db.execute(select(MailConnection).where(MailConnection.user_id == owner_id))).scalars().all()
     return {"settings": settings, "numbers": [{"id": n.id, "number": n.number, "own": n.bot_id == bot_id} for n in numbers],
-            "whatsapp": bool(whatsapp and whatsapp.status != "disconnected")}
+            "whatsapp": bool(whatsapp and whatsapp.status != "disconnected"),
+            "calendars": [{"id": c.id, "address": c.address, "provider": c.provider, "status": c.status} for c in linked if mailbox.can(c, "calendar")],
+            "can_connect_calendar": any(mailbox.available().values())}
 
 
 @router.get("/settings/{bot_id}")
@@ -510,6 +514,10 @@ async def put_settings(bot_id: str, data: dict, ctx: AuthContext = Depends(requi
         number = await db.get(PhoneNumber, settings["from_number_id"])
         if not number or number.user_id != ctx.owner_id or number.status != "active":
             raise HTTPException(status_code=400, detail="Choose one of your active numbers to call from")
+    if settings["meetings"]["calendar"]:
+        calendar = await db.get(MailConnection, settings["meetings"]["calendar"])
+        if not calendar or calendar.user_id != ctx.owner_id or not mailbox.can(calendar, "calendar"):
+            raise HTTPException(status_code=400, detail="Choose one of your connected calendars")
     row = await db.get(ScheduleSettings, bot.bot_id)
     if row is None:
         row = ScheduleSettings(bot_id=bot.bot_id, user_id=ctx.owner_id)

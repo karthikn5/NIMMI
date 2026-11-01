@@ -73,7 +73,7 @@ DEFAULTS = {
         "enabled": False, "approval": True, "kinds": ["online"], "minutes": 30, "days": DAYS[:6],
         "hours": ["10:00", "18:00"], "notice_hours": 2, "ahead_days": 14, "at_once": 1, "offer_when": "",
         "link": "", "address": "", "confirm_call": True, "link_minutes": 5, "day_before": True, "no_show_call": True,
-        "whatsapp_template": "", "template_language": "en",
+        "whatsapp_template": "", "template_language": "en", "calendar": None, "calendar_video": True,
     },
 }
 
@@ -178,6 +178,8 @@ def clean(raw) -> dict:
             "no_show_call": _bool(mt.get("no_show_call"), d_mt["no_show_call"]),
             "whatsapp_template": template if re.match(r"^[a-z0-9_]{1,512}$", template) else "",
             "template_language": language if re.match(r"^[a-z]{2,3}(_[A-Z]{2})?$", language) else "en",
+            "calendar": str(mt["calendar"])[:36] if mt.get("calendar") else None,  # a MailConnection (voice/calendars.py)
+            "calendar_video": _bool(mt.get("calendar_video"), d_mt["calendar_video"]),
         },
     }
 

@@ -19,9 +19,9 @@ from sqlalchemy.future import select
 import plans
 from auth import AuthContext, rate_limit, require_manager
 from backend.models import (Bot, EmailDomain, EmailJob, EmailLink, EmailSender, EmailSetup, EmailTemplate, EmailUnsubscribe,
-                            IntegrationSettings, User, WhatsAppFile)
+                            IntegrationSettings, MailConnection, User, WhatsAppFile)
 from database import get_db
-from mail import engagement, address, after_call, compose, designs, domains, links, render, senders, setup, suppress, threads, webhooks
+from mail import engagement, address, after_call, compose, designs, domains, links, mailbox, render, senders, setup, suppress, threads, webhooks
 from notify import automations, email
 
 router = APIRouter(prefix="/api/email", tags=["email"])
@@ -286,7 +286,7 @@ class SetupIn(BaseModel):
     settings: Optional[dict] = None     # {"after_call": {...}, "welcome": {...}}
 
 
-GROWTH_SETTINGS = {"after_call", "replies", "journeys", "question_answer", "consent", "fast_call", "agent", "during_call", "lead_email", "lead_call", "callback_booked", "voicemail", "missed_chat", "chat_copy"}
+GROWTH_SETTINGS = {"after_call", "replies", "journeys", "question_answer", "consent", "fast_call", "agent", "mailbox", "during_call", "lead_email", "lead_call", "callback_booked", "voicemail", "missed_chat", "chat_copy"}
 
 
 @router.put("/setup/{bot_id}")
@@ -327,6 +327,13 @@ async def save_setup(bot_id: str, data: SetupIn, ctx: AuthContext = Depends(requ
                 raise HTTPException(status_code=400, detail="The email agent is off, drafts, morning or automatic")
             if "per_day" in allowed and not (isinstance(allowed["per_day"], int) and 1 <= allowed["per_day"] <= 200):
                 raise HTTPException(status_code=400, detail="Choose between 1 and 200 emails a day")
+        if kind == "mailbox":
+            chosen = allowed.get("connection_id")
+            row = await db.get(MailConnection, chosen) if chosen else None
+            if chosen and (row is None or row.user_id != ctx.owner_id or not mailbox.can(row, "mail")):
+                raise HTTPException(status_code=400, detail="Choose a connected mailbox")
+            if chosen:
+                await plans.require_feature(db, bot.bot_id, "email_alerts")
         if kind == "fast_call" and allowed.get("enabled"):
             await plans.require_feature(db, bot.bot_id, "schedule")  # calls are Pro
         if kind == "consent" and "words" in allowed and not 5 <= len(str(allowed["words"] or "").strip()) <= 200:

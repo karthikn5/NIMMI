@@ -146,8 +146,8 @@ SCREENS: dict[str, dict] = {
         "Every customer email with its status and what happened after sending (delivered, bounced, reported as "
         "spam); send a failed one again, cancel a waiting one, or stop emailing someone.")},
     "email_settings": {"title": "Email: Settings", "path": "/dashboard/email/settings", "about": (
-        "Their own sending domain (DNS records to add, verified by Resend), who each assistant's emails come from "
-        "(name, address, replies), and the addresses they don't email (unsubscribed, spam reports, bounces).")},
+        "Their own sending domain (DNS records to add, verified by Resend), mailboxes and calendars connected from Gmail or Outlook (send-only, never read), who each assistant's "
+        "emails come from (name, address, replies), and the addresses they don't email (unsubscribed, spam reports, bounces).")},
     "analytics": {"title": "Analytics", "path": "/dashboard/analytics", "about": (
         "Chats, leads, hand-overs and calls over the last 7 to 90 days, per day and per assistant.")},
     "billing": {"title": "Billing", "path": "/dashboard/billing", "about": (

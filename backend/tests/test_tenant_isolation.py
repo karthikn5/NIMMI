@@ -13,7 +13,7 @@ from sqlalchemy.future import select
 
 import main
 from database import async_session
-from backend.models import (Bot, CallbackJob, CallLog, Campaign, Consent, Contact, Conversation, DncEntry, EmailAgentAction, EmailBroadcast, EmailJob,
+from backend.models import (Bot, CallbackJob, CallLog, Campaign, Consent, Contact, Conversation, DncEntry, EmailAgentAction, EmailBroadcast, EmailJob, MailConnection,
                             EmailRsvp, EmailSegment, EmailThread, EmailUnsubscribe, Journey, JourneyRun, KnowledgeGap, LeadSource, Meeting,
                             Message, PhoneNumber, QuestionAsker, SavedReply, ScheduleSettings, TeamMember, TelephonyAccount,
                             ThreadMessage)
@@ -23,14 +23,14 @@ MARK = "MARKER-A-" + uuid.uuid4().hex[:6]
 OWNED = [Bot, Conversation, Message, CallLog, Campaign, CallbackJob, PhoneNumber, TelephonyAccount, EmailJob,
          EmailBroadcast, TeamMember, DncEntry, KnowledgeGap, SavedReply, Contact, Meeting, ScheduleSettings,
          EmailThread, ThreadMessage, EmailUnsubscribe, LeadSource, Journey, JourneyRun, QuestionAsker, EmailSegment, Consent, EmailRsvp,
-         EmailAgentAction]
+         EmailAgentAction, MailConnection]
 
 
 async def _seed(owner: str, bot_id: str) -> dict:
     ids = {k: str(uuid.uuid4()) for k in ("conversation_id", "call_id", "campaign_id", "number_id", "account_id",
                                           "job_id", "email_job_id", "broadcast_id", "member_id", "entry_id",
                                           "gap_id", "reply_id", "contact_id", "meeting_id", "thread_id", "message_id", "row_id",
-                                          "journey_id", "segment_id", "agent_job_id")}
+                                          "journey_id", "segment_id", "agent_job_id", "connection_id")}
     async with async_session() as db:
         bot = (await db.execute(select(Bot).where(Bot.bot_id == bot_id))).scalars().first()
         bot.bot_name, bot.knowledge_base, bot.system_prompt = f"{MARK} bot", f"{MARK} secret knowledge", f"{MARK} prompt"
@@ -78,6 +78,7 @@ async def _seed(owner: str, bot_id: str) -> dict:
                      to_email="a-customer@example.com", subject=MARK, body=MARK, status="draft", send_at=datetime.utcnow(), automation="agent", step=1,
                      merge_data={"name": MARK, "why": MARK}),
             EmailAgentAction(user_id=owner, bot_id=bot_id, contact_id=ids["contact_id"], action="email", why=MARK, job_id=ids["agent_job_id"]),
+            MailConnection(id=ids["connection_id"], user_id=owner, person_id=owner, provider="google", address="a-customer@example.com", name=MARK, refresh_token="x", access_token="y"),
         ])
         await db.flush()
         db.add_all([

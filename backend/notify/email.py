@@ -96,6 +96,30 @@ def _from(from_name: Optional[str], address: Optional[str] = None) -> str:
 _TAG = re.compile(r"[^A-Za-z0-9_-]")
 
 
+def header_lines(unsubscribe_url: Optional[str], headers: Optional[dict]) -> dict:
+    # One-click unsubscribe (RFC 8058): Gmail and Yahoo expect it on emails to customers.
+    extra = {"List-Unsubscribe": f"<{unsubscribe_url}>", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"} if unsubscribe_url else {}
+    extra.update({k: v for k, v in (headers or {}).items() if v})
+    return extra
+
+
+def mime(sender: str, to: str, subject: str, text: str, html_body: Optional[str], reply_to: Optional[str], extra: dict,
+         attachments: Optional[list[dict]]) -> EmailMessage:
+    """The email itself, for SMTP and for someone's own mailbox (mail/mailbox.py). Raises ValueError on a header that can't be written."""
+    msg = EmailMessage()
+    msg["Subject"], msg["From"], msg["To"] = subject, sender, to
+    if reply_to:
+        msg["Reply-To"] = reply_to
+    for k, v in extra.items():
+        msg[k] = v
+    msg.set_content(text)
+    msg.add_alternative(html_body or _plain_html(text), subtype="html")
+    for a in attachments or []:
+        maintype, _, subtype = a["content_type"].partition("/")
+        msg.add_attachment(_bytes(a["content"]), maintype=maintype, subtype=subtype.split(";")[0], filename=a["filename"])
+    return msg
+
+
 async def deliver(to: str, subject: str, text: str, html_body: Optional[str] = None, *,
                   reply_to: Optional[str] = None, from_name: Optional[str] = None, from_address: Optional[str] = None,
                   unsubscribe_url: Optional[str] = None, attachments: Optional[list[dict]] = None,
@@ -107,9 +131,7 @@ async def deliver(to: str, subject: str, text: str, html_body: Optional[str] = N
     Resend for 24 hours; `api_key` is a domain's own sending key; `from_address` sends from that address; `headers` are
     added to the email (In-Reply-To and References keep a conversation together).
     """
-    # One-click unsubscribe (RFC 8058): Gmail and Yahoo expect it on emails to customers.
-    extra = {"List-Unsubscribe": f"<{unsubscribe_url}>", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"} if unsubscribe_url else {}
-    extra.update({k: v for k, v in (headers or {}).items() if v})
+    extra = header_lines(unsubscribe_url, headers)
     _last_error.set(None)
     key = api_key or os.getenv("RESEND_API_KEY")
     if key:
@@ -155,17 +177,7 @@ async def deliver(to: str, subject: str, text: str, html_body: Optional[str] = N
 
     host, user, password = os.getenv("SMTP_HOST"), os.getenv("SMTP_USER"), os.getenv("SMTP_PASS")
     if host and user and password:
-        msg = EmailMessage()
-        msg["Subject"], msg["From"], msg["To"] = subject, _from(from_name, from_address), to
-        if reply_to:
-            msg["Reply-To"] = reply_to
-        for k, v in extra.items():
-            msg[k] = v
-        msg.set_content(text)
-        msg.add_alternative(html_body or _plain_html(text), subtype="html")
-        for a in attachments or []:
-            maintype, _, subtype = a["content_type"].partition("/")
-            msg.add_attachment(_bytes(a["content"]), maintype=maintype, subtype=subtype.split(";")[0], filename=a["filename"])
+        msg = mime(_from(from_name, from_address), to, subject, text, html_body, reply_to, extra, attachments)
 
         def _send():
             with smtplib.SMTP(host, int(os.getenv("SMTP_PORT", "587")), timeout=20) as s:

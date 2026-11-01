@@ -23,7 +23,7 @@ from sqlalchemy.future import select
 
 from backend.models import Bot, Contact, EmailThread, Meeting, ThreadMessage
 from database import async_session
-from mail import after_call, compose, designs, senders, setup, suppress, threads
+from mail import after_call, compose, designs, mailbox, senders, setup, suppress, threads
 from notify import automations, email
 from phone import to_e164
 
@@ -96,12 +96,14 @@ async def send_text(thread_id: str, text: str, who: str, *, by: Optional[str] = 
         sender = await senders.sender_for(db, thread.user_id, thread.bot_id)
         to, owner, bot_id, subject, last, refs = thread.email, thread.user_id, thread.bot_id, thread.subject, thread.last_message_id, thread.reference_ids
         reply_to = threads.address(thread) if threads.enabled() else sender.reply_to
+        via = await mailbox.of_person(db, owner, by) or await mailbox.of_assistant(db, owner, bot_id)  # the one answering, else the assistant's
     link = automations.unsubscribe_url(owner, to, bot_id)
     signed = f"{text.strip()}\n\n{sender.name}"
-    sent = await email.deliver(to, subject_of(subject), f"{signed}\n\n--\n{sender.name}\nUnsubscribe: {link}", automations.html_email(signed, sender.name, link),
-                               reply_to=reply_to, from_name=sender.name, from_address=sender.address, api_key=sender.api_key,
-                               unsubscribe_url=link, tags={"ws": owner, "kind": "customer"}, idempotency_key=f"reply-{row_id}" if row_id else None,
-                               headers={"In-Reply-To": last, "References": " ".join(refs or [])})
+    body, styled, threading = f"{signed}\n\n--\n{sender.name}\nUnsubscribe: {link}", automations.html_email(signed, sender.name, link), {"In-Reply-To": last, "References": " ".join(refs or [])}
+    sent = await mailbox.send(via, to, subject_of(subject), body, styled, reply_to=reply_to, from_name=None, unsubscribe_url=link, headers=threading) if via else None
+    sent = sent or await email.deliver(to, subject_of(subject), body, styled,
+                                       reply_to=reply_to, from_name=sender.name, from_address=sender.address, api_key=sender.api_key,
+                                       unsubscribe_url=link, tags={"ws": owner, "kind": "customer"}, idempotency_key=f"reply-{row_id}" if row_id else None, headers=threading)
     if not sent.ok:
         return sent.error or "It couldn't be sent"
     async with async_session() as db:

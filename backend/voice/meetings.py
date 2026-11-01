@@ -26,6 +26,7 @@ from sqlalchemy.future import select
 
 from backend.models import Bot, CallbackJob, CallLog, Meeting, User, VoiceAgent, WhatsAppChat
 from database import async_session
+from voice import calendars
 from voice.schedule import (DAYS, MEETING_LABELS, ScheduleError, _clock, _clock_of, _day_of, allowed, cancel_waiting,
                             contact_of, holidays, local_time, next_allowed, now_utc, settings_for, stored,
                             upcoming_meeting, utc, when_text, zone)
@@ -66,6 +67,12 @@ def _fits(at: datetime, minutes: int, taken: list, at_once: int) -> bool:
     return sum(1 for s, e in taken if s < end and e > at) < at_once
 
 
+def _clear(at: datetime, minutes: int, busy: list) -> bool:
+    """Nothing on the team's calendar then (voice/calendars.py)."""
+    end = at + timedelta(minutes=minutes)
+    return not any(s < end and e > at for s, e in busy)
+
+
 async def free_times(db: AsyncSession, settings: dict, owner_id: str, bot_id: str, first: date, days: int,
                      skip: Optional[str] = None, now: Optional[datetime] = None) -> dict[date, list[datetime]]:
     """Free start times per day, from `first` for `days` days. `skip`: a meeting being moved (its own time is free)."""
@@ -76,8 +83,9 @@ async def free_times(db: AsyncSession, settings: dict, owner_id: str, bot_id: st
     end = min(first + timedelta(days=days), last + timedelta(days=1))
     if end <= first:
         return {}
-    taken = await _taken(db, bot_id, datetime.combine(first, dtime(0), tzinfo=tz),
-                         datetime.combine(end, dtime(0), tzinfo=tz), skip)
+    window = datetime.combine(first, dtime(0), tzinfo=tz), datetime.combine(end, dtime(0), tzinfo=tz)
+    taken = await _taken(db, bot_id, *window, skip)
+    busy = await calendars.busy_for(db, settings, bot_id, *window)
     off = await holidays(owner_id)
     step = timedelta(minutes=min(mt["minutes"], 30))
     out: dict[date, list[datetime]] = {}
@@ -88,7 +96,7 @@ async def free_times(db: AsyncSession, settings: dict, owner_id: str, bot_id: st
             close = datetime.combine(day, _clock_of(mt["hours"][1]), tzinfo=tz)
             slots = []
             while at + timedelta(minutes=mt["minutes"]) <= close:
-                if at >= earliest and _fits(at, mt["minutes"], taken, mt["at_once"]):
+                if at >= earliest and _fits(at, mt["minutes"], taken, mt["at_once"]) and _clear(at, mt["minutes"], busy):
                     slots.append(at)
                 at += step
             if slots:
@@ -155,6 +163,8 @@ async def _why_not(db: AsyncSession, at: datetime, settings: dict, owner_id: str
         opens, closes = (_clock(datetime.combine(date.today(), _clock_of(h))) for h in mt["hours"])
         return f"The team meets on {days}, between {opens} and {closes} (not on holidays)."
     if not _fits(at, mt["minutes"], await _taken(db, bot_id, at, end, skip), mt["at_once"]):
+        return "That time is taken."
+    if not _clear(at, mt["minutes"], await calendars.busy_for(db, settings, bot_id, at, end)):
         return "That time is taken."
     return None
 
@@ -286,7 +296,8 @@ async def approve(db: AsyncSession, meeting: Meeting, *, by: str, link: Optional
     if link and meeting.kind == "online" and not re.match(r"^https?://\S+$", link):
         raise ScheduleError("The meeting link should be a full address starting with https://")
     meeting.link = link[:500] or meeting.link
-    if meeting.kind == "online" and not (meeting.link or settings["meetings"]["link"]):
+    mt = settings["meetings"]
+    if meeting.kind == "online" and not (meeting.link or mt["link"] or (mt["calendar"] and mt["calendar_video"])):
         raise ScheduleError("Add the meeting link, or a default link in Schedule settings")
     meeting.host_id = host_id or meeting.host_id
     meeting.status, meeting.decided_by, meeting.decided_at = "confirmed", by, datetime.utcnow()
@@ -556,6 +567,7 @@ async def _once(meeting: Meeting, kind: str, send) -> None:
 
 
 async def send_confirmation(meeting_id: str) -> None:
+    await calendars.sync(meeting_id)  # first: the calendar's video link goes in the confirmation
     async with async_session() as db:
         meeting = await db.get(Meeting, meeting_id)
     if meeting is not None and meeting.status == "confirmed":
@@ -593,6 +605,7 @@ async def _journeys_for(meeting_id: str, trigger: str) -> None:
 
 async def send_cancelled(meeting_id: str) -> None:
     """The team declined it without a call: tell them in writing."""
+    await calendars.sync(meeting_id)
     async with async_session() as db:
         meeting = await db.get(Meeting, meeting_id)
     if meeting is not None and meeting.status == "cancelled":
@@ -701,5 +714,5 @@ def to_json(meeting: Meeting, settings: dict, *, names: Optional[dict] = None, f
     }
     if full:
         data.update({"email": meeting.email or "", "notes": meeting.notes or "", "history": meeting.history or [],
-                     "source_call_id": meeting.source_call_id})
+                     "source_call_id": meeting.source_call_id, "calendar": {"on": bool(meeting.calendar_event_id), "error": meeting.calendar_error}})
     return data

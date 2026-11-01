@@ -45,6 +45,7 @@ export function AssistantEmails() {
     if (!senders.data) return <Skeleton className="h-64" />;
     if (assistants.length === 0) return <Card className="p-5 text-[13px] text-stone-600">Make an assistant first: its emails are set here.</Card>;
 
+    // While a new version deploys, this page can be newer than the server: a row whose setting hasn't arrived stays out until it has.
     const s = setup.data;
     const plan = limits?.assistant_plans?.[botId];
     const growth = plan ? plan.email_alerts : limits?.includes?.email_alerts ?? true;
@@ -147,7 +148,7 @@ export function AssistantEmails() {
 
     const kind = s?.kinds.find((k) => k.kind === editing);
     const duringCall = () => {
-        if (!s) return null;
+        if (!s?.settings.during_call) return null;
         return (
             <li className="border-t border-line px-5 py-3.5">
                 <div className="flex flex-wrap items-center gap-3">
@@ -168,7 +169,7 @@ export function AssistantEmails() {
         );
     };
     const small = (item: (typeof SMALL)[number]) => {
-        if (!s) return null;
+        if (!s?.settings[item.key]) return null;
         const on = s.settings[item.key].enabled;
         return (
             <li key={item.key} className="border-t border-line px-5 py-3.5">
@@ -193,7 +194,7 @@ export function AssistantEmails() {
         );
     };
     const meetingEmails = () => {
-        if (!s) return null;
+        if (!s?.settings.meeting) return null;
         const m = s.settings.meeting;
         return (
             <li className="border-t border-line px-5 py-3.5">
@@ -212,7 +213,7 @@ export function AssistantEmails() {
         );
     };
     const replies = () => {
-        if (!s) return null;
+        if (!s?.settings.replies) return null;
         return (
             <li className="border-t border-line px-5 py-3.5">
                 <div className="flex flex-wrap items-center gap-3">
@@ -234,7 +235,7 @@ export function AssistantEmails() {
         );
     };
     const afterCall = () => {
-        if (!s) return null;
+        if (!s?.settings.after_call) return null;
         const prefs = s.settings.after_call;
         const on = prefs.inbound !== "off" || prefs.outbound !== "off";
         const mode = (direction: "inbound" | "outbound", label: string) => (

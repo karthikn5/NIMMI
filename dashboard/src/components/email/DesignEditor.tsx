@@ -18,6 +18,7 @@ const ADDABLE: Record<EmailKind, Block["type"][]> = {
     welcome: ["text", "heading", "ai_note", "files", "button", "details", "signature", "divider", "image"],
     after_call: ["text", "heading", "call_summary", "files", "button", "signature", "divider", "image"],
     meeting: ["text", "heading", "meeting", "button", "signature", "divider", "image"],
+    lead_email: ["text", "heading", "files", "button", "signature", "divider", "image"],
     callback_booked: ["text", "heading", "button", "signature", "divider", "image"],
     voicemail: ["text", "heading", "button", "signature", "divider", "image"],
     missed_chat: ["text", "heading", "button", "signature", "divider", "image"],

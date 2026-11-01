@@ -20,6 +20,9 @@ SETTINGS: dict[str, dict] = {
     "after_call": {"inbound": "off", "outbound": "off", "approved": 0, "approved_unchanged": 0, "suggested": False},
     # Who answers when someone replies (mail/replies.py): ai, draft (the AI writes, the team sends), team.
     "replies": {"mode": "draft"},
+    # Leads from other places (mail/intake.py): the email at once, and a call within minutes.
+    "lead_email": {"enabled": True},
+    "lead_call": {"enabled": False, "minutes": 5},
     "during_call": {"enabled": False},  # the phone agent can email a file or a note while they talk (mail/during_call.py)
     "callback_booked": {"enabled": False},
     "voicemail": {"enabled": False},

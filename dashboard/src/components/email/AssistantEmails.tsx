@@ -15,8 +15,9 @@ import { DesignEditor } from "./DesignEditor";
 const PLACEHOLDERS = ["name", "business", "assistant", "email", "phone", "summary", "details"];
 const PLAIN: AutomationKey[] = ["call_lead", "goal_met", "call_missed", "handoff_done"];
 const TITLES: Partial<Record<AutomationKey, string>> = { call_lead: "Fixed email after a call", goal_met: "Fixed email when a call reaches its goal" };
-type SmallKind = "callback_booked" | "voicemail" | "missed_chat" | "chat_copy";
+type SmallKind = "lead_email" | "callback_booked" | "voicemail" | "missed_chat" | "chat_copy";
 const SMALL: { key: SmallKind; title: string; about: string }[] = [
+    { key: "lead_email", title: "New lead from another place", about: "When a lead comes in from a portal or a form (Lead sources) and gave an email." },
     { key: "callback_booked", title: "Call-back booked", about: "When a call-back is booked for them: when you'll call." },
     { key: "voicemail", title: "Voicemail left", about: "When you called them and reached their voicemail." },
     { key: "missed_chat", title: "Missed live chat", about: "When they asked for a person in the chat and nobody came in time." },

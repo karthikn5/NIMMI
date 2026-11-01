@@ -173,7 +173,7 @@ adapter("email_setup", _read_setup, _write_setup, lambda entity: {"kind": "email
 @tool("set_assistant_emails", "Turn one of an assistant's emails on or off or change it: an automation (chat_lead after a "
       "chat, call_lead, goal_met, call_missed, handoff_done) with its emails (delay now/1h/1d/2d/3d/5d/7d/14d, subject, body), "
       "or a setting: after_call {inbound, outbound: off/review/auto}, replies {mode: ai/draft/team}, welcome {ai_note, ai_files, max_files}, "
-      "during_call/callback_booked/voicemail/chat_copy {enabled}, missed_chat {enabled, minutes}, meeting {thanks, missed}.",
+      "during_call/callback_booked/voicemail/chat_copy/lead_email {enabled}, missed_chat {enabled, minutes}, lead_call {enabled, minutes}, meeting {thanks, missed}.",
       "Changing an assistant's emails",
       {"type": "object", "required": ["assistant_id"], "properties": {
           "assistant_id": {"type": "string"},
@@ -181,7 +181,7 @@ adapter("email_setup", _read_setup, _write_setup, lambda entity: {"kind": "email
           "enabled": {"type": "boolean"},
           "steps": {"type": "array", "items": {"type": "object", "properties": {
               "delay": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}}},
-          "setting": {"type": "string", "enum": ["after_call", "replies", "welcome", "during_call", "callback_booked", "voicemail", "missed_chat", "chat_copy", "meeting"]},
+          "setting": {"type": "string", "enum": ["after_call", "replies", "welcome", "during_call", "callback_booked", "voicemail", "missed_chat", "chat_copy", "meeting", "lead_email", "lead_call"]},
           "values": {"type": "object"}}},
       level="change", roles=MANAGERS, screens=AREAS["email"], routes=("PUT /api/email/setup/{bot_id}",))
 async def set_assistant_emails(tc, db, assistant_id, automation=None, enabled=None, steps=None, setting=None, values=None):
@@ -447,4 +447,45 @@ async def drop_email_draft(tc, db, thread_id, draft_id):
     from mail.inbox import drop_draft
     await drop_draft(thread_id, draft_id, ctx=tc.ctx, db=db)
     return {"message": "Dropped the draft.", "refresh": {"kind": "email_thread", "id": thread_id}}
+
+
+# ─── Leads from other places (Email > Lead sources) ─────────────────
+
+@tool("email_lead_sources", "Where one assistant's leads from other places come in: whether it's on, the address to forward IndiaMART, JustDial "
+      "or property-portal emails to, Gmail's forwarding confirmation code if one came, the links for IndiaMART's Push API and website forms, "
+      "and the latest leads with what became of each.", "Reading lead sources",
+      {"type": "object", "required": ["assistant_id"], "properties": {"assistant_id": {"type": "string"}}},
+      roles=MANAGERS, screens=AREAS["email"], routes=("GET /api/email/leads/{bot_id}",))
+async def email_lead_sources(tc, db, assistant_id):
+    from mail.leads_api import detail
+    return await detail(db, await get_owned_bot(assistant_id, tc.ctx, db), tc.ctx, make=False)
+
+
+async def _read_leads(ctx, db, entity: str, keys: list) -> dict:
+    from mail.leads_api import _own_bot, detail
+    return {"enabled": (await detail(db, await _own_bot(entity, ctx, db), ctx, make=False))["enabled"]}
+
+
+async def _write_leads(ctx, db, entity: str, values: dict) -> None:
+    from mail.leads_api import LeadsIn, set_leads
+    await set_leads(entity, LeadsIn(enabled=bool(values["enabled"])), ctx=ctx, db=db)
+
+
+adapter("email_leads", _read_leads, _write_leads, lambda entity: {"kind": "email_leads", "id": entity})
+
+
+@tool("set_lead_sources", "Turn an assistant's lead sources on or off: leads forwarded to its address, or sent by IndiaMART or a form, become contacts and "
+      "get the new-lead email.", "Changing lead sources",
+      {"type": "object", "required": ["assistant_id", "on"], "properties": {"assistant_id": {"type": "string"}, "on": {"type": "boolean"}}},
+      level="change", roles=MANAGERS, screens=AREAS["email"], routes=("PUT /api/email/leads/{bot_id}",))
+async def set_lead_sources(tc, db, assistant_id, on):
+    from fastapi import HTTPException
+    bot = await get_owned_bot(assistant_id, tc.ctx, db)
+    before = await _read_leads(tc.ctx, db, bot.bot_id, ["enabled"])
+    try:
+        await _write_leads(tc.ctx, db, bot.bot_id, {"enabled": bool(on)})
+    except HTTPException as e:
+        raise ToolError(str(e.detail))
+    return Change(f"{bot.bot_name}'s lead sources turned {'on' if on else 'off'}", "email_leads", bot.bot_id, before, {"enabled": bool(on)},
+                  {"kind": "email_leads", "id": bot.bot_id})
 

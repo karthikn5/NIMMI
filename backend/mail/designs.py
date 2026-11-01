@@ -77,6 +77,15 @@ KINDS: dict[str, dict] = {
                 _t("{{meeting_text}}"), {"type": "meeting"}, _button("Join the meeting", "join"),
                 _button("Change the time", "change"), _button("Cancel", "cancel"), _button("Book another time", "book"), SIG]},
         }},
+    "lead_email": {
+        "label": "New lead from another place", "about": "When a lead comes in from a portal or a form and gave an email.",
+        "placeholders": ["first_name", "name", "business", "portal", "wants"],
+        "designs": {
+            "en": {"subject": "Thanks for your enquiry to {{business}}", "blocks": [
+                _t("Hi {{first_name|there}},\n\nThanks for your enquiry to {{business}}. We have your details, and someone from our team will get "
+                   "in touch with you shortly."), FILES, _button("Book a time", "book"), _button("Chat on WhatsApp", "whatsapp"),
+                _t("Any questions? Just reply to this email."), SIG]},
+        }},
     "callback_booked": {
         "label": "Call-back booked", "about": "When a call-back is booked for them: on a call, in a chat or from an email.",
         "placeholders": ["first_name", "name", "business", "phone", "callback_when"],

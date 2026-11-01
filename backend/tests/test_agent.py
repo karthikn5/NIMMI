@@ -606,7 +606,7 @@ def test_the_dashboard_and_the_agent_name_the_same_screens_and_elements():
     built = {"nav": ("assistants", "deployments", "live_chat", "questions", "voice", "whatsapp", "email", "integrations", "analytics", "billing"),
              "voice.tab": ("overview", "agents", "knowledge", "contacts", "calls", "schedule", "campaigns", "data", "numbers", "compliance"),
              "whatsapp.tab": ("overview", "inbox", "assistant", "files", "settings"),
-             "email.tab": ("overview", "inbox", "automations", "drafts", "bulk", "history", "settings"),
+             "email.tab": ("overview", "inbox", "automations", "drafts", "leads", "bulk", "history", "settings"),
              "builder.tab": ("design", "knowledge", "behaviour", "flow", "leads")}
     for prefix, values in built.items():
         if "data-agent={`" + prefix + ".${" in pages:

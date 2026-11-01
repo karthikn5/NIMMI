@@ -75,7 +75,7 @@ DEFAULTS: dict[str, dict] = {
 LABELS = {"chat_lead": "After a chat", "call_lead": "After a call", "goal_met": "Goal met on a call",
           "call_missed": "Couldn't reach them", "handoff_done": "After your team helps", "broadcast": "Bulk email",
           "after_call": "After a call, by the AI", "during_call": "Sent during a call", "callback_booked": "Call-back booked",
-          "voicemail": "Voicemail left", "missed_chat": "Missed live chat", "chat_copy": "Copy of the chat"}
+          "voicemail": "Voicemail left", "missed_chat": "Missed live chat", "chat_copy": "Copy of the chat", "lead_email": "New lead from another place"}
 
 
 def _normalize(saved: Optional[dict], default: dict) -> dict:

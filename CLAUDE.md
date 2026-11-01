@@ -327,8 +327,8 @@ only on the owner's machines): @.claude/private-notes.md
 ## Email (mail_plan.md)
 
 - Phases 0-9 in `mail_plan.md` (written 1 Nov 2026 from the owner's idea, with market research). Phase 0 live 1 Nov
-  2026: sending foundations and the dashboard's Email section (Overview, Inbox, Automations, Drafts, Bulk email, History, Settings;
-  Integrations > Email points there). Phases 1 and 2 in progress: the status is in mail_plan.md section 11.
+  2026: sending foundations and the dashboard's Email section (Overview, Inbox, Automations, Drafts, Lead sources, Bulk email, History, Settings;
+  Integrations > Email points there). Phases 1 to 3 in progress: the status is in mail_plan.md section 11.
 - Sending: `notify/email.py` `deliver()` (Resend, else SMTP) returns Resend's email id; `send_email()` wraps it. Every
   customer email carries tags (`ws`, `job`, `kind`: customer / alert) and an idempotency key (`email-<job>-<attempt>`, so
   "Send again" really sends). Nimmi's own emails come from `EMAIL_FROM`; customer emails from `CUSTOMER_EMAIL_FROM`
@@ -394,9 +394,15 @@ only on the owner's machines): @.claude/private-notes.md
   Call-backs and meetings go through Schedule, at once on ai, when the draft is sent on draft. Answers pass the same checks as the
   after-call email. Machines are never answered; the AI stops at 3 answers a day, 10 in a conversation, and for a day after the team
   answers. Dashboard: `/dashboard/email/inbox`, `mail/inbox.py` (`/api/email/inbox`).
+- Leads from other places (phase 3, `mail/intake.py`, `leads_api.py`, `/dashboard/email/leads`): per assistant, off by default, one code
+  (`LeadSource`) for `leads-<code>@REPLY_DOMAIN`, `/api/leads/in/<code>/indiamart` and `/form`. Kept once per assistant (`LeadIntake`, a
+  query id can repeat across sellers), then handled by one process. The AI reads forwarded emails; a value must be in the email. IndiaMART's
+  push has no signature, retries anything but 200 and turns itself off after 48 hours of failures, and its documents don't say whether a
+  listener gets the wrapper: `indiamart_lead` takes either. Each lead: a contact (merged by number, else email), the team told, the
+  `lead_email` design at once, and on Pro a call in `lead_call.minutes` inside calling hours. Gmail's forwarding code shows on the page.
 - A reply address must take mail (`address.reply_address_works`): on live, `admin@nimmai.in` was saved, a domain that doesn't exist.
 - Tests: `tests/test_mail_foundation.py`, `test_mail_designs.py`, `test_after_call_email.py`, `test_email_replies.py`,
-  `test_call_emails.py`, `test_email_pages.py`, `test_small_emails.py`; browser: `dev-scripts/ui-checks/email_ui.mjs`,
+  `test_call_emails.py`, `test_email_pages.py`, `test_small_emails.py`, `test_lead_intake.py`; browser: `dev-scripts/ui-checks/email_ui.mjs`,
   `email_design_ui.mjs`, `email_drafts_ui.mjs`, `email_inbox_ui.mjs`, `email_pages_ui.mjs` with `email_seed.py` and
   `dev-scripts/email/fake_resend.py` (domains, keys, sending, received emails, and Resend's signed reports back to the backend).
 - Backups (`ops/backup.py`) never run with LOCAL_DEV: a developer's .env can hold the live storage keys.

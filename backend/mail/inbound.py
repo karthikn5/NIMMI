@@ -78,7 +78,9 @@ async def received(data: dict) -> None:
     """Resend's event: an email arrived. Only the address is looked at here."""
     code = threads.code_in([*(data.get("to") or []), *(data.get("cc") or []), *(data.get("received_for") or [])])
     if code is None or not data.get("email_id"):
-        logger.info("An email came in that isn't a reply to one of ours; ignored")
+        from mail import intake
+        if not await intake.received(data):  # a lead forwarded to an assistant's address
+            logger.info("An email came in that isn't a reply to one of ours; ignored")
         return
     async with async_session() as db:
         thread = (await db.execute(select(EmailThread).where(EmailThread.code == code))).scalars().first()

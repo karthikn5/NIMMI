@@ -16,6 +16,7 @@ const tabs = [
     { href: "/dashboard/email/inbox", label: "Inbox" },
     { href: "/dashboard/email/automations", label: "Automations" },
     { href: "/dashboard/email/drafts", label: "Drafts" },
+    { href: "/dashboard/email/leads", label: "Lead sources" },
     { href: "/dashboard/email/bulk", label: "Bulk email" },
     { href: "/dashboard/email/history", label: "History" },
     { href: "/dashboard/email/settings", label: "Settings" },

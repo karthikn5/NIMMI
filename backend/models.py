@@ -719,6 +719,39 @@ class ThreadMessage(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+class LeadSource(Base):
+    """Where an assistant's leads from other places come in (mail plan, phase 3): its forwarding address and links share this code."""
+    __tablename__ = "lead_sources"
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    code = Column(String(24), unique=True, nullable=False)
+    enabled = Column(Boolean, default=False)
+    forwarding = Column(JSON, nullable=True)  # Gmail's confirmation for the forwarding address: {code, link, at}
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LeadIntake(Base):
+    """One lead from another place, kept before it's handled, each once per assistant (mail/intake.py)."""
+    __tablename__ = "lead_intakes"
+    __table_args__ = (UniqueConstraint("bot_id", "ref", name="uq_lead_intake"),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
+    channel = Column(String(12), nullable=False)  # email, indiamart, form
+    ref = Column(String(120), nullable=False)     # Resend's id, IndiaMART's query id, or a form's own
+    source = Column(String(40), nullable=True)    # IndiaMART, JustDial, Website form...
+    status = Column(String(12), default="new", index=True)  # new, working, done, ignored (not a lead), failed
+    sender = Column(String(200), nullable=True)
+    subject = Column(String(300), nullable=True)
+    raw = Column(Text, nullable=True)             # what came, as text
+    found = Column(JSON, nullable=True)           # name, phone, email, wants, budget, place
+    contact_id = Column(String(36), nullable=True)
+    note = Column(String(300), nullable=True)
+    attempts = Column(Integer, default=0)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class EmailLink(Base):
     """A link in a customer email (mail/links.py): where it goes, and how often it was opened. Files are downloaded
     through it, so the business sees who downloaded the brochure."""

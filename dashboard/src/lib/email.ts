@@ -55,7 +55,7 @@ export interface Suppressions {
 }
 
 /* An assistant's emails and their designs (backend mail/api.py setup and designs; mail/designs.py). */
-export type EmailKind = "welcome" | "after_call" | "meeting" | "callback_booked" | "voicemail" | "missed_chat" | "chat_copy" | "during_call";
+export type EmailKind = "welcome" | "after_call" | "meeting" | "lead_email" | "callback_booked" | "voicemail" | "missed_chat" | "chat_copy" | "during_call";
 export type Language = "en" | "ta" | "hi";
 export type ButtonAction = "book" | "call" | "whatsapp" | "link" | "join" | "change" | "cancel";
 
@@ -88,6 +88,7 @@ export interface AssistantEmails {
         after_call: { inbound: AfterCallMode; outbound: AfterCallMode; approved: number; approved_unchanged: number; suggested: boolean };
         replies: { mode: ReplyMode };
         during_call: { enabled: boolean };
+        lead_email: { enabled: boolean }; lead_call: { enabled: boolean; minutes: number };
         callback_booked: { enabled: boolean }; voicemail: { enabled: boolean }; missed_chat: { enabled: boolean; minutes: number };
         chat_copy: { enabled: boolean }; meeting: { thanks: boolean; missed: boolean };
     };
@@ -154,6 +155,22 @@ export const ACTION_LABEL: Record<ButtonAction, string> = {
     book: "Book a time", call: "Call me back", whatsapp: "Chat on WhatsApp", link: "Open a link", join: "Join the meeting",
     change: "Change the meeting's time", cancel: "Cancel the meeting",
 };
+
+/* Leads from other places (backend mail/intake.py, mail/leads_api.py). */
+export interface LeadSources {
+    bot_id: string;
+    bot_name: string;
+    enabled: boolean;
+    receiving: boolean;           // emails can be forwarded in: REPLY_DOMAIN is set
+    address: string | null;
+    indiamart_url: string | null;
+    form_url: string | null;
+    forwarding: { code: string | null; link: string | null; at: string } | null;  // Gmail's confirmation
+    lead_email: { enabled: boolean };
+    lead_call: { enabled: boolean; minutes: number };
+    recent: { id: string; channel: string; source: string | null; status: string; note: string | null; subject: string | null;
+              found: { name?: string; phone?: string; email?: string; wants?: string }; created_at: string | null }[];
+}
 
 /* Conversations by email (backend mail/inbox.py, mail/replies.py). */
 export type ReplyMode = "ai" | "draft" | "team";

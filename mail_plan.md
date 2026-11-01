@@ -1043,6 +1043,14 @@ Phase 2, as of 1 Nov 2026 (built locally, off until `REPLY_DOMAIN` is set):
   - browser `email_inbox_ui.mjs`, with Resend faked and the real AI answering.
 - Not tried yet: a real reply from Gmail through Resend (it needs receiving on and `REPLY_DOMAIN` on Railway).
 
+Phase 3, as of 1 Nov 2026 (built locally):
+- Changed from the plan: lead addresses are at `REPLY_DOMAIN` (`leads-<code>@mail.nimmiai.in`), so no new `in.nimmiai.in` domain.
+- Built: forwarding addresses, with Gmail's code on the page; the AI reader for any format, which can't invent a detail; IndiaMART's Push API; a
+  form link for any website; a contact for each lead, merged; the team told; the new-lead email; the call within minutes on Pro.
+- Left for later: real emails from the portals to try the reader on (the plan's "Done when"), WhatsApp to portal leads (rules), the new-lead
+  journey (phase 4).
+- Checks: `test_lead_intake.py`; browser `email_leads_ui.mjs`.
+
 ## Words used
 
 - **SPF, DKIM, DMARC:** DNS records that prove an email really comes from the domain it says. DMARC tells mail

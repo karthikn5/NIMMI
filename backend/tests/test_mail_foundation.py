@@ -398,7 +398,7 @@ def test_a_business_sends_from_its_own_domain_once_verified(client, make_user, r
     assert client.post(f"/api/email/domains/{d['id']}/verify", headers=other.h()).status_code == 404
 
 
-def test_new_domains_warm_up_and_bulk_email_pauses_over_gmails_spam_limit(client, make_user, run, monkeypatch):
+def test_new_domains_warm_up():
     now = datetime(2026, 11, 1, 12)
     day0 = EmailDomain(name="x.in", status="verified", verified_at=now - timedelta(hours=2))
     assert domains.bulk_allowance(day0, now) == 100
@@ -406,22 +406,6 @@ def test_new_domains_warm_up_and_bulk_email_pauses_over_gmails_spam_limit(client
     assert domains.bulk_allowance(EmailDomain(name="x.in", status="verified", verified_at=now - timedelta(days=8)), now) is None
     assert domains.bulk_allowance(EmailDomain(name="x.in", status="pending"), now) == 0
     assert domains.bulk_allowance(None, now) is None
-
-    u = make_user()
-    u.bot()
-
-    async def history(complaints):
-        async with async_session() as db:
-            for i in range(250):
-                db.add(EmailJob(user_id=u.id, kind=f"broadcast:b1#{i}", ref_id=f"r{i}{complaints}", to_email=f"p{i}@example.com",
-                                subject="Offer", body="x", status="sent", broadcast_id="b1", sent_at=datetime.utcnow(),
-                                delivered_at=datetime.utcnow(), complained_at=datetime.utcnow() if i < complaints else None))
-            await db.commit()
-    run(history, 2)  # 0.8%: over Gmail's 0.3%
-    monkeypatch.setattr(email, "is_configured", lambda: True)
-    client.put("/api/integrations", json={**BASE, "reply_to": "hello@acme.in"}, headers=u.h())
-    r = client.post("/api/integrations/email/broadcasts", json={"subject": "Hi", "body": "News", "consent": True}, headers=u.h())
-    assert r.status_code == 409 and "Bulk email is paused" in r.json()["detail"]
 
 
 # ─── chat leads as contacts ──────────────────────────────────────

@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 DETAIL_KEYS = 30
 
 
+CONSENT_KEY = "Offers and news"  # the chat's tick box, as the widget saves it: words the team and the person can read
+
+
 async def remember_lead(conversation_id: str) -> None:
     """Best effort; never raises."""
     try:
@@ -67,10 +70,13 @@ async def _remember(conversation_id: str) -> None:
             contact.email = address[:120]
         details = dict(contact.details or {})
         for key, value in captured.items():
-            if value in (None, "", []) or str(key).lower() in ("name", "email", "phone"):
+            if value in (None, "", []) or str(key).lower() in ("name", "email", "phone") or key == CONSENT_KEY:
                 continue
             if value in (found.get("name"), found.get("email"), found.get("phone")):
                 continue  # already kept as the name, email or number
             details[str(key)[:40]] = str(value)[:200]
         contact.details = dict(list(details.items())[-DETAIL_KEYS:])
+        if str(captured.get(CONSENT_KEY) or "").lower() == "yes" and contact.email:  # the tick box under the chat's email question
+            from mail import consent, setup
+            await consent.give(db, bot.user_id, bot.bot_id, contact.email, "chat", (await setup.settings_for(db, bot.bot_id))["consent"]["words"])
         await db.commit()

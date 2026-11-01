@@ -105,7 +105,7 @@ export const SAMPLE: Record<string, string> = {
 
 /* ---------- Email history and bulk email (backend/routers/email_center.py) ---------- */
 
-export type EmailStatus = "queued" | "sent" | "failed" | "cancelled";
+export type EmailStatus = "queued" | "held" | "sent" | "failed" | "cancelled";
 
 export interface EmailRow {
     id: string;
@@ -134,24 +134,6 @@ export interface EmailHistory {
     items: EmailRow[];
     counts: Record<EmailStatus, number>;
     total: number;
-}
-
-export type AudienceSource = "all" | "chat" | "calls";
-
-export interface Audience {
-    count: number;
-    sample: { name: string; email: string; source: "chat" | "call"; last_seen: string | null }[];
-    unsubscribed: number;
-    limit: number;
-}
-
-export interface Broadcast {
-    id: string;
-    subject: string;
-    audience: { source?: AudienceSource; days?: number; hot_only?: boolean };
-    recipients: number;
-    created_at: string | null;
-    counts: Record<EmailStatus, number>;
 }
 
 export function renderTemplate(text: string, values: Record<string, string>) {

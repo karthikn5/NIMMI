@@ -22,7 +22,7 @@ from sqlalchemy.future import select
 from assist import DAYS
 from backend.models import Bot, CallbackJob, Contact, EmailJob, EmailLink, EmailThread, Journey, JourneyRun, Meeting, ThreadMessage, User, WhatsAppChat
 from database import async_session
-from mail import address, compose, render, senders, setup, suppress
+from mail import address, compose, consent, render, senders, setup, suppress
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ READY = {
     "meeting_missed": {"name": "Meeting missed", "about": "A kind note, and a to-do for your team if they don't reply.", "trigger": "meeting_missed", "goal": "booked", "steps": [
         _wait(days=1), _email("Shall we find another time?", "Hi {{first_name|there}},\n\nWe're sorry we missed you. Reply with a time that suits you and we'll set it up."),
         _wait(days=3), {"type": "notify", "text": "{{name|This lead}} missed their meeting and hasn't rebooked.", "todo": True}]},
-    "cold": {"name": "Cold lead", "about": "One useful note a week later. Only for people who agreed to hear from you.", "trigger": "status", "trigger_value": "cold", "goal": "replied", "steps": [
+    "cold": {"name": "Cold lead", "about": "One useful note a week later. Only for people who agreed to offers and news.", "trigger": "status", "trigger_value": "cold", "options": {"marketing": True}, "goal": "replied", "steps": [
         _wait(days=7), _email("Something that may help", "Hi {{first_name|there}},\n\nIf the timing wasn't right before, we're still here. Reply whenever you'd like to talk.")]},
     "customer": {"name": "New customer", "about": "A welcome, how to get started, then a review request and a referral ask.", "trigger": "customer", "goal": None, "steps": [
         _email("Welcome to {{business}}", "Hi {{first_name|there}},\n\nWelcome, and thank you for choosing {{business}}. Reply any time you need us."),
@@ -174,12 +174,13 @@ def checked_start(trigger: str, value: Optional[str], goal: Optional[str], optio
     if goal == "customer" and "customer" in (trigger, value):
         goal = None  # they're one already: it would end before its first step
     options = options or {}
+    marketing = {"marketing": True} if options.get("marketing") else {}
     if trigger != "date":
-        return value, goal or None, {}
+        return value, goal or None, marketing
     days = _int(options.get("days_before"))
     if not 0 <= days <= 365:
         raise ValueError("Say how many days before the date it starts")
-    return value[:60], goal or None, {"days_before": days, "yearly": bool(options.get("yearly"))}
+    return value[:60], goal or None, {"days_before": days, "yearly": bool(options.get("yearly")), **marketing}
 
 
 def move_stage(contact: Contact, stage: str) -> None:
@@ -335,6 +336,8 @@ async def _why_stop(db, run: JourneyRun, journey: Optional[Journey], contact: Op
         return "stopped", "They can't be emailed any more"
     if contact.e164 and await schedule.on_dnc(db, run.user_id, contact.e164):
         return "stopped", "They're on the do-not-call list"
+    if (journey.options or {}).get("marketing") and not (contact.email and await consent.has(db, run.bot_id, contact.email)):
+        return "stopped", "They haven't agreed to offers and news"
     if journey.goal == "replied" and await _test(db, "replied", run, contact):
         return "done", "They replied"
     if journey.goal == "booked" and await _test(db, "booked", run, contact):

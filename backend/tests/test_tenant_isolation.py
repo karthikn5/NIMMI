@@ -13,20 +13,23 @@ from sqlalchemy.future import select
 
 import main
 from database import async_session
-from backend.models import (Bot, CallbackJob, CallLog, Campaign, Contact, Conversation, DncEntry, EmailBroadcast, EmailJob,
-                            KnowledgeGap, Meeting, Message, PhoneNumber, SavedReply, ScheduleSettings, TeamMember,
-                            TelephonyAccount)
+from backend.models import (Bot, CallbackJob, CallLog, Campaign, Consent, Contact, Conversation, DncEntry, EmailBroadcast, EmailJob,
+                            EmailRsvp, EmailSegment, EmailThread, EmailUnsubscribe, Journey, JourneyRun, KnowledgeGap, LeadSource, Meeting,
+                            Message, PhoneNumber, QuestionAsker, SavedReply, ScheduleSettings, TeamMember, TelephonyAccount,
+                            ThreadMessage)
 
 MARK = "MARKER-A-" + uuid.uuid4().hex[:6]
 
 OWNED = [Bot, Conversation, Message, CallLog, Campaign, CallbackJob, PhoneNumber, TelephonyAccount, EmailJob,
-         EmailBroadcast, TeamMember, DncEntry, KnowledgeGap, SavedReply, Contact, Meeting, ScheduleSettings]
+         EmailBroadcast, TeamMember, DncEntry, KnowledgeGap, SavedReply, Contact, Meeting, ScheduleSettings,
+         EmailThread, ThreadMessage, EmailUnsubscribe, LeadSource, Journey, JourneyRun, QuestionAsker, EmailSegment, Consent, EmailRsvp]
 
 
 async def _seed(owner: str, bot_id: str) -> dict:
     ids = {k: str(uuid.uuid4()) for k in ("conversation_id", "call_id", "campaign_id", "number_id", "account_id",
                                           "job_id", "email_job_id", "broadcast_id", "member_id", "entry_id",
-                                          "gap_id", "reply_id", "contact_id", "meeting_id")}
+                                          "gap_id", "reply_id", "contact_id", "meeting_id", "thread_id", "message_id", "row_id",
+                                          "journey_id", "segment_id")}
     async with async_session() as db:
         bot = (await db.execute(select(Bot).where(Bot.bot_id == bot_id))).scalars().first()
         bot.bot_name, bot.knowledge_base, bot.system_prompt = f"{MARK} bot", f"{MARK} secret knowledge", f"{MARK} prompt"
@@ -58,6 +61,25 @@ async def _seed(owner: str, bot_id: str) -> dict:
             Meeting(id=ids["meeting_id"], user_id=owner, bot_id=bot_id, e164="+919800000096", name=MARK, topic=MARK,
                     email="a-customer@example.com", starts_at=datetime.utcnow() + timedelta(days=2), status="requested"),
             ScheduleSettings(bot_id=bot_id, user_id=owner, settings={"meetings": {"offer_when": MARK}}),
+        ])
+        await db.flush()
+        far = datetime.utcnow() + timedelta(days=30)
+        db.add_all([
+            EmailThread(id=ids["thread_id"], user_id=owner, bot_id=bot_id, code=uuid.uuid4().hex[:16], email="a-customer@example.com", subject=MARK),
+            EmailUnsubscribe(id=ids["row_id"], user_id=owner, email="a-customer@example.com", reason="team"),
+            LeadSource(bot_id=bot_id, user_id=owner, code=uuid.uuid4().hex[:16], enabled=True),
+            Journey(id=ids["journey_id"], user_id=owner, bot_id=bot_id, name=MARK, trigger="new_lead", steps=[{"type": "notify", "text": MARK}], enabled=True),
+            QuestionAsker(gap_id=ids["gap_id"], bot_id=bot_id, who="email:a-customer@example.com"),
+            EmailSegment(id=ids["segment_id"], user_id=owner, bot_id=bot_id, name=MARK, rules={}),
+            Consent(user_id=owner, bot_id=bot_id, email="a-customer@example.com", source="team", words=MARK),
+            EmailRsvp(broadcast_id=ids["broadcast_id"], user_id=owner, email="a-customer@example.com", answer="yes"),
+        ])
+        await db.flush()
+        db.add_all([
+            ThreadMessage(id=ids["message_id"], thread_id=ids["thread_id"], user_id=owner, direction="in", who="customer", status="received",
+                          sender="a-customer@example.com", text=MARK, provider_id=uuid.uuid4().hex),
+            JourneyRun(journey_id=ids["journey_id"], user_id=owner, bot_id=bot_id, contact_id=ids["contact_id"], slot="active", status="active", step=0,
+                       next_at=far, history=[{"step": 0, "at": far.isoformat(), "what": MARK}]),
         ])
         await db.flush()
         db.add(Message(conversation_id=ids["conversation_id"], role="user", content=MARK))

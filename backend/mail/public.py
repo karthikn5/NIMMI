@@ -14,7 +14,7 @@ from sqlalchemy import func
 from sqlalchemy.future import select
 
 from auth import client_ip, decode_scoped_token, rate_limit
-from backend.models import Contact, Meeting, User
+from backend.models import Contact, EmailBroadcast, EmailRsvp, Meeting, User
 from database import async_session
 from mail import senders
 from phone import to_e164
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/email/p", tags=["email"])
 
 GONE = "This link isn't available any more. Reply to the email and the team will help."
+RSVP = {"yes": "Yes, I'll come", "maybe": "Maybe", "no": "I can't come"}
 FIELD = "width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #d6d3d1;border-radius:8px;font:inherit;font-size:15px;margin:0 0 12px"
 
 
@@ -278,3 +279,52 @@ async def feedback_action(request: Request, token: str = ""):
     if action == "bad":
         await events._email_team(events.recipients(team, owner), f"Feedback from {who}: not good", comment or "They didn't add a comment.", row.user_id)
     return _html(_page("Thank you", "Your answer has gone to the team."))
+
+
+async def _rsvp(token: str):
+    """The invitation and the person a link is for."""
+    subject = decode_scoped_token(token, "email_rsvp")
+    if not subject or "|" not in subject:
+        return None, None
+    broadcast_id, to = subject.split("|", 1)
+    async with async_session() as db:
+        return await db.get(EmailBroadcast, broadcast_id), to
+
+
+@router.get("/rsvp")
+async def rsvp_page(token: str = ""):
+    from voice import schedule
+    b, to = await _rsvp(token)
+    event = (b.event or {}) if b is not None else {}
+    if not event.get("title"):
+        return _html(_page("This invitation has ended", GONE))
+    async with async_session() as db:
+        tz = schedule.zone(await schedule.settings_for(b.bot_id, db))
+        answer = (await db.execute(select(EmailRsvp.answer).where(EmailRsvp.broadcast_id == b.id, EmailRsvp.email == to))).scalar_one_or_none()
+    when = _text_of(schedule.utc(datetime.fromisoformat(event["at"])), tz)
+    place = f" {event['where']}." if event.get("where") else ""
+    said = f" You said {RSVP[answer].lower()}." if answer else ""
+    return _html(_page(f"Will you come to {event['title']}?", f"{when}.{place}{said}", [("yes", RSVP["yes"], True), ("maybe", RSVP["maybe"], False), ("no", RSVP["no"], False)]))
+
+
+@router.post("/rsvp")
+async def rsvp_action(request: Request, token: str = ""):
+    """Their answer, on the invitation and on their details. The day before, yes and maybe get a reminder (mail/broadcasts.py)."""
+    rate_limit(f"email-page:{client_ip(request)}", 30, 3600)
+    b, to = await _rsvp(token)
+    event = (b.event or {}) if b is not None else {}
+    answer = str((await request.form()).get("action") or "")
+    if not event.get("title") or answer not in RSVP:
+        return await rsvp_page(token)
+    async with async_session() as db:
+        row = (await db.execute(select(EmailRsvp).where(EmailRsvp.broadcast_id == b.id, EmailRsvp.email == to))).scalars().first()
+        if row is None:
+            db.add(EmailRsvp(broadcast_id=b.id, user_id=b.user_id, email=to, answer=answer))
+        else:
+            row.answer, row.answered_at = answer, datetime.utcnow()
+        contact = (await db.execute(select(Contact).where(Contact.bot_id == b.bot_id, func.lower(Contact.email) == to).order_by(Contact.created_at))).scalars().first()
+        if contact is not None:
+            contact.details = {**(contact.details or {}), f"RSVP: {event['title']}"[:60]: RSVP[answer]}
+        await db.commit()
+    return _html(_page("Thank you", "We'll see you there." if answer == "yes" else "Your answer has gone to the team."))
+

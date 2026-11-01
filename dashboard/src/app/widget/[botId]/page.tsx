@@ -67,6 +67,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     const [flowDone, setFlowDone] = useState(false); // no flow, or it has finished: free chat
     const [askedOwnQuestion, setAskedOwnQuestion] = useState(false); // typed to the assistant, not an answer to the flow
     const [chatCopy, setChatCopy] = useState<"idle" | "sent" | "no_address" | "failed" | "hidden">("idle");
+    const [offers, setOffers] = useState(false);  // the tick box under the email question: never ticked for them
     const [callback, setCallback] = useState<{ open: boolean; phone: string; consent: boolean; state: "idle" | "sending" | "done" | "error"; error: string }>(
         { open: false, phone: "", consent: false, state: "idle", error: "" });
     const socketRef = useRef<Socket | null>(null);
@@ -148,7 +149,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     // ── Flow runner ────────────────────────────────────────────────
     const saveVar = useCallback((name: string, value: string) => {
         varsRef.current[name] = value;
-        fetch(`${apiBase}/api/chat/variables`, {
+        return fetch(`${apiBase}/api/chat/variables`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ bot_id: botId, visitor_session_id: aiSession, variable_name: name, variable_value: value }),
@@ -289,6 +290,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                 return;
             }
             setPending(null);
+            if (p.type === "emailInput" && offers) await saveVar("Offers and news", "Yes");  // one at a time: each save rewrites the chat's details
             saveVar(variableName(p.node), value.trim());
             // A phone number is the moment to offer a call, if the business takes callbacks.
             if (p.type === "phoneInput" && botConfig?.callbacks_enabled && p.node.data?.offerCallback !== false) {
@@ -304,6 +306,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
             const chosen = v === p.suggested || v === p.typed ? v : !validate("emailInput", v) ? v : null;
             if (!chosen) { say("Please pick one of these, or type your email again."); return; }
             setPending(null);
+            if (offers) await saveVar("Offers and news", "Yes");
             saveVar(variableName(p.node), chosen);
             return run(flow.next(p.node.id));
         }
@@ -781,6 +784,12 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                             </div>
                         </form>
                     )
+                )}
+                {botConfig?.marketing_consent && mode === "ai" && ((pending?.kind === "input" && pending.type === "emailInput") || pending?.kind === "emailFix") && (
+                    <label className={`flex items-center gap-2 text-[11px] leading-snug mb-2 ${onFooter("text-stone-700", "text-white/80")}`}>
+                        <input type="checkbox" checked={offers} onChange={(e) => setOffers(e.target.checked)} />
+                        <span>{botConfig.marketing_consent}</span>
+                    </label>
                 )}
                 <form className="flex gap-2 w-full" onSubmit={(e) => { e.preventDefault(); handleSend(); }}>
                     <input

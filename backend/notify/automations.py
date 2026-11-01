@@ -75,7 +75,7 @@ DEFAULTS: dict[str, dict] = {
 LABELS = {"chat_lead": "After a chat", "call_lead": "After a call", "goal_met": "Goal met on a call",
           "call_missed": "Couldn't reach them", "handoff_done": "After your team helps", "broadcast": "Bulk email",
           "after_call": "After a call, by the AI", "during_call": "Sent during a call", "callback_booked": "Call-back booked",
-          "voicemail": "Voicemail left", "missed_chat": "Missed live chat", "chat_copy": "Copy of the chat", "lead_email": "New lead from another place", "journey": "A journey", "question_answer": "The answer to their question"}
+          "voicemail": "Voicemail left", "missed_chat": "Missed live chat", "chat_copy": "Copy of the chat", "lead_email": "New lead from another place", "journey": "A journey", "question_answer": "The answer to their question", "rsvp_reminder": "Event reminder"}
 
 
 def _normalize(saved: Optional[dict], default: dict) -> dict:
@@ -279,11 +279,11 @@ async def _reached_goal_since(db, job: EmailJob) -> bool:
 async def process_due() -> None:
     """Send queued customer emails whose time has come (called by the background loop)."""
     from notify.events import _once  # the delivery log, one row per (kind, ref)
-    from mail import after_call, compose, journeys, small
+    from mail import after_call, broadcasts, compose, consent, journeys, small
     now = datetime.utcnow()
     async with async_session() as db:
-        jobs = (await db.execute(select(EmailJob).where(EmailJob.status == "queued", EmailJob.send_at <= now)
-                                 .order_by(EmailJob.send_at).limit(BATCH))).scalars().all()
+        jobs = (await db.execute(select(EmailJob).where(EmailJob.status == "queued", EmailJob.send_at <= now)  # bulk email after everything else
+                                 .order_by(EmailJob.broadcast_id.isnot(None), EmailJob.send_at).limit(BATCH))).scalars().all()
         for job in jobs:
             settings = (await db.execute(select(IntegrationSettings).where(IntegrationSettings.user_id == job.user_id))).scalars().first()
             why = await suppress.why_blocked(db, job.user_id, job.to_email, marketing=bool(job.broadcast_id) or job.automation == "journey")
@@ -310,7 +310,11 @@ async def process_due() -> None:
                 if stop:
                     job.status, job.error = "cancelled", stop
                     continue
-            elif not job.broadcast_id:
+            elif job.broadcast_id and job.bot_id:
+                if not await consent.has(db, job.bot_id, job.to_email):
+                    job.status, job.error = "cancelled", "They no longer agree to offers and news"
+                    continue
+            elif job.automation != "rsvp_reminder" and not job.broadcast_id:
                 key = job.automation or job.kind.split("#")[0]
                 auto = (await setup.automations_for(db, job.user_id, bot_id, settings)).get(key)
                 if not auto or not auto["enabled"]:
@@ -346,7 +350,7 @@ async def process_due() -> None:
                 db.add_all(tracked)
             else:
                 plain = job.body
-                if job.automation == "journey":  # so a journey can ask whether they clicked
+                if job.automation in ("journey", "broadcast"):  # so it can tell who clicked
                     plain, tracked = journeys.with_tracked_links(job)
                     db.add_all(tracked)
                 text = f"{plain}\n\n--\n{sender.name}\nUnsubscribe: {link}"
@@ -358,7 +362,7 @@ async def process_due() -> None:
                 result["called"] = True
                 sent = await email.deliver(
                     job.to_email, job.subject, text, html_body, reply_to=reply_to,
-                    from_name=sender.name, from_address=sender.address, api_key=sender.api_key, unsubscribe_url=link,
+                    from_name=sender.name, from_address=broadcasts.bulk_address(sender) if job.broadcast_id else sender.address, api_key=sender.api_key, unsubscribe_url=link,
                     tags={"ws": job.user_id, "job": job.id, "kind": "customer"},
                     idempotency_key=f"email-{job.id}-{job.attempts}")  # a retry of this send is a no-op at Resend
                 result["sent"] = sent
@@ -386,7 +390,7 @@ async def requeue(job: EmailJob, db) -> None:
 async def stop_for(db, owner_id: str, to: str, reason: str) -> int:
     """Cancel everything still queued for this address. Returns how many."""
     jobs = (await db.execute(select(EmailJob).where(
-        EmailJob.user_id == owner_id, func.lower(EmailJob.to_email) == to.lower(), EmailJob.status.in_(("queued", "draft"))))).scalars().all()
+        EmailJob.user_id == owner_id, func.lower(EmailJob.to_email) == to.lower(), EmailJob.status.in_(("queued", "held", "draft"))))).scalars().all()
     for job in jobs:
         job.status, job.error = "cancelled", reason
     return len(jobs)

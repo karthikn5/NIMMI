@@ -334,9 +334,10 @@ async def _loop() -> None:
             await automations.process_due()  # automatic customer emails
             from mail import inbound
             fire_and_forget(inbound.process_due())  # replies that came in, in case their process went down
-            from mail import intake, journeys
+            from mail import broadcasts, intake, journeys
             fire_and_forget(intake.process_due())  # leads from other places, the same
             fire_and_forget(journeys.tick())  # leads' journeys, step by step
+            fire_and_forget(broadcasts.tick())  # bulk emails: due ones, subject tests, an eye on those going out
             from whatsapp import memory as whatsapp_memory, replies as whatsapp_replies
             await whatsapp_replies.sweep()  # WhatsApp answers whose timer was lost (a restart)
             if datetime.utcnow() - last_summaries > timedelta(minutes=2):

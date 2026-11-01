@@ -1120,3 +1120,22 @@ def test_write_with_ai_says_when_no_model_answers(make_user, client, monkeypatch
     made = client.post("/api/email/journeys/write", json={"bot_id": user.bot(), "text": "Email them now"}, headers=user.h())
     assert made.status_code == 503 and "Try again" in made.json()["detail"]
 
+
+def test_a_journey_for_offers_only_reaches_people_who_agreed(make_user, run):
+    from mail import consent
+    user = make_user()
+    async def go():
+        steps = [{"type": "email", "subject": "An offer", "body": "x"}]
+        jid, cid, bot = await _seed(user, steps, options={"marketing": True})
+        await _go(user, jid, cid, bot)
+        r = await _run(jid)
+        assert r.status == "stopped" and r.reason == "They haven't agreed to offers and news" and await _emails(user) == []
+        jid2, cid2, bot2 = await _seed(user, steps, options={"marketing": True}, email="d@example.com", e164="+919876500200")
+        async with async_session() as db:
+            await consent.give(db, user.id, bot2, "d@example.com", "chat", "Send me offers")
+            await db.commit()
+        await journeys.fire(user.id, bot2, "new_lead", cid2, now=AT_NOON)
+        await journeys.tick(AT_NOON + journeys.START_DELAY)
+        assert [e.subject for e in await _emails(user, "d@example.com")] == ["An offer"]
+    run(go)
+

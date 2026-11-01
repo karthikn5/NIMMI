@@ -30,6 +30,7 @@ SETTINGS: dict[str, dict] = {
     "missed_chat": {"enabled": False, "minutes": 10},
     "chat_copy": {"enabled": False},
     "question_answer": {"enabled": True},  # goes only when the team sends it from Questions
+    "consent": {"ask": False, "words": "Send me offers and news"},  # the tick box under the chat's email question
     "meeting": {"thanks": True, "missed": True},
 }
 

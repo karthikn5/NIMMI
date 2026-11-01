@@ -557,6 +557,7 @@ class EmailJob(Base):
     step = Column(Integer, nullable=True)  # 1, 2, 3 in a sequence
     sent_at = Column(DateTime(timezone=True), nullable=True)
     broadcast_id = Column(String(36), nullable=True, index=True)  # set for bulk emails
+    variant = Column(String(1), nullable=True)  # a or b: the subject it had in a subject test
     bot_id = Column(String(36), nullable=True)  # the assistant it's from (its sender); None on emails queued before Nov 2026
     attempts = Column(Integer, nullable=True)  # sends so far: part of the idempotency key, so "Send again" really sends
     subject_tpl = Column(Text, nullable=True)  # the automation's text with placeholders, filled in when it's sent
@@ -582,9 +583,65 @@ class EmailBroadcast(Base):
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     subject = Column(String, nullable=False)
     body = Column(Text, nullable=False)
-    audience = Column(JSON, default=dict)  # {source, days, hot_only}
+    audience = Column(JSON, default=dict)  # who it went to, in words; before Nov 2026: {source, days, hot_only}
     recipients = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # mail/broadcasts.py. Status: draft, scheduled, testing, sending, paused, sent, cancelled; None = sent before Nov 2026.
+    status = Column(String(12), nullable=True, index=True)
+    bot_id = Column(String(36), nullable=True, index=True)
+    rules = Column(JSON, nullable=True)             # who gets it: the group's rules when it's sent
+    subject_b = Column(String(200), nullable=True)  # a second subject to test on part of the list
+    winner = Column(String(1), nullable=True)       # a or b
+    send_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    usual_hour = Column(Boolean, nullable=True)     # each person at about the hour they last picked up, on that day
+    per_minute = Column(Integer, nullable=True)
+    test_ends_at = Column(DateTime(timezone=True), nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    paused_why = Column(String(300), nullable=True)
+    event = Column(JSON, nullable=True)             # an invitation: {title, at, where}
+    reminded_at = Column(DateTime(timezone=True), nullable=True)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class EmailSegment(Base):
+    """A saved group of people for bulk email (mail/broadcasts.py): its rules, read when it's sent."""
+    __tablename__ = "email_segments"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
+    name = Column(String(120), nullable=False)
+    rules = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Consent(Base):
+    """What someone agreed to (mail plan 5.2): per assistant, as each can be a different business. The purpose, the words they saw, where and when; kept after it's withdrawn."""
+    __tablename__ = "consents"
+    __table_args__ = (UniqueConstraint("bot_id", "email", "purpose", name="uq_consent"),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
+    email = Column(String, nullable=False, index=True)  # lowercase
+    purpose = Column(String(20), default="marketing")
+    status = Column(String(12), default="given")        # given, withdrawn
+    source = Column(String(20), nullable=False)         # chat, form, import, team
+    words = Column(Text, nullable=True)                 # what they were shown, or how the business says they agreed
+    by = Column(String(36), nullable=True)              # the team member who recorded it
+    given_at = Column(DateTime(timezone=True), server_default=func.now())
+    withdrawn_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class EmailRsvp(Base):
+    """An answer to an invitation sent by bulk email."""
+    __tablename__ = "email_rsvps"
+    __table_args__ = (UniqueConstraint("broadcast_id", "email", name="uq_email_rsvp"),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    broadcast_id = Column(String(36), ForeignKey("email_broadcasts.id", ondelete="CASCADE"), index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    email = Column(String, nullable=False)
+    answer = Column(String(8), nullable=False)          # yes, no, maybe
+    answered_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class EmailUnsubscribe(Base):

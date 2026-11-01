@@ -51,7 +51,9 @@ async def add(db, owner_id: str, address: str, reason: str = "unsubscribed", sco
               bot_id: Optional[str] = None) -> None:
     """Stop emails to this address from this workspace (the caller commits). A stronger reason replaces a weaker one,
     and "all" widens "marketing"."""
+    from mail import consent
     a = _norm(address)
+    await consent.withdraw(db, owner_id, a)
     row = (await db.execute(select(EmailUnsubscribe).where(
         EmailUnsubscribe.user_id == owner_id, func.lower(EmailUnsubscribe.email) == a))).scalars().first()
     if row is None:
@@ -75,6 +77,8 @@ async def resubscribe(db, owner_id: str, address: str) -> bool:
     if (row.reason or "unsubscribed") != "unsubscribed":
         return False
     await db.delete(row)
+    from mail import consent
+    await consent.restore(db, owner_id, a)
     return True
 
 
@@ -87,7 +91,7 @@ async def add_bounce(db, address: str, kind: str = "bounce", detail: Optional[st
 
 async def cancel_queued(db, address: str, why: str, owner_id: Optional[str] = None) -> int:
     """Cancel what's still waiting to go to this address (in one workspace, or all). Returns how many."""
-    query = select(EmailJob).where(func.lower(EmailJob.to_email) == _norm(address), EmailJob.status.in_(("queued", "draft")))
+    query = select(EmailJob).where(func.lower(EmailJob.to_email) == _norm(address), EmailJob.status.in_(("queued", "held", "draft")))
     if owner_id:
         query = query.where(EmailJob.user_id == owner_id)
     jobs = (await db.execute(query)).scalars().all()
@@ -99,7 +103,7 @@ async def cancel_queued(db, address: str, why: str, owner_id: Optional[str] = No
 async def cancel_queued_bulk(db, owner_id: str, address: str) -> int:
     """They stopped offers and news: cancel the bulk emails still waiting for them in this workspace."""
     jobs = (await db.execute(select(EmailJob).where(
-        EmailJob.user_id == owner_id, func.lower(EmailJob.to_email) == _norm(address), EmailJob.status == "queued",
+        EmailJob.user_id == owner_id, func.lower(EmailJob.to_email) == _norm(address), EmailJob.status.in_(("queued", "held")),
         EmailJob.broadcast_id.is_not(None)))).scalars().all()
     for job in jobs:
         job.status, job.error = "cancelled", TEXT["marketing"]

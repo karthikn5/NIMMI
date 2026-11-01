@@ -295,6 +295,7 @@ export interface Lead {
     tags: string[];
     source: string | null;
     last_at: string | null;
+    agreed: boolean;              // to offers and news
 }
 
 export interface Board { stages: string[]; team: TeamPerson[]; total: number; leads: Lead[] }
@@ -308,4 +309,87 @@ export interface AskedBy {
     people: { id: string; email: string; name: string | null; channel: string | null; asked_at: string | null; sent: boolean }[];
     without_email: number;
 }
+
+/* Bulk email (backend mail/broadcasts.py, mail/broadcasts_api.py). Only people who agreed to offers and news get it. */
+export type BulkStatus = "draft" | "scheduled" | "testing" | "sending" | "paused" | "sent" | "cancelled";
+
+export interface BulkRules {
+    statuses?: string[];
+    stages?: string[];
+    sources?: string[];
+    tags?: string[];
+    active_days?: number;
+    engaged_days?: number;
+}
+
+export interface BulkEvent { title: string; at: string; where?: string }
+
+export interface BulkCounts {
+    queued: number; held: number; sent: number; failed: number; cancelled: number;
+    delivered: number; bounced: number; complained: number; clicked: number; replied: number; unsubscribed: number;
+}
+
+export interface BulkVariant { sent: number; clicked: number; replied: number }
+
+export interface BulkEmail {
+    id: string;
+    bot_id: string | null;        // none: sent before November 2026, from the whole workspace
+    status: BulkStatus;
+    subject: string;
+    subject_b: string | null;     // a second subject to test on part of the list
+    body: string;
+    rules: BulkRules;
+    event: BulkEvent | null;      // an invitation
+    recipients: number;
+    winner: "a" | "b" | null;
+    send_at: string | null;
+    usual_hour: boolean;
+    per_minute: number;
+    test_ends_at: string | null;
+    started_at: string | null;
+    finished_at: string | null;
+    paused_why: string | null;
+    created_at: string | null;
+    counts?: BulkCounts;
+    variants?: { a: BulkVariant; b: BulkVariant } | null;
+    rsvp?: { yes: number; no: number; maybe: number } | null;
+    notes?: string[];             // common reasons for landing in spam
+    no_mail_server?: number;      // left out when it started: their domain takes no mail
+}
+
+export interface BulkGroup { id: string; name: string; rules: BulkRules }
+
+export interface BulkPage {
+    broadcasts: BulkEmail[];
+    segments: BulkGroup[];
+    agreed: number;
+    with_email: number;
+    ask_in_chat: { ask: boolean; words: string };
+    sender: { name: string; address: string; domain: string | null; reply_to: string | null };
+    room_today: number | null;    // none: no daily limit
+    max_recipients: number;
+    paces: number[];
+    test_min: number;
+    tags: string[];
+    sources: Record<string, string>;
+    statuses: Record<string, string>;
+    stages: string[];
+    spam_rate: number | null;
+}
+
+export interface BulkCount {
+    count: number;
+    left_out: { no_consent: number; stopped: number; throwaway: number };
+    sample: { name: string; email: string }[];
+}
+
+export interface ImportResult {
+    rows: number; added: number; updated: number; agreed: number;
+    skipped: { line: number; why: string }[]; skipped_count: number;
+}
+
+export const BULK_STATUS: Record<BulkStatus, { label: string; tone: "good" | "neutral" | "warn" | "bad" }> = {
+    draft: { label: "Draft", tone: "neutral" }, scheduled: { label: "Scheduled", tone: "neutral" }, testing: { label: "Testing subjects", tone: "good" },
+    sending: { label: "Going out", tone: "good" }, paused: { label: "Paused", tone: "warn" }, sent: { label: "Sent", tone: "good" }, cancelled: { label: "Cancelled", tone: "neutral" },
+};
 

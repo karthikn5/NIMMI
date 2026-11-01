@@ -132,8 +132,10 @@ SCREENS: dict[str, dict] = {
         "Where leads from other places come in, per assistant: the address to forward IndiaMART, JustDial and property-portal emails to, with "
         "Gmail's confirmation code, the links for IndiaMART's Push API and website forms, the email and call each lead gets, and the latest leads.")},
     "email_bulk": {"title": "Email: Bulk email", "path": "/dashboard/email/bulk", "about": (
-        "One email to a group of leads who shared their email (chat or calls, recent days, hot only); unsubscribed, "
-        "bounced and throwaway addresses are left out; up to 2,000 people and 5 sends a day.")},
+        "One email to the people who agreed to offers and news (the chat's tick box, a form's newsletter box, an import that says how they agreed, or the "
+        "team's note on the Lead board), narrowed by status, stage, source, tags or activity; groups can be saved. A test to yourself, then now, at a time, or "
+        "at each person's usual hour, at a set pace; two subjects can be tried on a fifth of the list. It pauses by itself when spam reports or bounces rise. "
+        "Invitations collect Yes, Maybe and No and remind those coming. Up to 2,000 people and 5 sends a day; Nimmi's own address has a daily limit.")},
     "email_history": {"title": "Email: History", "path": "/dashboard/email/history", "about": (
         "Every customer email with its status and what happened after sending (delivered, bounced, reported as "
         "spam); send a failed one again, cancel a waiting one, or stop emailing someone.")},

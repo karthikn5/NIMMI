@@ -56,7 +56,8 @@ async def overview(ctx: AuthContext = Depends(require_manager), db: AsyncSession
     own = (await db.execute(select(EmailDomain).where(EmailDomain.user_id == ctx.owner_id).order_by(EmailDomain.created_at))).scalars().all()
     stopped = (await db.execute(select(func.count()).select_from(EmailUnsubscribe).where(
         EmailUnsubscribe.user_id == ctx.owner_id))).scalar_one()
-    from routers.email_center import _job_json, complaint_rate
+    from mail.broadcasts import complaint_rate
+    from routers.email_center import _job_json
     return {
         "server": {"email": email.is_configured(), "resend": bool(os.getenv("RESEND_API_KEY")),
                    "events": bool(os.getenv("RESEND_WEBHOOK_SECRET")),
@@ -273,7 +274,7 @@ class SetupIn(BaseModel):
     settings: Optional[dict] = None     # {"after_call": {...}, "welcome": {...}}
 
 
-GROWTH_SETTINGS = {"after_call", "replies", "journeys", "question_answer", "during_call", "lead_email", "lead_call", "callback_booked", "voicemail", "missed_chat", "chat_copy"}
+GROWTH_SETTINGS = {"after_call", "replies", "journeys", "question_answer", "consent", "during_call", "lead_email", "lead_call", "callback_booked", "voicemail", "missed_chat", "chat_copy"}
 
 
 @router.put("/setup/{bot_id}")
@@ -308,6 +309,10 @@ async def save_setup(bot_id: str, data: SetupIn, ctx: AuthContext = Depends(requ
                 raise HTTPException(status_code=400, detail="Add where replies go (Email > Settings) so customers can answer you")
         if kind == "after_call" and any(allowed.get(d) not in (None, "off", "review", "auto") for d in ("inbound", "outbound")):
             raise HTTPException(status_code=400, detail="The after-call email is off, review first, or automatic")
+        if kind == "consent" and "words" in allowed and not 5 <= len(str(allowed["words"] or "").strip()) <= 200:
+            raise HTTPException(status_code=400, detail="Write the words next to the box, in 5 to 200 characters")
+        if kind == "consent" and "ask" in allowed:
+            allowed["ask"] = bool(allowed["ask"])
         if kind == "journeys" and not all(isinstance(allowed.get(k, 1), int) and 1 <= allowed.get(k, 1) <= 14 for k in ("per_day", "per_week")):
             raise HTTPException(status_code=400, detail="Choose between 1 and 14 emails")
         if kind == "replies" and allowed.get("mode") not in (None, "ai", "draft", "team"):

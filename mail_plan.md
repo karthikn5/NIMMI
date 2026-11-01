@@ -1074,6 +1074,24 @@ Phase 4, as of 1 Nov 2026 (built locally):
   26 safeguards each switched off once to confirm a test fails; real models through `dev-scripts/email/journey_probe.py`; browser `email_journeys_ui.mjs`.
 - Not tried yet: a journey on a real phone with real WhatsApp and a real call.
 
+Phase 5, as of 1 Nov 2026 (built locally):
+- Built: consent records per assistant (the chat's tick box with the business's words, a form's newsletter field, an import that says how they agreed, the team's note on
+  the Lead board; an unsubscribe withdraws it and only the person can give it back); groups by status, stage, source, tags, recent contact and engagement, saved; drafts
+  with spam notes and a test to yourself; now, at a time or at each person's usual hour, at 30, 60 or 120 a minute; a subject test on a fifth of the list; a pause by itself
+  when spam reports or bounces rise, with resume and cancel; invitations with Yes, Maybe and No and a reminder the day before; CSV imports; reports per send; addresses whose
+  domain takes no mail left out; customers' own emails always ahead of bulk email in the queue; `BULK_EMAIL_FROM` for the marketing subdomain.
+- Decision 7, taken for now: bulk email can go from Nimmi's address with a daily limit (`BROADCAST_SHARED_DAILY`, 200 per workspace; 0 makes it own-domain only), and from
+  a business's own domain with only its warm-up. Change the number on Railway at any time.
+- Changed from today: the old bulk email (to anyone who ever shared an email, with one tick box for the whole group) is gone. After the push a workspace's bulk email
+  reaches only people with a consent record, so it reaches nobody until consent is collected. Earlier sends stay listed.
+- Left for later: double opt-in (a confirmation email before a yes counts: today anyone can type someone else's address into a chat, as on any form); the one-line notice
+  under the chat's email question; asking on calls ("Can we email you offers?"); groups by interest or language; "replied" in a send's report counts any reply after it
+  started, not only to that email.
+- Checks: `test_broadcasts.py`; 26 safeguards each switched off once to confirm a test fails; browser `email_bulk_ui.mjs`; `dev-scripts/email/bulk_probe.py`: 1,000 people
+  imported (1.2 s) and sent at 120 a minute through the fake Resend on two server processes: 1,000 emails to 1,000 people, none twice, 122 a minute on average (123 to
+  124 in each full minute), all 1,000 reported delivered, no database errors.
+- Not tried yet: a real send through Resend (it needs the owner's OK), and the marketing subdomain (it needs `news.nimmiai.in` verified in Resend).
+
 ## Words used
 
 - **SPF, DKIM, DMARC:** DNS records that prove an email really comes from the domain it says. DMARC tells mail

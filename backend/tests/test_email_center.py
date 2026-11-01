@@ -192,44 +192,6 @@ def test_history_cancel_resend_and_stop(client, make_user, monkeypatch, run):
     assert client.post(f"/api/integrations/email/jobs/{second_a['id']}/cancel", headers=other.h()).status_code == 404
 
 
-def test_bulk_email_audience_and_send(client, make_user, monkeypatch, run):
-    u = make_user()
-    bot = u.bot()
-    sent = _capture(monkeypatch)
-
-    async def seed():
-        async with async_session() as db:
-            db.add_all([
-                Conversation(bot_id=bot, visitor_session_id="b1", captured_data={"Name": "Meera Iyer", "Email": "meera@example.com"}),
-                Conversation(bot_id=bot, visitor_session_id="b2", captured_data={"Email": "MEERA@example.com"}),  # same person
-                Conversation(bot_id=bot, visitor_session_id="b3", captured_data={"Name": "No email"}),
-                CallLog(user_id=u.id, bot_id=bot, channel="phone", caller_e164="+919800000004", captured={"Email": "dev@example.com"}),
-                CallLog(user_id=u.id, bot_id=bot, channel="browser", captured={"Email": "test@example.com"}),  # test call
-            ])
-            await db.commit()
-    run(seed)
-    client.post("/api/integrations/email/stop", json={"email": "dev@example.com"}, headers=u.h())
-
-    aud = client.post("/api/integrations/email/audience", json={"source": "all", "days": 30}, headers=u.h()).json()
-    assert aud["count"] == 1 and aud["unsubscribed"] == 1 and aud["sample"][0]["email"].lower() == "meera@example.com"
-    assert client.post("/api/integrations/email/audience", json={"source": "calls"}, headers=u.h()).json()["count"] == 0
-
-    msg = {"source": "all", "days": 30, "subject": "Open house, {{name}}", "body": "Hi {{name}}, see you Sunday.\n\n{{business}}"}
-    assert client.post("/api/integrations/email/broadcasts", json=msg, headers=u.h()).status_code == 400  # no consent
-    client.put("/api/integrations", json={**BASE, "reply_to": ""}, headers=u.h())
-    assert client.post("/api/integrations/email/broadcasts", json={**msg, "consent": True}, headers=u.h()).status_code == 400  # no reply-to
-    client.put("/api/integrations", json=BASE, headers=u.h())
-    r = client.post("/api/integrations/email/broadcasts", json={**msg, "consent": True}, headers=u.h())
-    assert r.status_code == 200 and r.json()["recipients"] == 1, r.text
-    run(automations.process_due)
-    assert [(m["subject"], m["text"].split("\n")[0]) for m in sent] == [("Open house, Meera", "Hi Meera, see you Sunday.")]
-
-    listed = client.get("/api/integrations/email/broadcasts", headers=u.h()).json()
-    assert listed[0]["counts"]["sent"] == 1 and listed[0]["recipients"] == 1
-    hist = client.get("/api/integrations/email/history?automation=broadcast", headers=u.h()).json()
-    assert hist["total"] == 1 and hist["items"][0]["label"] == "Bulk email"
-
-
 def test_one_click_unsubscribe_header_and_post(client, make_user, monkeypatch, run):
     u = make_user()
     bot = u.bot()

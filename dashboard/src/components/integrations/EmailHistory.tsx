@@ -12,6 +12,7 @@ type Filter = "" | EmailStatus;
 
 const STATUS: Record<EmailStatus, { label: string; tone: "good" | "neutral" | "warn" | "bad" }> = {
     queued: { label: "Scheduled", tone: "warn" },
+    held: { label: "Paused", tone: "neutral" },
     sent: { label: "Sent", tone: "good" },
     failed: { label: "Failed", tone: "bad" },
     cancelled: { label: "Stopped", tone: "neutral" },
@@ -25,7 +26,7 @@ function shown(row: EmailRow): { label: string; tone: "good" | "neutral" | "warn
         if (row.event === "delivered") return { label: "Delivered", tone: "good" };
         if (row.event === "delayed") return { label: "Delayed", tone: "warn" };
     }
-    return STATUS[row.status];
+    return STATUS[row.status] ?? { label: row.status, tone: "neutral" };
 }
 
 /** After sending: delivered, bounced and why, reported as spam, opened (a hint), clicked. */

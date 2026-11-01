@@ -57,6 +57,10 @@ def call_url(owner_id: str, bot_id: str, to: str) -> str:
     return _signed("call", f"{owner_id}|{bot_id}|{to.lower()}", "email_call")
 
 
+def rsvp_url(broadcast_id: str, to: str) -> str:
+    return _signed("rsvp", f"{broadcast_id}|{to.lower()}", "email_rsvp")
+
+
 def feedback_url(contact_id: str) -> str:
     return _signed("feedback", contact_id, "email_feedback")
 

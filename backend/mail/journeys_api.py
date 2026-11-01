@@ -16,7 +16,7 @@ import plans
 from auth import AuthContext, rate_limit, require_manager
 from backend.models import Bot, Contact, Journey, JourneyRun, TeamMember, User
 from database import get_db
-from mail import compose, journeys, senders, setup
+from mail import compose, consent, journeys, senders, setup
 from notify import automations
 from phone import display
 
@@ -215,8 +215,9 @@ async def write_journey(data: WriteIn, ctx: AuthContext = Depends(require_manage
 
 
 # ─── lead stages ─────────────────────────────────────────────────
-def _lead_json(c: Contact) -> dict:
+def _lead_json(c: Contact, agreed: Optional[set] = None) -> dict:
     return {"id": c.id, "name": c.name, "email": c.email, "phone": display(c.e164) if c.e164 else None, "stage": c.stage or "new", "status": c.lead_status, "assigned_to": c.assigned_to, "tags": c.tags or [],
+            "agreed": bool(c.email and c.email.lower() in (agreed or ())),
             "source": c.source, "last_at": _iso(c.last_call_at or c.created_at)}
 
 
@@ -225,7 +226,8 @@ async def board(bot_id: str, ctx: AuthContext = Depends(require_manager), db: As
     bot = await _own_bot(bot_id, ctx, db)
     rows = (await db.execute(select(Contact).where(Contact.bot_id == bot.bot_id).order_by(Contact.created_at.desc()).limit(BOARD_LEADS))).scalars().all()
     total = (await db.execute(select(func.count()).select_from(Contact).where(Contact.bot_id == bot.bot_id))).scalar_one()
-    return {"stages": journeys.STAGES, "team": await _team(db, ctx.owner_id), "total": total, "leads": [_lead_json(c) for c in rows]}
+    agreed = await consent.agreed(db, bot.bot_id)
+    return {"stages": journeys.STAGES, "team": await _team(db, ctx.owner_id), "total": total, "leads": [_lead_json(c, agreed) for c in rows]}
 
 
 BOARD_LEADS = 300  # the newest

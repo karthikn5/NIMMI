@@ -1509,7 +1509,11 @@ async def erase_caller(data: EraseRequest, ctx: AuthContext = Depends(require_ow
     bot_ids = list((await _bot_names(ctx.owner_id, db)).keys())
     convs = (await db.execute(select(Conversation).where(Conversation.bot_id.in_(bot_ids)))).scalars().all() if bot_ids else []
     chats = [c for c in convs if extract_contact(c.captured_data).get("phone") == e164]
-    from backend.models import QuestionAsker
+    from backend.models import Consent, EmailRsvp, QuestionAsker
+    gone = [a.lower() for a in addresses]
+    if gone:
+        await db.execute(sa_delete(Consent).where(Consent.user_id == ctx.owner_id, Consent.email.in_(gone)))
+        await db.execute(sa_delete(EmailRsvp).where(EmailRsvp.user_id == ctx.owner_id, EmailRsvp.email.in_(gone)))
     if bot_ids:
         await db.execute(sa_delete(QuestionAsker).where(QuestionAsker.bot_id.in_(bot_ids), QuestionAsker.who.in_(
             [f"phone:{e164}", *(f"email:{a.lower()}" for a in addresses), *(f"chat:{c.conversation_id}" for c in chats)])))

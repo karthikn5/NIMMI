@@ -330,7 +330,7 @@ only on the owner's machines): @.claude/private-notes.md
 
 - Phases 0-9 in `mail_plan.md` (written 1 Nov 2026 from the owner's idea, with market research). Phase 0 live 1 Nov
   2026: sending foundations and the dashboard's Email section (Overview, Inbox, Automations, Journeys, Lead board, Drafts, Lead sources, Bulk email, History,
-  Settings; Integrations > Email points there). Phases 1 to 4 in progress: the status is in mail_plan.md section 11.
+  Settings; Integrations > Email points there). Phases 1 to 5 in progress: the status is in mail_plan.md section 11.
 - Sending: `notify/email.py` `deliver()` (Resend, else SMTP) returns Resend's email id; `send_email()` wraps it. Every
   customer email carries tags (`ws`, `job`, `kind`: customer / alert) and an idempotency key (`email-<job>-<attempt>`, so
   "Send again" really sends). Nimmi's own emails come from `EMAIL_FROM`; customer emails from `CUSTOMER_EMAIL_FROM`
@@ -418,10 +418,22 @@ only on the owner's machines): @.claude/private-notes.md
   otherwise; a ready-made email lost its date, so one that drops a placeholder keeps the ready-made words; "customer" as the goal of a customer journey ended it before step 1.
 - Answers to who asked (`mail/answers.py`): `assist.record_gap` keeps who asked (`QuestionAsker`, `chat:`, `phone:`, `email:`; a chat's email can come later, so it's looked up when
   needed). On Questions the team ticks who gets the answer (kind `question_answer`, once each). Compliance > Erase removes the record.
+- Bulk email (phase 5, `mail/broadcasts.py`, `broadcasts_api.py`, `consent.py`, `/dashboard/email/bulk`; Growth up): only people with a `Consent` record for that
+  assistant (purpose marketing: the chat's unticked box, saved by the widget as the readable variable "Offers and news", with the words in `settings.consent`; a form's
+  newsletter field; an import that says how they agreed; the team's note on the Lead board). An unsubscribe withdraws it (`suppress.add`), Resubscribe restores it, and
+  only the person can give it back after they withdrew it. `EmailBroadcast` (draft, scheduled, testing, sending, paused, sent, cancelled; None = sent before Nov 2026)
+  with `rules` for who (statuses, stages, sources, tags, active_days, engaged_days; `EmailSegment` saves them). The list is read when it starts (`tick`, claimed), addresses
+  whose domain takes no mail are left out (one DNS lookup per domain, outside the DB connection), and each email gets its own `send_at` at the pace (30/60/120 a minute;
+  the queue sends 50 a pass about every 20 s, and takes everything else first, so a big send never holds up a customer's own email). A subject test sends each subject to
+  a tenth, then the better (a click 1, a reply 2) to the rest after 4 hours. Spam reports (2+, over 0.3%) or bounces (over 5% of 20+) pause it: its emails become
+  "held". Invitations (`event`) link to `/api/email/p/rsvp` (GET only asks), answers in `EmailRsvp` and the contact's details, a reminder the day before to yes and maybe.
+  Imports: CSV up to 5,000 rows, "how they agreed" required and kept per person. From Nimmi's address a workspace sends `BROADCAST_SHARED_DAILY` (200) a day; its own
+  domain only warms up. `BULK_EMAIL_FROM` (a marketing subdomain, e.g. news.nimmiai.in, once verified in Resend) keeps offers off the address of confirmations.
 - A reply address must take mail (`address.reply_address_works`): on live, `admin@nimmai.in` was saved, a domain that doesn't exist.
 - Tests: `tests/test_mail_foundation.py`, `test_mail_designs.py`, `test_after_call_email.py`, `test_email_replies.py`,
-  `test_call_emails.py`, `test_email_pages.py`, `test_small_emails.py`, `test_lead_intake.py`, `test_journeys.py`, `test_question_answers.py`; browser:
-  `dev-scripts/ui-checks/email_ui.mjs`, `email_design_ui.mjs`, `email_drafts_ui.mjs`, `email_inbox_ui.mjs`, `email_pages_ui.mjs`, `email_leads_ui.mjs`, `email_journeys_ui.mjs` with `email_seed.py` and
+  `test_call_emails.py`, `test_email_pages.py`, `test_small_emails.py`, `test_lead_intake.py`, `test_journeys.py`, `test_question_answers.py`, `test_broadcasts.py`;
+  browser: `dev-scripts/ui-checks/email_ui.mjs`, `email_design_ui.mjs`, `email_drafts_ui.mjs`, `email_inbox_ui.mjs`, `email_pages_ui.mjs`, `email_leads_ui.mjs`,
+  `email_journeys_ui.mjs`, `email_bulk_ui.mjs` with `email_seed.py`, `dev-scripts/email/bulk_probe.py` (1,000 people, run the trial with `--workers 2`) and
   `dev-scripts/email/fake_resend.py` (domains, keys, sending, received emails, and Resend's signed reports back to the backend).
 - Backups (`ops/backup.py`) never run with LOCAL_DEV: a developer's .env can hold the live storage keys.
 

@@ -1,14 +1,49 @@
 "use client";
 
 import { useEffect, useState, type DragEvent } from "react";
-import { Button, Card, Dialog, EmptyState, PhraseInput, Select, Skeleton, Status, useToast } from "@/components/ui";
+import { Button, Card, Dialog, EmptyState, Input, PhraseInput, Select, Skeleton, Status, useToast } from "@/components/ui";
 import { apiJson } from "@/lib/api";
 import { STAGE_LABEL, type Board, type Lead, type Senders } from "@/lib/email";
 import { useApi } from "@/lib/useApi";
 import { LEADS } from "@/lib/voice/schedule";
 import type { LeadStatus } from "@/lib/voice/types";
 
-function LeadDialog({ lead, board, onClose, save }: { lead: Lead; board: Board; onClose: () => void; save: (id: string, values: Partial<Lead>) => Promise<void> }) {
+function Offers({ lead, onChanged }: { lead: Lead; onChanged: () => void }) {
+    const toast = useToast();
+    const [how, setHow] = useState("");
+    const [agreed, setAgreed] = useState(lead.agreed);
+    const set = async (yes: boolean) => {
+        try {
+            await apiJson(`/api/email/consent/${lead.id}`, { method: "POST", json: { agreed: yes, how: how.trim() } });
+            setAgreed(yes);
+            setHow("");
+            onChanged();
+        } catch (e) {
+            toast((e as Error).message);
+        }
+    };
+    return (
+        <div className="border-t border-line pt-3">
+            <span className="text-xs text-stone-500">Offers and news by email</span>
+            {agreed ? (
+                <div className="flex items-center justify-between gap-3 mt-1">
+                    <Status tone="good">Agreed</Status>
+                    <Button size="sm" variant="ghost" onClick={() => set(false)}>Stop offers</Button>
+                </div>
+            ) : (
+                <div className="mt-1 space-y-2">
+                    <p className="text-[13px] text-stone-600">Not agreed. If they said yes to you, note how; it&apos;s kept as the record.</p>
+                    <div className="flex flex-wrap gap-2">
+                        <Input aria-label="How they agreed" className="flex-1 min-w-40" maxLength={500} value={how} placeholder="Said yes on our call on 3 Nov" onChange={(e) => setHow(e.target.value)} />
+                        <Button size="sm" disabled={how.trim().length < 5} onClick={() => set(true)}>They agreed</Button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function LeadDialog({ lead, board, onClose, save, onChanged }: { lead: Lead; board: Board; onClose: () => void; save: (id: string, values: Partial<Lead>) => Promise<void>; onChanged: () => void }) {
     const [tags, setTags] = useState(lead.tags);
     const [owner, setOwner] = useState(lead.assigned_to ?? "");
     return (
@@ -29,6 +64,7 @@ function LeadDialog({ lead, board, onClose, save }: { lead: Lead; board: Board; 
                     <span className="text-xs text-stone-500">Tags</span>
                     <div className="mt-1"><PhraseInput keepCase value={tags} onChange={setTags} label="Tags" placeholder="Add a tag" /></div>
                 </div>
+                {lead.email && <Offers lead={lead} onChanged={onChanged} />}
             </div>
         </Dialog>
     );
@@ -111,7 +147,7 @@ export default function LeadBoardPage() {
                     })}
                 </div>
             )}
-            {open && <LeadDialog key={open.id} lead={open} board={b} onClose={() => setOpen(null)} save={save} />}
+            {open && <LeadDialog key={open.id} lead={open} board={b} onClose={() => setOpen(null)} save={save} onChanged={() => { void board.reload(); }} />}
         </div>
     );
 }

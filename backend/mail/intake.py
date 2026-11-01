@@ -135,6 +135,9 @@ async def from_indiamart(code: str, payload: dict) -> bool:
     return True
 
 
+CONSENT_NAMES = ("marketing_consent", "consent", "newsletter", "subscribe", "offers")
+
+
 def form_lead(fields: dict) -> dict:
     """Whatever a form calls its fields."""
     clean = {str(k).strip().lower().replace(" ", "_"): str(v).strip() for k, v in fields.items() if v not in (None, "") and not isinstance(v, (dict, list))}
@@ -143,6 +146,8 @@ def form_lead(fields: dict) -> dict:
         found["name"] = f"{clean.get('first_name', '')} {clean.get('last_name', '')}".strip()
     found["portal"] = clean.get("source") or "Website form"
     found["wants"] = found["wants"][:400]
+    ticked = next((clean[n] for n in CONSENT_NAMES if clean.get(n)), "")
+    found["consent"] = "Ticked on the website form" if ticked.lower() in ("yes", "y", "true", "on", "1", "agreed", "checked") else ""
     return found
 
 
@@ -322,6 +327,10 @@ async def act(bot: Bot, found: dict) -> tuple[str, Optional[str]]:
         await schedule.book_callback(owner_id=bot.user_id, bot_id=bot.bot_id, e164=e164, at=at, about=f"Enquiry from {portal}: {found.get('wants') or ''}".strip()[:200], name=name,
                                      source_call_id=None, number_id=None, tz=tz, consent=f"Enquired on {portal} on {datetime.utcnow():%d %b %Y}", tell_them=False)
         done.append(f"call at {schedule.when_text(at, tz)}")
-    from mail import journeys
+    from mail import consent, journeys
+    if found.get("consent") and address_:  # their own tick on their own form
+        async with async_session() as db:
+            await consent.give(db, bot.user_id, bot.bot_id, address_, "form", str(found["consent"]))
+            await db.commit()
     await journeys.fire(bot.user_id, bot.bot_id, "new_lead", contact_id, "form" if portal == "Website form" else "portal")
     return ("Contact saved; " + ", ".join(done)) if done else "Contact saved", contact_id

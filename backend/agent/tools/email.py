@@ -63,27 +63,27 @@ async def email_history(tc, db, status="", search="", email_id=None):
     return {"counts": h["counts"], "total": h["total"], "emails": [{k: e.get(k) for k in keep} for e in h["items"]]}
 
 
-@tool("email_bulk_sends", "Their bulk emails: subject, who they went to, when, and how many were sent, failed or are "
-      "still waiting.", "Checking bulk emails", roles=MANAGERS, screens=AREAS["email"],
-      routes=("GET /api/integrations/email/broadcasts",))
-async def email_bulk_sends(tc, db):
-    from routers.email_center import list_broadcasts
-    return await list_broadcasts(ctx=tc.ctx, db=db)
+@tool("email_bulk_sends", "One assistant's bulk emails: subject, status, who they went to, and how each did: sent, delivered, clicked, replied, unsubscribed, "
+      "spam reports, bounces. How many people have agreed to offers and news, and who the emails come from.", "Checking bulk emails",
+      {"type": "object", "required": ["assistant_id"], "properties": {"assistant_id": {"type": "string"}}}, roles=MANAGERS, screens=AREAS["email"], routes=("GET /api/email/bulk/{bot_id}",))
+async def email_bulk_sends(tc, db, assistant_id):
+    from mail.broadcasts_api import bulk_page
+    found = await bulk_page((await get_owned_bot(assistant_id, tc.ctx, db)).bot_id, ctx=tc.ctx, db=db)
+    keep = ("id", "status", "subject", "recipients", "send_at", "finished_at", "paused_why", "winner", "counts", "rsvp")
+    return {"agreed": found["agreed"], "people_with_an_email": found["with_email"], "sender": found["sender"], "can_send_today": found["room_today"], "groups": found["segments"],
+            "bulk_emails": [{k: b.get(k) for k in keep} for b in found["broadcasts"]]}
 
 
-@tool("email_audience", "How many people a bulk email would reach: leads who shared an email in chat or on calls "
-      "(source all / chat / calls), in the last N days (0 = any time), optionally only hot leads; unsubscribed, "
-      "bounced and throwaway addresses are left out. Sends nothing.", "Counting who a bulk email would reach",
-      {"type": "object", "properties": {"source": {"type": "string", "enum": ["all", "chat", "calls"]},
-                                        "days": {"type": "integer"}, "hot_only": {"type": "boolean"}}},
-      roles=MANAGERS, screens=AREAS["email"], routes=("POST /api/integrations/email/audience",))
-async def email_audience(tc, db, source="all", days=90, hot_only=False):
-    from routers.email_center import AudienceIn, audience
-    try:
-        found = await audience(AudienceIn(source=source or "all", days=int(days), hot_only=bool(hot_only)), ctx=tc.ctx, db=db)
-    except ValueError as e:
-        raise ToolError(str(e))
-    return {"people": found["count"], "left_out_as_unsubscribed": found["unsubscribed"], "limit": found["limit"]}
+@tool("email_audience", "How many people a bulk email would reach, and who it leaves out and why (no consent, stopped, throwaway). Only people who agreed to offers and news are ever "
+      "included. Narrow it by statuses, stages, sources, tags, active_days, engaged_days. Sends nothing.", "Counting who a bulk email would reach",
+      {"type": "object", "required": ["assistant_id"], "properties": {
+          "assistant_id": {"type": "string"}, "statuses": {"type": "array", "items": {"type": "string"}}, "stages": {"type": "array", "items": {"type": "string"}},
+          "sources": {"type": "array", "items": {"type": "string"}}, "tags": {"type": "array", "items": {"type": "string"}}, "active_days": {"type": "integer"}, "engaged_days": {"type": "integer"}}},
+      roles=MANAGERS, screens=AREAS["email"], routes=("POST /api/email/bulk/count",))
+async def email_audience(tc, db, assistant_id, **rules):
+    from mail.broadcasts_api import CountIn, count_people
+    found = await count_people(CountIn(bot_id=assistant_id, rules=rules), ctx=tc.ctx, db=db)
+    return {"people": found["count"], "left_out": found["left_out"]}
 
 
 # ─── Who an assistant's emails come from (undoable) ─────────────────

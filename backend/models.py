@@ -226,6 +226,7 @@ class Contact(Base):
     engagement = Column(Integer, nullable=True)        # 0-100, over the last 14 days
     engaged_at = Column(DateTime(timezone=True), nullable=True, index=True)
     engaged_by = Column(JSON, nullable=True)           # the latest things they did: [{"what", "at"}]
+    brief = Column(JSON, nullable=True)                # the email agent's hand-over: {"wants", "told", "next", "at"} (mail/agent.py)
 
 
 class PhoneNumber(Base):
@@ -904,6 +905,20 @@ class EmailClick(Base):
     score = Column(Integer, nullable=True)
     reasons = Column(JSON, nullable=True)
     settled_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
+
+class EmailAgentAction(Base):
+    """What the email agent decided for one lead (mail/agent.py): an email (job_id), a hand-over to the team, wait or stop, and why."""
+    __tablename__ = "email_agent_actions"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
+    contact_id = Column(String(36), ForeignKey("contacts.id", ondelete="CASCADE"), index=True)
+    action = Column(String(10), nullable=False)          # email, handover, wait, stop, failed
+    why = Column(String(300), nullable=True)
+    job_id = Column(String(36), nullable=True)
+    language = Column(String(5), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 class IntegrationEvent(Base):

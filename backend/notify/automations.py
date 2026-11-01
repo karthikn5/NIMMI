@@ -75,7 +75,7 @@ DEFAULTS: dict[str, dict] = {
 LABELS = {"chat_lead": "After a chat", "call_lead": "After a call", "goal_met": "Goal met on a call",
           "call_missed": "Couldn't reach them", "handoff_done": "After your team helps", "broadcast": "Bulk email",
           "after_call": "After a call, by the AI", "during_call": "Sent during a call", "callback_booked": "Call-back booked",
-          "voicemail": "Voicemail left", "missed_chat": "Missed live chat", "chat_copy": "Copy of the chat", "lead_email": "New lead from another place", "journey": "A journey", "question_answer": "The answer to their question", "rsvp_reminder": "Event reminder"}
+          "voicemail": "Voicemail left", "missed_chat": "Missed live chat", "chat_copy": "Copy of the chat", "lead_email": "New lead from another place", "journey": "A journey", "question_answer": "The answer to their question", "rsvp_reminder": "Event reminder", "agent": "The email agent"}
 
 
 def _normalize(saved: Optional[dict], default: dict) -> dict:
@@ -279,7 +279,7 @@ async def _reached_goal_since(db, job: EmailJob) -> bool:
 async def process_due() -> None:
     """Send queued customer emails whose time has come (called by the background loop)."""
     from notify.events import _once  # the delivery log, one row per (kind, ref)
-    from mail import after_call, broadcasts, compose, consent, journeys, outbox, small
+    from mail import after_call, agent, broadcasts, compose, consent, journeys, outbox, small
     now = datetime.utcnow()
     async with async_session() as db:
         jobs = (await db.execute(select(EmailJob).where(EmailJob.status == "queued", EmailJob.send_at <= now)  # bulk email after everything else
@@ -310,11 +310,16 @@ async def process_due() -> None:
                 if stop:
                     job.status, job.error = "cancelled", stop
                     continue
+            elif job.automation == "agent":
+                stop = await agent.hold_back(db, job)
+                if stop:
+                    job.status, job.error = "cancelled", stop
+                    continue
             elif job.broadcast_id and job.bot_id:
                 if not await consent.has(db, job.bot_id, job.to_email):
                     job.status, job.error = "cancelled", "They no longer agree to offers and news"
                     continue
-            elif job.automation != "rsvp_reminder" and not job.broadcast_id:
+            elif job.automation not in ("rsvp_reminder",) and not job.broadcast_id:
                 key = job.automation or job.kind.split("#")[0]
                 auto = (await setup.automations_for(db, job.user_id, bot_id, settings)).get(key)
                 if not auto or not auto["enabled"]:
@@ -350,7 +355,7 @@ async def process_due() -> None:
                 db.add_all(tracked)
             else:
                 plain = job.body
-                if job.automation in ("journey", "broadcast"):  # so it can tell who clicked
+                if job.automation in ("journey", "broadcast", "agent"):  # so it can tell who clicked
                     plain, tracked = journeys.with_tracked_links(job)
                     db.add_all(tracked)
                 text = f"{plain}\n\n--\n{sender.name}\nUnsubscribe: {link}"

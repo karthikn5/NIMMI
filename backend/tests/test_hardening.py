@@ -3,7 +3,6 @@ import base64
 import hashlib
 import hmac
 import os
-import sqlite3
 import time
 from collections import defaultdict
 from xml.etree import ElementTree as ET
@@ -324,12 +323,15 @@ def test_one_address_gets_an_automation_once_a_day(client, make_user, run):
     assert run(queued) == 1
 
 
-def test_customer_api_keys_are_encrypted_at_rest(client, make_user):
-    import os
+def test_customer_api_keys_are_encrypted_at_rest(client, make_user, run):
+    from sqlalchemy import text
     u = make_user()
     bot = u.bot()
     client.post(f"/api/bots/{bot}/config", json={"aiApiKey": "sk-very-secret-key"}, headers=u.h())
-    raw = sqlite3.connect(os.environ["SQLITE_PATH"]).execute("select ai_api_key from bots where bot_id = ?", (bot,)).fetchone()[0]
+    async def stored():
+        async with async_session() as db:
+            return (await db.execute(text("select ai_api_key from bots where bot_id = :bot"), {"bot": bot})).scalar_one()
+    raw = run(stored)
     assert raw.startswith("enc:v1:") and "sk-very-secret-key" not in raw
     assert client.get(f"/api/bots/{bot}/config", headers=u.h()).json()["has_ai_api_key"] is True
 

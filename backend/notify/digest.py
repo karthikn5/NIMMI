@@ -38,14 +38,20 @@ async def figures(db, owner_id: str, now: Optional[datetime] = None) -> dict:
         Meeting.user_id == owner_id, Meeting.status.in_(("confirmed", "requested")), Meeting.starts_at >= end, Meeting.starts_at < ends))).scalar() or 0
     replies = (await db.execute(select(func.count()).select_from(EmailThread).where(EmailThread.user_id == owner_id, EmailThread.status == "open"))).scalar() or 0
     drafts = (await db.execute(select(func.count()).select_from(EmailJob).where(EmailJob.user_id == owner_id, EmailJob.status == "draft"))).scalar() or 0
+    from backend.models import EmailAgentAction
+    agent = dict((await db.execute(select(EmailAgentAction.action, func.count()).where(EmailAgentAction.user_id == owner_id, EmailAgentAction.created_at >= start,
+                                                                                     EmailAgentAction.created_at < end).group_by(EmailAgentAction.action))).all())
     questions = (await db.execute(select(func.count()).select_from(KnowledgeGap).where(KnowledgeGap.bot_id.in_(bots), KnowledgeGap.status == "open"))).scalar() or 0 if bots else 0
-    return {"leads": leads, "calls": calls, "hot": hot, "meetings": meetings, "replies": replies, "drafts": drafts, "questions": questions}
+    return {"leads": leads, "calls": calls, "hot": hot, "meetings": meetings, "replies": replies, "drafts": drafts, "questions": questions,
+            "agent_emails": agent.get("email", 0), "agent_handovers": agent.get("handover", 0)}
 
 
 def lines_of(f: dict) -> list[str]:
     def n(count: int, one: str, many: str) -> str:
         return f"{count} {one if count == 1 else many}"
-    came = [(f["leads"], n(f["leads"], "new lead", "new leads")), (f["calls"], n(f["calls"], "call", "calls")), (f["hot"], n(f["hot"], "hot lead", "hot leads"))]
+    came = [(f["leads"], n(f["leads"], "new lead", "new leads")), (f["calls"], n(f["calls"], "call", "calls")), (f["hot"], n(f["hot"], "hot lead", "hot leads")),
+            (f.get("agent_emails", 0), "the email agent wrote " + n(f.get("agent_emails", 0), "email", "emails")),
+            (f.get("agent_handovers", 0), "the email agent handed you " + n(f.get("agent_handovers", 0), "lead", "leads"))]
     waiting = [(f["meetings"], n(f["meetings"], "meeting today", "meetings today")), (f["replies"], n(f["replies"], "reply to answer", "replies to answer")),
                (f["drafts"], n(f["drafts"], "email to approve", "emails to approve")), (f["questions"], n(f["questions"], "question to answer", "questions to answer"))]
     out = []

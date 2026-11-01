@@ -26,8 +26,11 @@ os.environ.update({
     "CLOUDFLARE_API_TOKEN": "", "CLOUDFLARE_ZONE_ID": "", "SITES_EDGE_KEY": "edge-key",
     "VOICE_CHECK_PUBLIC_URL": "false",
 })
+if os.getenv("TEST_DATABASE_URL"):  # the same tests on Postgres, as on live: dev-scripts/postgres
+    del os.environ["SQLITE_PATH"]
+    os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
 
-HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE =os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 

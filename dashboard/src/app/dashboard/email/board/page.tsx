@@ -64,6 +64,16 @@ function LeadDialog({ lead, board, onClose, save, onChanged }: { lead: Lead; boa
                     <span className="text-xs text-stone-500">Tags</span>
                     <div className="mt-1"><PhraseInput keepCase value={tags} onChange={setTags} label="Tags" placeholder="Add a tag" /></div>
                 </div>
+                {lead.brief && (
+                    <div className="border-t border-line pt-3 text-[13px]">
+                        <span className="text-xs text-stone-500">The email agent&apos;s hand-over</span>
+                        <dl className="mt-1 space-y-1">
+                            {([["Wants", lead.brief.wants], ["Was told", lead.brief.told], ["Next", lead.brief.next]] as const).filter(([, v]) => v).map(([k, v]) => (
+                                <div key={k} className="flex gap-2"><dt className="text-stone-500 w-16 shrink-0">{k}</dt><dd>{v}</dd></div>
+                            ))}
+                        </dl>
+                    </div>
+                )}
                 {lead.email && <Offers lead={lead} onChanged={onChanged} />}
             </div>
         </Dialog>

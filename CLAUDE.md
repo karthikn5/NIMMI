@@ -440,12 +440,21 @@ only on the owner's machines): @.claude/private-notes.md
   LeadSquared (`leadsquared_activity`, ProspectActivity.svc/Create by EmailAddress, keys in headers), drained by the scheduler with retries (1, 5, 30, 120, 360 min,
   6 tries) and logged in Integrations > Activity. `mail/reports.py` (`/api/email/reports`): a reply or an unsubscribe goes to the last email that address got within a
   week; DMARC through `address.dmarc_of` (the organisation's record when a subdomain has none).
+- The email agent (phase 7, `mail/agent.py`, `agent_api.py`, Growth up): per assistant `settings.agent` (level off / drafts / morning / auto, `per_day`), off until turned on. `tick`
+  claims each run: the morning queue at 8, the others hourly 9 to 7 India time. `_why_not` decides in code who it leaves alone (customers, lost, not interested, stopped, on a journey, a reply
+  waiting; quiet under 2 days; over 30 days without a marketing consent; 3 emails a month, 2 unanswered; a stop rests 90 days, a hand-over 7, a wait or failure 1). `decide`: one model, JSON
+  (email, handover, wait, stop), asked twice if unreadable; then `keep_known_numbers`, `designs.written_in` with one rewrite, `replies._checked` with rules of its own. Code works out the
+  day counts (models got them wrong). A held email is a draft on every level. A hand-over: `Contact.brief`, a `person` to-do, the team's email once a day. Drafts: `EmailJob` automation
+  "agent", `/api/email/agent/...`, top of Email > Drafts, dropped after 7 days (a morning's at midnight). `ai.METER` records tokens per model call. Real models: `dev-scripts/email/agent_eval.py`
+  (50 leads, tuned on them: 50/50 right steps, nothing invented, Rs 0.117 an email, 3.1 s).
+- Before a push that changes tables or queries: `dev-scripts/postgres` (README there): the same tests on a local Postgres (`TEST_DATABASE_URL`), and the upgrade from what's live compared
+  with a fresh schema. `init_db` prints errors and goes on, and SQLite accepts things Postgres doesn't.
 - A reply address must take mail (`address.reply_address_works`): on live, `admin@nimmai.in` was saved, a domain that doesn't exist.
 - Tests: `tests/test_mail_foundation.py`, `test_mail_designs.py`, `test_after_call_email.py`, `test_email_replies.py`,
   `test_call_emails.py`, `test_email_pages.py`, `test_small_emails.py`, `test_lead_intake.py`, `test_journeys.py`, `test_question_answers.py`, `test_broadcasts.py`,
-  `test_clicks.py`, `test_engagement.py`, `test_outbox.py`, `test_reports.py`;
+  `test_clicks.py`, `test_engagement.py`, `test_outbox.py`, `test_reports.py`, `test_email_agent.py`;
   browser: `dev-scripts/ui-checks/email_ui.mjs`, `email_design_ui.mjs`, `email_drafts_ui.mjs`, `email_inbox_ui.mjs`, `email_pages_ui.mjs`, `email_leads_ui.mjs`,
-  `email_journeys_ui.mjs`, `email_bulk_ui.mjs`, `email_reports_ui.mjs` with `email_seed.py`, `dev-scripts/email/bulk_probe.py` (1,000 people, run the trial with `--workers 2`) and
+  `email_journeys_ui.mjs`, `email_bulk_ui.mjs`, `email_reports_ui.mjs` with `email_seed.py`, `email_agent_ui.mjs` (+ `email_agent_seed.py`), `dev-scripts/email/bulk_probe.py` (1,000 people, run the trial with `--workers 2`) and
   `dev-scripts/email/fake_resend.py` (domains, keys, sending, received emails, and Resend's signed reports back to the backend).
 - Backups (`ops/backup.py`) never run with LOCAL_DEV: a developer's .env can hold the live storage keys.
 

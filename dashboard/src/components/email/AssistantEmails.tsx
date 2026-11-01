@@ -6,7 +6,7 @@ import { ChevronDown, Pencil } from "lucide-react";
 import { Button, Card, Select, Skeleton, Status, Switch, cn, useToast } from "@/components/ui";
 import { SequenceEditor, summary } from "@/components/integrations/EmailPanel";
 import { apiJson } from "@/lib/api";
-import { REPLY_MODES, type AfterCallMode, type AssistantEmails as Setup, type EmailKind, type ReplyMode, type Senders } from "@/lib/email";
+import { REPLY_MODES, type AfterCallMode, type AssistantEmails as Setup, type EmailKind, type ReplyMode, type Senders, AGENT_LEVELS, DRAFTS_CHANGED } from "@/lib/email";
 import { AUTOMATIONS, type Automation, type AutomationKey, type EmailStep } from "@/lib/integrations";
 import { useLimits } from "@/lib/plan";
 import { useApi } from "@/lib/useApi";
@@ -36,6 +36,7 @@ export function AssistantEmails() {
     const [draft, setDraft] = useState<EmailStep[] | null>(null);
     const [saving, setSaving] = useState(false);
     const [editing, setEditing] = useState<EmailKind | null>(null);
+    const [looking, setLooking] = useState(false);
 
     const assistants = senders.data?.assistants ?? [];
     useEffect(() => { if (!botId && assistants[0]) setBotId(assistants[0].bot_id); }, [botId, assistants]);
@@ -147,6 +148,53 @@ export function AssistantEmails() {
     };
 
     const kind = s?.kinds.find((k) => k.kind === editing);
+    const lookNow = async () => {
+        setLooking(true);
+        try {
+            const r = await apiJson<{ looked_at: number; actions: { action: string }[] }>(`/api/email/agent/${botId}/run`, { method: "POST", json: {} });
+            const wrote = r.actions.filter((x) => x.action === "email").length, handed = r.actions.filter((x) => x.action === "handover").length;
+            toast(r.looked_at === 0 ? "Nobody to follow up just now" : [wrote && `${wrote} ${wrote === 1 ? "email" : "emails"} written`, handed && `${handed} handed to you`,
+                r.looked_at - wrote - handed > 0 && `${r.looked_at - wrote - handed} left for now`].filter(Boolean).join(", "));
+            window.dispatchEvent(new Event(DRAFTS_CHANGED));
+        } catch (e) {
+            toast((e as Error).message);
+        } finally {
+            setLooking(false);
+        }
+    };
+    const emailAgent = () => {
+        if (!s?.settings.agent) return null;
+        const a = s.settings.agent;
+        const about = AGENT_LEVELS.find((l) => l.value === a.level)?.about;
+        return (
+            <li className="border-t border-line px-5 py-3.5">
+                <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex-1 min-w-48 pl-[27px]">
+                        <span className="flex flex-wrap items-center gap-x-2.5">
+                            <span className="text-sm">The email agent</span>
+                            {growth ? <Status tone={a.level === "off" ? "neutral" : "good"}>{AGENT_LEVELS.find((l) => l.value === a.level)?.label ?? a.level}</Status>
+                                : <span className="text-xs text-stone-500">Comes with Growth</span>}
+                        </span>
+                        <span className="block text-[13px] text-stone-500 mt-0.5">
+                            Follows up with leads who went quiet after their enquiry: a short email that answers what they left open, or a brief to your team when they look
+                            ready. Never to customers, people on a journey, or anyone who stopped your emails. {about}
+                        </span>
+                    </div>
+                    <Select aria-label="How much the email agent does alone" className="w-48" value={growth ? a.level : "off"} disabled={!growth || saving}
+                            onChange={(e) => setSetting("agent", { level: e.target.value })}>
+                        {AGENT_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+                    </Select>
+                    {a.level !== "off" && growth && <>
+                        <Select aria-label="The email agent's emails a day" className="w-40" value={a.per_day} disabled={saving}
+                                onChange={(e) => setSetting("agent", { per_day: Number(e.target.value) })}>
+                            {[5, 10, 20, 50, 100].map((n) => <option key={n} value={n}>Up to {n} a day</option>)}
+                        </Select>
+                        <Button size="sm" disabled={saving || looking} onClick={lookNow}>{looking ? "Looking…" : "Look now"}</Button>
+                    </>}
+                </div>
+            </li>
+        );
+    };
     const fastCall = () => {
         if (!s?.settings.fast_call) return null;
         const pro = plan ? plan.schedule : limits?.includes?.schedule ?? true;
@@ -314,6 +362,7 @@ export function AssistantEmails() {
                 <ul>
                     {row("chat_lead", "Welcome email", "When someone gives their email in a chat. It goes when the chat goes quiet.", false, true)}
                     {afterCall()}
+                    {emailAgent()}
                     {duringCall()}
                     {fastCall()}
                     {replies()}

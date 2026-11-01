@@ -126,6 +126,7 @@ export interface AssistantEmails {
         replies: { mode: ReplyMode };
         during_call: { enabled: boolean };
         fast_call?: { enabled: boolean };
+        agent?: { level: AgentLevel; per_day: number };
         lead_email: { enabled: boolean }; lead_call: { enabled: boolean; minutes: number };
         callback_booked: { enabled: boolean }; voicemail: { enabled: boolean }; missed_chat: { enabled: boolean; minutes: number };
         chat_copy: { enabled: boolean }; meeting: { thanks: boolean; missed: boolean };
@@ -177,6 +178,7 @@ export interface DraftDetail extends Draft {
 export interface Drafts {
     items: Draft[];
     total: number;
+    agent?: number;               // the email agent's, waiting too (listed by /api/email/agent/drafts)
     suggest: { bot_id: string; bot_name: string; approved: number; unchanged: number }[];
 }
 
@@ -334,6 +336,7 @@ export interface Lead {
     source: string | null;
     last_at: string | null;
     agreed: boolean;              // to offers and news
+    brief?: { wants: string; told: string; next: string; at: string } | null;  // the email agent's hand-over
 }
 
 export interface Board { stages: string[]; team: TeamPerson[]; total: number; leads: Lead[] }
@@ -430,4 +433,29 @@ export const BULK_STATUS: Record<BulkStatus, { label: string; tone: "good" | "ne
     draft: { label: "Draft", tone: "neutral" }, scheduled: { label: "Scheduled", tone: "neutral" }, testing: { label: "Testing subjects", tone: "good" },
     sending: { label: "Going out", tone: "good" }, paused: { label: "Paused", tone: "warn" }, sent: { label: "Sent", tone: "good" }, cancelled: { label: "Cancelled", tone: "neutral" },
 };
+
+/* The email agent (backend mail/agent.py, mail/agent_api.py). */
+export type AgentLevel = "off" | "drafts" | "morning" | "auto";
+
+export const AGENT_LEVELS: { value: AgentLevel; label: string; about: string }[] = [
+    { value: "off", label: "Off", about: "" },
+    { value: "drafts", label: "Drafts only", about: "Each email it writes waits in Drafts for your OK." },
+    { value: "morning", label: "Morning approval", about: "At 8 am it writes the day's emails; what you approve goes, the rest is dropped at night." },
+    { value: "auto", label: "Automatic", about: "Its emails go by themselves, within the limits. Anything a check doubts waits for you." },
+];
+
+export interface AgentDraft {
+    id: string;
+    bot_id: string;
+    bot_name: string | null;
+    to: string;
+    name: string | null;
+    subject: string;
+    body: string;
+    why: string | null;           // its reason, for the team
+    note: string | null;          // why a check held it for a person
+    level: AgentLevel | null;
+    language: string | null;
+    created_at: string | null;
+}
 

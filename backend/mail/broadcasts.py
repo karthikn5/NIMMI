@@ -69,6 +69,9 @@ def clean_rules(rules: Optional[dict]) -> dict:
     tags = [str(t).strip()[:40] for t in (rules.get("tags") or []) if str(t).strip()][:20]
     if tags:
         out["tags"] = tags
+    contains = str(rules.get("contains") or "").strip()[:60]
+    if contains:
+        out["contains"] = contains  # in what they told the business: "2BHK", "Anna Nagar"
     for key in ("active_days", "engaged_days"):
         try:
             days = int(rules.get(key) or 0)
@@ -105,11 +108,16 @@ async def people(db, owner_id: str, bot_id: str, rules: dict, now: Optional[date
     engaged = await _engaged(db, owner_id, bot_id, now - timedelta(days=rules["engaged_days"])) if rules.get("engaged_days") else None
     active = schedule.utc(now) - timedelta(days=rules["active_days"]) if rules.get("active_days") else None
     wanted = set(rules.get("tags") or [])
+    contains = (rules.get("contains") or "").lower()
+
+    def said(c: Contact) -> str:
+        return " ".join([c.name or "", c.notes or "", *(str(v) for v in (c.details or {}).values())]).lower()
 
     def fits(c: Contact) -> bool:
         return ((not rules.get("statuses") or c.lead_status in rules["statuses"]) and (not rules.get("stages") or (c.stage or "new") in rules["stages"])
                 and (not rules.get("sources") or source_of(c) in rules["sources"]) and (not wanted or bool(wanted & set(c.tags or [])))
-                and (active is None or (last_touch(c) or active) > active) and (engaged is None or c.email.lower() in engaged))
+                and (active is None or (last_touch(c) or active) > active) and (engaged is None or c.email.lower() in engaged)
+                and (not contains or contains in said(c)))
     matched, seen = [], set()
     for c in rows:
         key = c.email.strip().lower()

@@ -107,7 +107,7 @@ async def _call(ctx: AuthContext, key: AgentKey, params: dict) -> dict:
     t = registry.TOOLS.get(name)
     if t is None or name in PANEL_ONLY or t.internal or ctx.role not in t.roles:
         return {"content": [{"type": "text", "text": f"There is no tool named {name}."}], "isError": True}
-    tc = registry.ToolContext(ctx=ctx, run_id=f"mcp:{key.id}", thread_id=None, screen={"id": "mcp"})
+    tc = registry.ToolContext(ctx=ctx, run_id=f"mcp:{key.id[:32]}", thread_id=None, screen={"id": "mcp"})
     outcome = await registry.run(tc, name, params.get("arguments") or {})
     text = outcome.text
     if outcome.proposed:

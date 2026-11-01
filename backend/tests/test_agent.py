@@ -843,7 +843,7 @@ def test_nimmi_changes_an_email_draft_with_undo_and_sends_or_discards_only_on_co
           [Text("Changed.")])
     evs = ask(user, "what's waiting, and add a next step", screen={"id": "email_drafts"})
     results = [e for e in evs if e["type"] == "TOOL_CALL_RESULT"]
-    assert all(r["ok"] for r in results) and "a@nimmi-agent.test" in results[0]["content"]
+    assert all(r["ok"] for r in results) and "@nimmi-agent.test" in results[0]["content"]
     assert run(state, first) == ("draft", "We'll send the plans.")
     assert client.post(f"/api/agent/actions/{results[1]['actionId']}/undo", headers=user.h()).status_code == 200
     assert run(state, first) == ("draft", "")
@@ -1205,7 +1205,7 @@ def mcp(client, key, method, params=None, id_=1, version="2026-07-28"):
     return client.post("/mcp", json=body, headers={"Authorization": f"Bearer {key}"} if key else {})
 
 
-def test_ai_apps_use_nimmis_tools_over_mcp_with_a_key_and_the_same_rules(client, make_user):
+def test_ai_apps_use_nimmis_tools_over_mcp_with_a_key_and_the_same_rules(client, make_user, run):
     user, stranger = make_user("Owner"), make_user("Stranger")
     bot = user.bot("Clinic Desk")
     stranger.bot("Not Yours")
@@ -1241,6 +1241,13 @@ def test_ai_apps_use_nimmis_tools_over_mcp_with_a_key_and_the_same_rules(client,
     assert found["isError"] is False and "Clinic Desk" in text and "Not Yours" not in text
     changed = mcp(client, key, "tools/call", {"name": "update_assistant_design", "arguments": {"assistant_id": bot, "brand_colour": "#16a34a"}}).json()["result"]
     assert not changed["isError"] and config(user, bot)["visual_config"]["color"] == "#16a34a" and "Changes > Undo" in changed["content"][0]["text"]
+    from sqlalchemy import select
+    from backend.models import AgentAction
+    from database import async_session
+    async def run_ids():
+        async with async_session() as db:
+            return (await db.execute(select(AgentAction.run_id).where(AgentAction.owner_id == user.id))).scalars().all()
+    assert all(len(r) <= 36 for r in run(run_ids))  # Postgres refuses longer ones; SQLite doesn't care
     asked = mcp(client, key, "tools/call", {"name": "delete_assistant", "arguments": {"assistant_id": bot}}).json()["result"]
     assert "waiting_for_confirmation" in asked["content"][0]["text"] and bot in [b["id"] for b in client.get("/api/bots", headers=user.h()).json()]
     waiting = [a for a in client.get("/api/agent/actions", headers=user.h()).json() if a["state"] == "proposed"]

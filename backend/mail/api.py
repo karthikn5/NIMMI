@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import func, update
+from sqlalchemy import func, literal_column, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -226,9 +226,9 @@ async def list_suppressions(q: str = "", reason: str = "", offset: int = 0, limi
     base = [EmailUnsubscribe.user_id == ctx.owner_id]
     if q.strip():
         base.append(func.lower(EmailUnsubscribe.email).like(f"%{q.strip().lower()}%"))
-    counts = dict((await db.execute(select(func.coalesce(EmailUnsubscribe.reason, "unsubscribed"), func.count())
-                                    .where(*base).group_by(func.coalesce(EmailUnsubscribe.reason, "unsubscribed")))).all())
-    where = base + ([func.coalesce(EmailUnsubscribe.reason, "unsubscribed") == reason] if reason else [])
+    why = func.coalesce(EmailUnsubscribe.reason, literal_column("'unsubscribed'"))  # written into the query: Postgres sees two parameters as two different expressions
+    counts = dict((await db.execute(select(why, func.count()).where(*base).group_by(why))).all())
+    where = base + ([why == reason] if reason else [])
     rows = (await db.execute(select(EmailUnsubscribe).where(*where).order_by(EmailUnsubscribe.created_at.desc())
                              .offset(max(0, offset)).limit(min(max(limit, 1), 100)))).scalars().all()
     names = {b: n for b, n in (await db.execute(select(Bot.bot_id, Bot.bot_name).where(Bot.user_id == ctx.owner_id))).all()}
@@ -286,7 +286,7 @@ class SetupIn(BaseModel):
     settings: Optional[dict] = None     # {"after_call": {...}, "welcome": {...}}
 
 
-GROWTH_SETTINGS = {"after_call", "replies", "journeys", "question_answer", "consent", "fast_call", "during_call", "lead_email", "lead_call", "callback_booked", "voicemail", "missed_chat", "chat_copy"}
+GROWTH_SETTINGS = {"after_call", "replies", "journeys", "question_answer", "consent", "fast_call", "agent", "during_call", "lead_email", "lead_call", "callback_booked", "voicemail", "missed_chat", "chat_copy"}
 
 
 @router.put("/setup/{bot_id}")
@@ -314,13 +314,19 @@ async def save_setup(bot_id: str, data: SetupIn, ctx: AuthContext = Depends(requ
         if kind not in setup.SETTINGS or not isinstance(values, dict):
             raise HTTPException(status_code=400, detail="Unknown email setting")
         allowed = {k: v for k, v in values.items() if k in setup.SETTINGS[kind] and k not in ("approved", "approved_unchanged", "suggested")}
-        turning_on = any(v not in (False, "off", 0, None, []) for k, v in allowed.items() if k in ("enabled", "inbound", "outbound", "mode"))
+        turning_on = any(v not in (False, "off", 0, None, []) for k, v in allowed.items() if k in ("enabled", "inbound", "outbound", "mode", "level"))
         if kind in GROWTH_SETTINGS and turning_on:
             await plans.require_feature(db, bot.bot_id, "email_alerts")
             if not (await senders.sender_for(db, ctx.owner_id, bot.bot_id)).reply_to:
                 raise HTTPException(status_code=400, detail="Add where replies go (Email > Settings) so customers can answer you")
         if kind == "after_call" and any(allowed.get(d) not in (None, "off", "review", "auto") for d in ("inbound", "outbound")):
             raise HTTPException(status_code=400, detail="The after-call email is off, review first, or automatic")
+        if kind == "agent":
+            from mail import agent as email_agent
+            if allowed.get("level", "off") not in email_agent.LEVELS:
+                raise HTTPException(status_code=400, detail="The email agent is off, drafts, morning or automatic")
+            if "per_day" in allowed and not (isinstance(allowed["per_day"], int) and 1 <= allowed["per_day"] <= 200):
+                raise HTTPException(status_code=400, detail="Choose between 1 and 200 emails a day")
         if kind == "fast_call" and allowed.get("enabled"):
             await plans.require_feature(db, bot.bot_id, "schedule")  # calls are Pro
         if kind == "consent" and "words" in allowed and not 5 <= len(str(allowed["words"] or "").strip()) <= 200:
@@ -488,11 +494,13 @@ async def _suggestions(db: AsyncSession, owner_id: str) -> list[dict]:
 
 @router.get("/drafts")
 async def list_drafts(limit: int = 50, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
-    mine = [EmailJob.user_id == ctx.owner_id, EmailJob.status == "draft"]
+    mine = [EmailJob.user_id == ctx.owner_id, EmailJob.status == "draft", or_(EmailJob.automation.is_(None), EmailJob.automation != "agent")]
     rows = (await db.execute(select(EmailJob).where(*mine).order_by(EmailJob.created_at.desc()).limit(min(max(limit, 1), 100)))).scalars().all()
     names = {b: n for b, n in (await db.execute(select(Bot.bot_id, Bot.bot_name).where(Bot.user_id == ctx.owner_id))).all()}
     total = (await db.execute(select(func.count()).select_from(EmailJob).where(*mine))).scalar_one()
-    return {"items": [_draft_json(j, names.get(j.bot_id)) for j in rows], "total": total, "suggest": await _suggestions(db, ctx.owner_id)}
+    agent = (await db.execute(select(func.count()).select_from(EmailJob).where(EmailJob.user_id == ctx.owner_id, EmailJob.status == "draft",
+                                                                                 EmailJob.automation == "agent"))).scalar_one()
+    return {"items": [_draft_json(j, names.get(j.bot_id)) for j in rows], "total": total, "agent": agent, "suggest": await _suggestions(db, ctx.owner_id)}
 
 
 async def _draft_detail(db: AsyncSession, ctx: AuthContext, job: EmailJob) -> dict:

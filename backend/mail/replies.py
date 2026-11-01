@@ -230,14 +230,14 @@ async def _do(thread: EmailThread, name: Optional[str], action: dict) -> Optiona
     return told
 
 
-async def _checked(bot: Bot, business: str, answer: str, code: str, sources: str, their_text: str) -> tuple[str, Optional[str]]:
+async def _checked(bot: Bot, business: str, answer: str, code: str, sources: str, their_text: str, rules: str = "") -> tuple[str, Optional[str]]:
     """The answer after its checks, and why it should wait for a person (None: it can go)."""
     answer = compose.keep_known_numbers(re.sub(r"[*`]", "", answer).strip(), sources)
     if not answer:
         return "", "The AI's answer had numbers it couldn't back up, so a person should write this one"
     if not designs.written_in(answer, code):
         return answer, "The AI didn't write this in the language of their email, so a person should read this one"
-    raw = await _ask(bot, CHECK.format(business=business), f"The answer:\n{answer}\n\nTheir email:\n{_boxed(their_text)}\n\n{sources[:CONTEXT_CHARS]}")
+    raw = await _ask(bot, CHECK.format(business=business) + (f"\n{rules}" if rules else ""), f"The answer:\n{answer}\n\nTheir email:\n{_boxed(their_text)}\n\n{sources[:CONTEXT_CHARS]}")
     try:
         check = _read_json(raw)
     except ValueError:

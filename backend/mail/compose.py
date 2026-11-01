@@ -30,15 +30,16 @@ CHAT_MESSAGES = 24
 _running = False
 
 
-async def ask_model(bot: Bot, system: str, user: str, max_tokens: int, seconds: float) -> str:
+async def ask_model(bot: Bot, system: str, user: str, max_tokens: int, seconds: float, json_mode: bool = False) -> str:
     """One answer for an email. When Gemini is slow (20 s for one word, Nov 2026) the time can run out before the backups get a
-    turn, so a second try starts with them."""
+    turn, so a second try starts with them. `json_mode`: Gemini answers with valid JSON only."""
     from voice import llm
+    extra = {"json_mode": True} if json_mode else {}
     try:
-        return await asyncio.wait_for(llm._complete(bot, system, user, max_tokens=max_tokens), timeout=seconds)
+        return await asyncio.wait_for(llm._complete(bot, system, user, max_tokens=max_tokens, **extra), timeout=seconds)
     except asyncio.TimeoutError:
         logger.info(f"The email model was slow for {bot.bot_id}: trying the backups")
-        return await asyncio.wait_for(llm._complete(bot, system, user, max_tokens=max_tokens, urgent=True), timeout=seconds)
+        return await asyncio.wait_for(llm._complete(bot, system, user, max_tokens=max_tokens, urgent=True, **extra), timeout=seconds)
 
 
 def needs_writing(kind: str) -> bool:

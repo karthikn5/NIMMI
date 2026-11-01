@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import { Button, Card, EmptyState, Notice, Skeleton, Status, useToast } from "@/components/ui";
+import { AgentDrafts } from "@/components/email/AgentDrafts";
 import { DraftReview } from "@/components/email/DraftReview";
 import { apiJson } from "@/lib/api";
 import { DRAFTS_CHANGED, type Draft, type Drafts } from "@/lib/email";
@@ -52,7 +53,8 @@ function DraftsPage() {
     if (!list.data) return <Skeleton className="h-64" />;
     const { items, total, suggest } = list.data;
     return (
-        <>
+        <div className="space-y-5">
+            <AgentDrafts />
             {suggest.map((s) => (
                 <Notice key={s.bot_id} title={`${s.bot_name}'s emails could go automatically`}
                         action={<div className="flex gap-2">
@@ -63,7 +65,7 @@ function DraftsPage() {
                     the ones the AI&apos;s check isn&apos;t sure of, or from unhappy callers, would still wait here.
                 </Notice>
             ))}
-            {items.length === 0 ? (
+            {items.length === 0 && list.data.agent ? null : items.length === 0 ? (
                 <Card>
                     <EmptyState title="No emails waiting" body={<>
                         When an assistant&apos;s email after a call is set to Review first, each one waits here for your OK.
@@ -103,7 +105,7 @@ function DraftsPage() {
                 <DraftReview id={open} onClose={() => { show(null); void reload(); }}
                              onDone={() => { show(null); void reload(); window.dispatchEvent(new Event(DRAFTS_CHANGED)); }} />
             )}
-        </>
+        </div>
     );
 }
 

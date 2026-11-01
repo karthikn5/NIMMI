@@ -13,7 +13,7 @@ from sqlalchemy.future import select
 
 import main
 from database import async_session
-from backend.models import (Bot, CallbackJob, CallLog, Campaign, Consent, Contact, Conversation, DncEntry, EmailBroadcast, EmailJob,
+from backend.models import (Bot, CallbackJob, CallLog, Campaign, Consent, Contact, Conversation, DncEntry, EmailAgentAction, EmailBroadcast, EmailJob,
                             EmailRsvp, EmailSegment, EmailThread, EmailUnsubscribe, Journey, JourneyRun, KnowledgeGap, LeadSource, Meeting,
                             Message, PhoneNumber, QuestionAsker, SavedReply, ScheduleSettings, TeamMember, TelephonyAccount,
                             ThreadMessage)
@@ -22,14 +22,15 @@ MARK = "MARKER-A-" + uuid.uuid4().hex[:6]
 
 OWNED = [Bot, Conversation, Message, CallLog, Campaign, CallbackJob, PhoneNumber, TelephonyAccount, EmailJob,
          EmailBroadcast, TeamMember, DncEntry, KnowledgeGap, SavedReply, Contact, Meeting, ScheduleSettings,
-         EmailThread, ThreadMessage, EmailUnsubscribe, LeadSource, Journey, JourneyRun, QuestionAsker, EmailSegment, Consent, EmailRsvp]
+         EmailThread, ThreadMessage, EmailUnsubscribe, LeadSource, Journey, JourneyRun, QuestionAsker, EmailSegment, Consent, EmailRsvp,
+         EmailAgentAction]
 
 
 async def _seed(owner: str, bot_id: str) -> dict:
     ids = {k: str(uuid.uuid4()) for k in ("conversation_id", "call_id", "campaign_id", "number_id", "account_id",
                                           "job_id", "email_job_id", "broadcast_id", "member_id", "entry_id",
                                           "gap_id", "reply_id", "contact_id", "meeting_id", "thread_id", "message_id", "row_id",
-                                          "journey_id", "segment_id")}
+                                          "journey_id", "segment_id", "agent_job_id")}
     async with async_session() as db:
         bot = (await db.execute(select(Bot).where(Bot.bot_id == bot_id))).scalars().first()
         bot.bot_name, bot.knowledge_base, bot.system_prompt = f"{MARK} bot", f"{MARK} secret knowledge", f"{MARK} prompt"
@@ -73,6 +74,10 @@ async def _seed(owner: str, bot_id: str) -> dict:
             EmailSegment(id=ids["segment_id"], user_id=owner, bot_id=bot_id, name=MARK, rules={}),
             Consent(user_id=owner, bot_id=bot_id, email="a-customer@example.com", source="team", words=MARK),
             EmailRsvp(broadcast_id=ids["broadcast_id"], user_id=owner, email="a-customer@example.com", answer="yes"),
+            EmailJob(id=ids["agent_job_id"], user_id=owner, bot_id=bot_id, kind="agent#20261101000000", ref_id=ids["contact_id"],
+                     to_email="a-customer@example.com", subject=MARK, body=MARK, status="draft", send_at=datetime.utcnow(), automation="agent", step=1,
+                     merge_data={"name": MARK, "why": MARK}),
+            EmailAgentAction(user_id=owner, bot_id=bot_id, contact_id=ids["contact_id"], action="email", why=MARK, job_id=ids["agent_job_id"]),
         ])
         await db.flush()
         db.add_all([
@@ -192,7 +197,10 @@ def test_no_endpoint_shows_or_changes_another_workspaces_data(client, make_user,
         if path in ACTIONS:
             path = path.replace("{action}", ACTIONS[path])
         for name in re.findall(r"\{(\w+)\}", path):
-            value = ids["email_job_id"] if (name == "job_id" and "/email/" in path) else ids.get(name, "x")
+            if name == "job_id" and "/email/" in path:
+                value = ids["agent_job_id"] if "/email/agent/" in path else ids["email_job_id"]
+            else:
+                value = ids.get(name, "x")
             path = path.replace("{" + name + "}", value)
         for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
             tried += 1
@@ -205,7 +213,7 @@ def test_no_endpoint_shows_or_changes_another_workspaces_data(client, make_user,
                 leaks.append(f"{method} {route.path} -> {resp.status_code}: {resp.text[:160]}")
 
     after = run(_snapshot, a.id, ids["bot_id"])
-    changed = sorted(k for k in before if before.get(k) != after.get(k))
+    changed = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))  # changed, removed or added
     assert tried > 80
     assert not leaks, "Workspace B could read A's data:\n" + "\n".join(leaks)
     assert not changed, f"Workspace B changed A's data: {changed}"

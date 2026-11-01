@@ -982,14 +982,14 @@ def _clean_value(field: dict, value):
     return text[:200]
 
 
-async def _complete(bot: Bot, system: str, user: str, max_tokens: int = 600, urgent: bool = False) -> str:
+async def _complete(bot: Bot, system: str, user: str, max_tokens: int = 600, urgent: bool = False, json_mode: bool = False) -> str:
     """One non-streamed answer. After a call (summaries) Gemini goes first, saving Groq's per-minute
     allowance for live conversations; during a call (`urgent`, e.g. a transfer brief) Groq goes first."""
     own_key = bot.ai_api_key if (bot.ai_provider or "google") == "google" else None
 
     async def gemini() -> str:
         return await asyncio.to_thread(ai.chat, system, [{"role": "user", "content": user}], model=VOICE_GEMINI_MODEL,
-                                       api_key=own_key, temperature=0.2, max_tokens=max_tokens)
+                                       api_key=own_key, temperature=0.2, max_tokens=max_tokens, json_mode=json_mode)
 
     async def groq() -> str:
         for model in _groq_models():
@@ -998,6 +998,8 @@ async def _complete(bot: Bot, system: str, user: str, max_tokens: int = 600, urg
                     _groq().chat.completions.create, model=model, temperature=0.2, max_tokens=max_tokens,
                     messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
                     **_reasoning_params(model))
+                if getattr(resp, "usage", None):
+                    ai.meter(model, resp.usage.prompt_tokens, resp.usage.completion_tokens)
                 if resp.choices[0].message.content:
                     return resp.choices[0].message.content
             except Exception as e:

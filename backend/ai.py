@@ -10,6 +10,7 @@ Nimmi's key is the fallback. Errors are logged, never shown to visitors.
 import json
 import logging
 import os
+from contextvars import ContextVar
 from typing import Iterator, Optional
 
 import httpx
@@ -74,6 +75,16 @@ def _body(model: str, system: str, messages: list[dict], temperature: float, max
     return body
 
 
+# Token counts as the services report them, for whoever sets a list here (the email agent's evaluation measures cost per email).
+METER: ContextVar[Optional[list]] = ContextVar("ai_meter", default=None)
+
+
+def meter(model: str, tokens_in, tokens_out) -> None:
+    found = METER.get()
+    if found is not None:
+        found.append({"model": model, "in": int(tokens_in or 0), "out": int(tokens_out or 0)})
+
+
 def _text(data: dict) -> str:
     parts = ((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
     return "".join(p.get("text", "") for p in parts if not p.get("thought"))
@@ -94,7 +105,10 @@ def _gemini(system: str, messages: list[dict], *, api_key: Optional[str], models
                     r = client.post(f"{GEMINI_URL}/{model}:generateContent", headers={"x-goog-api-key": key},
                                     json=_body(model, system, messages, temperature, max_tokens, json_mode))
                     if r.status_code == 200:
-                        text = _text(r.json())
+                        data = r.json()
+                        text = _text(data)
+                        used = data.get("usageMetadata") or {}
+                        meter(data.get("modelVersion") or model, used.get("promptTokenCount"), (used.get("candidatesTokenCount") or 0) + (used.get("thoughtsTokenCount") or 0))
                         if text.strip():
                             return text
                         last = f"{model}: empty answer"

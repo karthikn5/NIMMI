@@ -286,6 +286,7 @@ def test_call_me_from_an_email_offers_in_about_five_minutes(client, make_user, r
         booked.append(k)
         return "ok", None
     monkeypatch.setattr(schedule, "book_callback", book)
+    monkeypatch.setattr(schedule, "allowed", lambda *a, **k: True)  # whatever the time the tests run
     user = make_user()
     bot = user.bot()
     token = issue_scoped_token(f"{user.id}|{bot}|asha@example.com", "email_call", 3600)

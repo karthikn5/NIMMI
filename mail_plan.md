@@ -976,6 +976,7 @@ its AI replies). That is small next to ₹2,499.
 10. **Keeping data:** how long to keep email text (12 months by default)? A business postal address in footers? (It is
     needed for customers who email people in the US.)
 11. **OK to read counts from live** (read-only): how many chats and calls collect an email, to size the allowances?
+12. **The email agent's default level** (phase 7): off (today), or Drafts only for new Growth and Pro customers?
 
 ## 11. Status
 
@@ -1121,6 +1122,48 @@ Phase 6, as of 1 Nov 2026 (built locally):
   each switched off once to confirm a test fails; browser `email_reports_ui.mjs`. The test browser itself, which says HeadlessChrome, was rightly filtered as a
   scanner until the check gave it a person's browser identity.
 - Not tried yet: real scanners on real mail (it needs live sending), a real LeadSquared account.
+
+Phase 7, as of 1 Nov 2026 (built; the default level waits for the owner):
+- Built:
+  - **The email agent,** one per assistant, off until someone turns it on (Automations, Growth up). Each hour from 9 am to 7 pm India time (8 am for the morning queue) it
+    looks at leads who went quiet and does one of four things: an email that answers what they left open, a hand-over to the team, wait, or stop.
+  - **Levels:** Drafts only (each email waits for the team); Morning approval (written at 8 am, what the team approves goes, the rest is dropped at midnight); Automatic
+    (goes by itself, within the limits). A daily limit per assistant, 20 to start, 200 at most. Anything a check doubts waits for a person on every level.
+  - **Who it leaves alone, in code, not left to the model:** customers, lost leads, anyone not interested; anyone unsubscribed, bounced or on the do-not-email list; people on
+    a journey; anyone whose reply waits for the team; anyone in touch in the last two days; enquiries over 30 days old without a marketing consent record; more than 3 of its
+    emails in a month, or 2 unanswered; 90 days after it stopped for someone, a week after a hand-over, a day after it waited or failed; anyone at the shared email cap.
+  - **What it may say:** one model decides and writes; numbers the sources don't have are removed (`keep_known_numbers`); the language is checked by script and written again
+    once; a second model checks facts, language and promises and can hold it. The history is boxed as data. It counts as one AI reply.
+  - **The hand-over brief** (what they want, what they were told, the next step) on the lead's card on the Lead board, a to-do for the team, and one email a day per person.
+  - **The daily summary** says what it wrote and handed over. **Email > Drafts** has its emails on top: why it wrote each, change, send, drop, or send all the ready ones
+    (not the held ones).
+  - **Nimmi:** sets the agent's level (undoable), reports what it did, drafts a bulk email for a group ("warm leads who asked about 2BHK": a new "contains" rule), and sends
+    it only after Confirm.
+  - Token use is recorded per model call (`ai.METER`), so cost is measured from what each service reports.
+- Evaluation (`dev-scripts/email/agent_eval.py`, real models, 5 businesses x 10 situations, 50 leads). The last run:
+
+  | Measure | Result |
+  |---|---|
+  | The right next step | 50 of 50 |
+  | Emails written | 35 |
+  | Emails with a number the sources don't have | 0 |
+  | Emails in the wrong language | 0 |
+  | Emails saying something was done or promising a call, visit or discount | 0 |
+  | Emails held for a person | 0 |
+  | Cost per email written | Rs 0.117 |
+  | Cost per decision | Rs 0.094 on average, Rs 0.302 at most |
+  | Time per decision | 3.1 s on average, 5.8 s at most |
+
+  - The prompts were tuned on these same 50 leads over six runs (right step: 43, 47, 48, 44, 50, 50), so this is not a test on unseen leads. Four new leads in the browser check
+    (`email_agent_ui.mjs`, real AI: English, Tamil, an objection, someone ready to buy) all went the right way, in 12.6 s for the four.
+  - Models that answered: Gemini 3.5 Flash-Lite 48 times, Qwen 3.8 27B 18, GPT-OSS 20B 19. Gemini's free daily quota ran out in the first run, and the backups took over.
+  - What the runs taught: models get day counts wrong, so code works them out and today's date is given; an order of decisions (stop, hand over, email, and only then wait) was
+    needed before "too expensive" got an answer; a checker told "disputes wait for a person" held everyday price questions, so it now judges only facts, language and promises.
+- Changed from the plan: replies are still handled by phase 2 (settings per assistant), not by the agent.
+- Left for later: "left halfway" journeys; a page listing everything the agent did (Nimmi can read it today).
+- Checks: `test_email_agent.py` (34); 26 safeguards each switched off once to confirm a test fails (two were found untested and got tests); the isolation test now covers its
+  drafts and also fails if one workspace adds rows to another's; browser `email_agent_ui.mjs` (39 steps).
+- **The owner's part:** approve the default level (decision 12). It stays off, for everyone, until then.
 
 ## Words used
 

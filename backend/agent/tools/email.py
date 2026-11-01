@@ -586,3 +586,110 @@ async def email_reports(tc, db, assistant_id=None, days=30):
     bot_id = (await get_owned_bot(assistant_id, tc.ctx, db)).bot_id if assistant_id else None
     return await reports(days=int(days or 30), bot_id=bot_id, ctx=tc.ctx, db=db)
 
+
+# ─── The email agent, and bulk email ────────────────────────────────
+
+async def _read_agent(ctx, db, entity: str, keys: list) -> dict:
+    from mail import agent
+    await get_owned_bot(entity, ctx, db)
+    found = await agent.settings_of(db, entity)
+    return {k: found[k] for k in keys}
+
+
+async def _write_agent(ctx, db, entity: str, values: dict) -> None:
+    from mail.api import SetupIn, save_setup
+    await save_setup(entity, SetupIn(settings={"agent": values}), ctx=ctx, db=db)
+
+
+adapter("email_agent", _read_agent, _write_agent, lambda entity: {"kind": "email_agent", "id": entity})
+
+
+@tool("set_email_agent", "Turn one assistant's email agent off or on and choose how much it does alone: drafts (each email waits for the team), morning (the day's "
+      "emails are written at 8 am and wait for approval), auto (they go within the limits; anything a check doubts waits); per_day caps its emails a day.",
+      "Changing the email agent", {"type": "object", "required": ["assistant_id"], "properties": {
+          "assistant_id": {"type": "string"}, "level": {"type": "string", "enum": ["off", "drafts", "morning", "auto"]}, "per_day": {"type": "integer"}}},
+      level="change", roles=MANAGERS, screens=AREAS["email"])
+async def set_email_agent(tc, db, assistant_id, level=None, per_day=None):
+    from fastapi import HTTPException
+    changes = {k: v for k, v in (("level", level), ("per_day", int(per_day) if per_day is not None else None)) if v is not None}
+    if not changes:
+        raise ToolError("Say the level (off, drafts, morning, auto) or the emails a day.")
+    bot_id = (await get_owned_bot(assistant_id, tc.ctx, db)).bot_id
+    try:
+        before = await _read_agent(tc.ctx, db, bot_id, list(changes))
+        await _write_agent(tc.ctx, db, bot_id, changes)
+    except HTTPException as e:
+        raise ToolError(str(e.detail))
+    return Change(f"Email agent: {', '.join(f'{k} {v}' for k, v in changes.items())}", "email_agent", bot_id, before, changes, {"kind": "email_agent", "id": bot_id})
+
+
+@tool("email_agent_activity", "What one assistant's email agent did in the last 30 days, lead by lead: emails it wrote, leads it handed to the team, those it left to "
+      "wait or stopped for, and why; and the emails it wrote that wait for the team's OK.", "Reading the email agent's work",
+      {"type": "object", "required": ["assistant_id"], "properties": {"assistant_id": {"type": "string"}}},
+      roles=MANAGERS, screens=AREAS["email"], routes=("GET /api/email/agent/{bot_id}/activity", "GET /api/email/agent/drafts"))
+async def email_agent_activity(tc, db, assistant_id):
+    from mail.agent_api import activity, drafts
+    bot_id = (await get_owned_bot(assistant_id, tc.ctx, db)).bot_id
+    waiting = [d for d in (await drafts(ctx=tc.ctx, db=db))["items"] if d["bot_id"] == bot_id]
+    return {"actions": await activity(bot_id, ctx=tc.ctx, db=db), "waiting": [{k: d[k] for k in ("id", "to", "subject", "why", "note")} for d in waiting]}
+
+
+async def _read_bulk(ctx, db, entity: str, keys: list) -> dict:
+    from sqlalchemy.future import select
+    from backend.models import EmailBroadcast
+    b = (await db.execute(select(EmailBroadcast).where(EmailBroadcast.id == entity, EmailBroadcast.user_id == ctx.owner_id))).scalars().first()
+    return {"exists": b is not None and b.status == "draft"}
+
+
+async def _write_bulk(ctx, db, entity: str, values: dict) -> None:
+    from mail.broadcasts_api import delete_broadcast
+    if not values.get("exists"):
+        await delete_broadcast(entity, ctx=ctx, db=db)
+
+
+adapter("bulk_email", _read_bulk, _write_bulk, lambda entity: {"kind": "bulk_email", "id": entity})
+
+
+@tool("draft_bulk_email", "Write a bulk email as a draft for one assistant, to the people in a group who agreed to offers and news: statuses (hot, warm, cold, new), "
+      "stages, sources (chat, call, portal, import), tags, contains (words in what they told the business, like 2BHK), active_days. Says how many it reaches and "
+      "who's left out. Sends nothing: send_bulk_email sends it, after the person confirms.", "Writing a bulk email",
+      {"type": "object", "required": ["assistant_id", "subject", "body"], "properties": {
+          "assistant_id": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}, "statuses": {"type": "array", "items": {"type": "string"}},
+          "stages": {"type": "array", "items": {"type": "string"}}, "sources": {"type": "array", "items": {"type": "string"}}, "tags": {"type": "array", "items": {"type": "string"}},
+          "contains": {"type": "string"}, "active_days": {"type": "integer"}}},
+      level="change", roles=MANAGERS, screens=AREAS["email"])
+async def draft_bulk_email(tc, db, assistant_id, subject, body, **rules):
+    from mail import broadcasts
+    from mail.broadcasts_api import NewBroadcast, create_broadcast
+    bot_id = (await get_owned_bot(assistant_id, tc.ctx, db)).bot_id
+    made = await create_broadcast(NewBroadcast(bot_id=bot_id, subject=subject, body=body, rules=rules), ctx=tc.ctx, db=db)
+    people, left = await broadcasts.people(db, tc.ctx.owner_id, bot_id, made["rules"])
+    return Change(f"Bulk email drafted: {subject}", "bulk_email", made["id"], {"exists": False}, {"exists": True}, {"kind": "bulk_email", "id": made["id"]},
+                  result={"draft_id": made["id"], "reaches": len(people), "left_out": left, "notes": broadcasts.check_words(subject, body)})
+
+
+async def _preview_bulk(tc, db, draft_id, at=None):
+    from sqlalchemy.future import select
+    from backend.models import EmailBroadcast
+    from mail import broadcasts
+    b = (await db.execute(select(EmailBroadcast).where(EmailBroadcast.id == draft_id, EmailBroadcast.user_id == tc.ctx.owner_id))).scalars().first()
+    if b is None or b.status != "draft":
+        raise ToolError("That bulk email isn't a draft.")
+    people, _ = await broadcasts.people(db, tc.ctx.owner_id, b.bot_id, b.rules or {})
+    when = f"at {at}" if at else "now"
+    return {"title": f"Send \"{b.subject}\" to {len(people)} people {when}", "summary": f"Send the bulk email \"{b.subject}\" {when} to the {len(people)} people in the group "
+            "who agreed to offers and news. It goes at a steady pace and can be paused, but what has gone can't be taken back."}
+
+
+@tool("send_bulk_email", "Send a bulk email draft now, or at a time (ISO, the business's time zone). The person confirms in the panel first.", "Preparing to send a bulk email",
+      {"type": "object", "required": ["draft_id"], "properties": {"draft_id": {"type": "string"}, "at": {"type": "string"}}},
+      level="confirm", roles=MANAGERS, preview=_preview_bulk, screens=AREAS["email"], routes=("POST /api/email/broadcasts/{broadcast_id}/send",))
+async def send_bulk_email(tc, db, draft_id, at=None):
+    from fastapi import HTTPException
+    from mail.broadcasts_api import SendIn, send_broadcast
+    try:
+        done = await send_broadcast(draft_id, SendIn(at=at), ctx=tc.ctx, db=db)
+    except HTTPException as e:
+        raise ToolError(str(e.detail))
+    return {"message": f"\"{done['subject']}\" goes to {done['recipients']} people {'at ' + at if at else 'now'}.", "refresh": {"kind": "bulk_email", "id": draft_id}}
+

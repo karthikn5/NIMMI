@@ -67,8 +67,8 @@ export default function EmailLayout({ children }: { children: ReactNode }) {
                                           className={cn("pb-3 text-sm border-b-2 whitespace-nowrap transition-colors",
                                               active ? "border-plum text-ink font-medium" : "border-transparent text-stone-500 hover:text-ink")}>
                                         {t.label}
-                                        {t.label === "Drafts" && !!drafts.data?.total && (
-                                            <span className="ml-1.5 text-xs text-plum" aria-label={`, ${drafts.data.total} waiting`}>{drafts.data.total}</span>
+                                        {t.label === "Drafts" && !!(drafts.data?.total || drafts.data?.agent) && (
+                                            <span className="ml-1.5 text-xs text-plum" aria-label={`, ${(drafts.data?.total ?? 0) + (drafts.data?.agent ?? 0)} waiting`}>{(drafts.data?.total ?? 0) + (drafts.data?.agent ?? 0)}</span>
                                         )}
                                         {t.label === "Inbox" && !!inbox.data?.unread && (
                                             <span className="ml-1.5 text-xs text-plum" aria-label={`, ${inbox.data.unread} unread`}>{inbox.data.unread}</span>

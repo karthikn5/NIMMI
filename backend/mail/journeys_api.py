@@ -217,7 +217,7 @@ async def write_journey(data: WriteIn, ctx: AuthContext = Depends(require_manage
 # ─── lead stages ─────────────────────────────────────────────────
 def _lead_json(c: Contact, agreed: Optional[set] = None) -> dict:
     return {"id": c.id, "name": c.name, "email": c.email, "phone": display(c.e164) if c.e164 else None, "stage": c.stage or "new", "status": c.lead_status, "assigned_to": c.assigned_to, "tags": c.tags or [],
-            "agreed": bool(c.email and c.email.lower() in (agreed or ())),
+            "agreed": bool(c.email and c.email.lower() in (agreed or ())), "brief": c.brief or None,
             "source": c.source, "last_at": _iso(c.last_call_at or c.created_at)}
 
 

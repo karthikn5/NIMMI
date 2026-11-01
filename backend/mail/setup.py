@@ -32,6 +32,7 @@ SETTINGS: dict[str, dict] = {
     "question_answer": {"enabled": True},  # goes only when the team sends it from Questions
     "consent": {"ask": False, "words": "Send me offers and news"},  # the tick box under the chat's email question
     "fast_call": {"enabled": False},  # Pro: a call when someone opens the booking times from an email and doesn't book (mail/engagement.py)
+    "agent": {"level": "off", "per_day": 20},  # the email agent (mail/agent.py): off, drafts, morning, auto
     "meeting": {"thanks": True, "missed": True},
 }
 

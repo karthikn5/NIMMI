@@ -341,6 +341,8 @@ async def _loop() -> None:
             from mail import clicks, outbox
             fire_and_forget(clicks.settle_due())  # clicks old enough to tell a person from a scanner
             fire_and_forget(outbox.drain())  # email events for the businesses' webhooks and LeadSquared
+            from mail import agent as email_agent
+            fire_and_forget(email_agent.tick())  # the email agent, at each assistant's hour
             from whatsapp import memory as whatsapp_memory, replies as whatsapp_replies
             await whatsapp_replies.sweep()  # WhatsApp answers whose timer was lost (a restart)
             if datetime.utcnow() - last_summaries > timedelta(minutes=2):

@@ -240,7 +240,7 @@ def test_the_welcome_email_waits_for_the_chat_to_go_quiet(client, make_user, run
             await db.commit()
     run(long_ago)
     run(more)
-    assert _job(run, u.id, conv).send_at < datetime.utcnow()  # never more than 10 minutes after their address
+    assert _job(run, u.id, conv).send_at.replace(tzinfo=None) < datetime.utcnow()  # never more than 10 minutes after their address
 
 
 def test_starter_sends_the_welcome_email_without_the_ais_note_or_files(client, make_user, run, monkeypatch, writing):

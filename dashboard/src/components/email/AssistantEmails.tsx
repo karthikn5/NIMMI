@@ -6,7 +6,7 @@ import { ChevronDown, Pencil } from "lucide-react";
 import { Button, Card, Select, Skeleton, Status, Switch, cn, useToast } from "@/components/ui";
 import { SequenceEditor, summary } from "@/components/integrations/EmailPanel";
 import { apiJson } from "@/lib/api";
-import type { AfterCallMode, AssistantEmails as Setup, EmailKind, Senders } from "@/lib/email";
+import { REPLY_MODES, type AfterCallMode, type AssistantEmails as Setup, type EmailKind, type ReplyMode, type Senders } from "@/lib/email";
 import { AUTOMATIONS, type Automation, type AutomationKey, type EmailStep } from "@/lib/integrations";
 import { useLimits } from "@/lib/plan";
 import { useApi } from "@/lib/useApi";
@@ -15,6 +15,13 @@ import { DesignEditor } from "./DesignEditor";
 const PLACEHOLDERS = ["name", "business", "assistant", "email", "phone", "summary", "details"];
 const PLAIN: AutomationKey[] = ["call_lead", "goal_met", "call_missed", "handoff_done"];
 const TITLES: Partial<Record<AutomationKey, string>> = { call_lead: "Fixed email after a call", goal_met: "Fixed email when a call reaches its goal" };
+type SmallKind = "callback_booked" | "voicemail" | "missed_chat" | "chat_copy";
+const SMALL: { key: SmallKind; title: string; about: string }[] = [
+    { key: "callback_booked", title: "Call-back booked", about: "When a call-back is booked for them: when you'll call." },
+    { key: "voicemail", title: "Voicemail left", about: "When you called them and reached their voicemail." },
+    { key: "missed_chat", title: "Missed live chat", about: "When they asked for a person in the chat and nobody came in time." },
+    { key: "chat_copy", title: "Copy of the chat", about: "Adds Email me this chat to the chat. It goes only to the address they gave." },
+];
 const MODES: { value: AfterCallMode; label: string }[] = [{ value: "off", label: "Off" }, { value: "review", label: "Review first" }, { value: "auto", label: "Automatic" }];
 
 /** Each assistant's emails to customers: one account can run several businesses (backend mail/setup.py). */
@@ -55,6 +62,28 @@ export function AssistantEmails() {
         }
     };
     const expand = (key: AutomationKey) => { setDraft(null); setOpen(open === key ? null : key); };
+    const setSetting = async (kind: string, values: Record<string, unknown>) => {
+        setSaving(true);
+        try {
+            setup.setData(await apiJson<Setup>(`/api/email/setup/${botId}`, { method: "PUT", json: { settings: { [kind]: values } } }));
+            toast("Saved");
+        } catch (e) {
+            toast((e as Error).message);
+        } finally {
+            setSaving(false);
+        }
+    };
+    const setReplies = async (mode: ReplyMode) => {
+        setSaving(true);
+        try {
+            setup.setData(await apiJson<Setup>(`/api/email/setup/${botId}`, { method: "PUT", json: { settings: { replies: { mode } } } }));
+            toast("Saved");
+        } catch (e) {
+            toast((e as Error).message);
+        } finally {
+            setSaving(false);
+        }
+    };
     const setMode = async (direction: "inbound" | "outbound", mode: AfterCallMode) => {
         setSaving(true);
         try {
@@ -116,6 +145,93 @@ export function AssistantEmails() {
     };
 
     const kind = s?.kinds.find((k) => k.kind === editing);
+    const duringCall = () => {
+        if (!s) return null;
+        return (
+            <li className="border-t border-line px-5 py-3.5">
+                <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex-1 min-w-48 pl-[27px]">
+                        <span className="flex flex-wrap items-center gap-x-2.5">
+                            <span className="text-sm">During a call</span>
+                            {growth ? <Status tone={s.settings.during_call.enabled ? "good" : "neutral"}>{s.settings.during_call.enabled ? "On" : "Off"}</Status>
+                                : <span className="text-xs text-stone-500">Comes with Growth</span>}
+                        </span>
+                        <span className="block text-[13px] text-stone-500 mt-0.5">
+                            The phone agent can email a file or a note while they talk, like &quot;email me the price list&quot;. It never reads their address out.
+                        </span>
+                    </div>
+                    <Button size="sm" onClick={() => setEditing("during_call")} aria-label="Edit the email sent during a call"><Pencil size={13} aria-hidden /> Edit email</Button>
+                    <Switch checked={s.settings.during_call.enabled && growth} disabled={!growth || saving} onChange={(v) => setSetting("during_call", { enabled: v })} label="Email during a call" />
+                </div>
+            </li>
+        );
+    };
+    const small = (item: (typeof SMALL)[number]) => {
+        if (!s) return null;
+        const on = s.settings[item.key].enabled;
+        return (
+            <li key={item.key} className="border-t border-line px-5 py-3.5">
+                <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex-1 min-w-48 pl-[27px]">
+                        <span className="flex flex-wrap items-center gap-x-2.5">
+                            <span className="text-sm">{item.title}</span>
+                            {growth ? <Status tone={on ? "good" : "neutral"}>{on ? "On" : "Off"}</Status> : <span className="text-xs text-stone-500">Comes with Growth</span>}
+                        </span>
+                        <span className="block text-[13px] text-stone-500 mt-0.5">{item.about}</span>
+                    </div>
+                    {item.key === "missed_chat" && (
+                        <Select aria-label="How long to wait" className="w-32" value={s.settings.missed_chat.minutes} disabled={!growth || saving}
+                                onChange={(e) => setSetting("missed_chat", { minutes: Number(e.target.value) })}>
+                            {[5, 10, 15, 30].map((m) => <option key={m} value={m}>After {m} min</option>)}
+                        </Select>
+                    )}
+                    <Button size="sm" onClick={() => setEditing(item.key)} aria-label={`Edit the email: ${item.title}`}><Pencil size={13} aria-hidden /> Edit email</Button>
+                    <Switch checked={on && growth} disabled={!growth || saving} onChange={(v) => setSetting(item.key, { enabled: v })} label={`Send: ${item.title}`} />
+                </div>
+            </li>
+        );
+    };
+    const meetingEmails = () => {
+        if (!s) return null;
+        const m = s.settings.meeting;
+        return (
+            <li className="border-t border-line px-5 py-3.5">
+                <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex-1 min-w-48 pl-[27px]">
+                        <span className="text-sm">Meeting emails</span>
+                        <span className="block text-[13px] text-stone-500 mt-0.5">The confirmation with its invite, the reminder and the joining details always go. These two go after it:</span>
+                    </div>
+                    <Button size="sm" onClick={() => setEditing("meeting")} aria-label="Edit the meeting emails"><Pencil size={13} aria-hidden /> Edit email</Button>
+                </div>
+                <div className="mt-2 pl-[27px] space-y-2">
+                    <div className="flex items-center justify-between gap-3 text-[13px]"><span>A thank-you after they attend</span><Switch checked={m.thanks} disabled={saving} onChange={(v) => setSetting("meeting", { thanks: v })} label="A thank-you after they attend" /></div>
+                    <div className="flex items-center justify-between gap-3 text-[13px]"><span>Sorry we missed you, with a link to book again</span><Switch checked={m.missed} disabled={saving} onChange={(v) => setSetting("meeting", { missed: v })} label="Sorry we missed you" /></div>
+                </div>
+            </li>
+        );
+    };
+    const replies = () => {
+        if (!s) return null;
+        return (
+            <li className="border-t border-line px-5 py-3.5">
+                <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex-1 min-w-48 pl-[27px]">
+                        <span className="flex flex-wrap items-center gap-x-2.5">
+                            <span className="text-sm">When someone replies</span>
+                            {!growth ? <span className="text-xs text-stone-500">Comes with Growth</span>
+                                : !s.replies_on && <span className="text-xs text-stone-500">Not switched on for your account yet</span>}
+                        </span>
+                        <span className="block text-[13px] text-stone-500 mt-0.5">
+                            Their reply shows in <Link href="/dashboard/email/inbox" className="text-plum hover:underline">Inbox</Link> and a copy goes to your mailbox. Follow-ups to them stop.
+                        </span>
+                    </div>
+                    <Select aria-label="Who answers replies" className="w-60" value={s.settings.replies.mode} disabled={!growth || saving} onChange={(e) => setReplies(e.target.value as ReplyMode)}>
+                        {REPLY_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                    </Select>
+                </div>
+            </li>
+        );
+    };
     const afterCall = () => {
         if (!s) return null;
         const prefs = s.settings.after_call;
@@ -174,6 +290,10 @@ export function AssistantEmails() {
                 <ul>
                     {row("chat_lead", "Welcome email", "When someone gives their email in a chat. It goes when the chat goes quiet.", false, true)}
                     {afterCall()}
+                    {duringCall()}
+                    {replies()}
+                    {meetingEmails()}
+                    {SMALL.map(small)}
                     {PLAIN.map((key) => {
                         const a = AUTOMATIONS.find((x) => x.key === key)!;
                         const fixed = key === "call_lead" || key === "goal_met";

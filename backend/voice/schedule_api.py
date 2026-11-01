@@ -424,6 +424,8 @@ async def mark_meeting(meeting_id: str, data: Mark, ctx: AuthContext = Depends(g
     except ScheduleError as e:
         raise HTTPException(status_code=400, detail=str(e))
     await db.commit()
+    from notify.events import fire_and_forget
+    fire_and_forget(meetings.after_meeting(meeting.id, data.attended))
     return await _meeting_detail(db, meeting, ctx.owner_id)
 
 

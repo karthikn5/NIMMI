@@ -16,7 +16,7 @@ from database import get_db
 from backend.models import IntegrationSettings, NotificationLog, User
 from phone import to_e164
 from netsafe import UnsafeUrl, assert_public_url
-from mail import senders, suppress
+from mail import address as mail_address, senders, suppress
 from notify import automations, channels, email
 from notify.events import recipients
 from whatsapp.numbers import workspace_number
@@ -36,7 +36,7 @@ def _json(s: IntegrationSettings, owner_email: str, whatsapp_number: bool = Fals
         "leadsquared_access_key": s.leadsquared_access_key or "",
         "leadsquared_has_secret": bool(s.leadsquared_secret_key),
         # Email automation
-        "alert_calls": s.alert_calls is not False, "alert_handoffs": bool(s.alert_handoffs),
+        "alert_calls": s.alert_calls is not False, "alert_handoffs": bool(s.alert_handoffs), "alert_daily": bool(s.alert_daily),
         "sender_name": s.sender_name or "", "reply_to": s.reply_to or "",
         "automations": automations.automations(s), "placeholders": automations.PLACEHOLDERS,
         "server": {
@@ -91,6 +91,7 @@ class IntegrationUpdate(BaseModel):
     # Email automation
     alert_calls: bool = True
     alert_handoffs: bool = False
+    alert_daily: bool = False
     sender_name: str = Field("", max_length=60)
     reply_to: str = Field("", max_length=200)
     automations: dict[str, AutomationIn] = {}
@@ -117,6 +118,7 @@ async def update_settings(data: IntegrationUpdate, ctx: AuthContext = Depends(re
         raise HTTPException(status_code=400, detail=f"Check this email address: {bad[0]}")
     if len(alert_list) > 5:
         raise HTTPException(status_code=400, detail="Send alerts to up to 5 addresses")
+    await mail_address.reply_address_works(data.reply_to.strip())
     if data.reply_to.strip() and not automations.EMAIL_RE.fullmatch(data.reply_to.strip()):
         raise HTTPException(status_code=400, detail="Enter a valid reply-to email address")
     try:
@@ -135,7 +137,7 @@ async def update_settings(data: IntegrationUpdate, ctx: AuthContext = Depends(re
 
     s.email_alerts = data.email_alerts
     s.alert_email = ", ".join(alert_list) or None
-    s.alert_calls, s.alert_handoffs = data.alert_calls, data.alert_handoffs
+    s.alert_calls, s.alert_handoffs, s.alert_daily = data.alert_calls, data.alert_handoffs, data.alert_daily
     s.sender_name = data.sender_name.strip() or None
     s.reply_to = data.reply_to.strip() or None
     if autos:

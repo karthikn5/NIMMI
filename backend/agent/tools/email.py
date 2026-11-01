@@ -1,7 +1,7 @@
 """Tools about email (the Email section, mail_plan.md): how sending is going, the business's own domains, who each
 assistant's emails come from (undoable), addresses that aren't emailed, history and bulk email, each assistant's emails
-and their designs (undoable), and the AI's after-call emails waiting for the team (changes undoable; sending and
-discarding one need the person's Confirm)."""
+and their designs (undoable), the AI's after-call emails waiting for the team, and conversations with people who replied (changes
+undoable; sending and discarding need the person's Confirm)."""
 from auth import get_owned_bot
 from agent.registry import MANAGERS, Change, ToolError, adapter, tool
 from agent.screens import AREAS
@@ -172,7 +172,8 @@ adapter("email_setup", _read_setup, _write_setup, lambda entity: {"kind": "email
 
 @tool("set_assistant_emails", "Turn one of an assistant's emails on or off or change it: an automation (chat_lead after a "
       "chat, call_lead, goal_met, call_missed, handoff_done) with its emails (delay now/1h/1d/2d/3d/5d/7d/14d, subject, body), "
-      "or a setting: after_call {inbound, outbound: off/review/auto}, welcome {ai_note, ai_files, max_files}.",
+      "or a setting: after_call {inbound, outbound: off/review/auto}, replies {mode: ai/draft/team}, welcome {ai_note, ai_files, max_files}, "
+      "during_call/callback_booked/voicemail/chat_copy {enabled}, missed_chat {enabled, minutes}, meeting {thanks, missed}.",
       "Changing an assistant's emails",
       {"type": "object", "required": ["assistant_id"], "properties": {
           "assistant_id": {"type": "string"},
@@ -180,7 +181,7 @@ adapter("email_setup", _read_setup, _write_setup, lambda entity: {"kind": "email
           "enabled": {"type": "boolean"},
           "steps": {"type": "array", "items": {"type": "object", "properties": {
               "delay": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}}},
-          "setting": {"type": "string", "enum": ["after_call", "welcome"]},
+          "setting": {"type": "string", "enum": ["after_call", "replies", "welcome", "during_call", "callback_booked", "voicemail", "missed_chat", "chat_copy", "meeting"]},
           "values": {"type": "object"}}},
       level="change", roles=MANAGERS, screens=AREAS["email"], routes=("PUT /api/email/setup/{bot_id}",))
 async def set_assistant_emails(tc, db, assistant_id, automation=None, enabled=None, steps=None, setting=None, values=None):
@@ -208,7 +209,7 @@ async def set_assistant_emails(tc, db, assistant_id, automation=None, enabled=No
 
 @tool("email_design", "How one of an assistant's emails looks: its subject and blocks (text, ai_note, files, buttons, "
       "signature...), in a language (en, ta, hi), and whether the business saved it or it's the ready-made one. Kinds: "
-      "welcome, after_call.", "Reading an email's design",
+      "welcome, after_call, meeting, callback_booked, voicemail, missed_chat, chat_copy, during_call.", "Reading an email's design",
       {"type": "object", "required": ["assistant_id", "kind"], "properties": {
           "assistant_id": {"type": "string"}, "kind": {"type": "string"}, "language": {"type": "string", "enum": ["en", "ta", "hi"]}}},
       roles=MANAGERS, screens=AREAS["email"],
@@ -355,3 +356,95 @@ async def discard_email_draft(tc, db, draft_id):
     to = (await get_draft(draft_id, ctx=tc.ctx, db=db))["to"]
     await discard_draft(draft_id, ctx=tc.ctx, db=db)
     return {"message": f"Discarded the email to {to}.", "refresh": {"kind": "email_draft", "id": draft_id}}
+
+
+# ─── Conversations: people who replied (Email > Inbox) ──────────────
+
+@tool("email_inbox", "Conversations with people who replied to the business's emails (Email > Inbox): who, their latest words, "
+      "what the reply was (a question, wants a call...), whether the AI's draft is waiting; status open (waiting), answered or closed. "
+      "With thread_id, one conversation in full. Sends nothing, and doesn't mark anything read.", "Reading the email inbox",
+      {"type": "object", "properties": {"status": {"type": "string", "enum": ["open", "answered", "closed"]}, "search": {"type": "string"},
+                                        "thread_id": {"type": "string"}}},
+      roles=MANAGERS, screens=AREAS["email"], routes=("GET /api/email/inbox", "GET /api/email/inbox/{thread_id}"))
+async def email_inbox(tc, db, status="open", search="", thread_id=None):
+    from mail.inbox import _own, list_threads, thread_detail
+    if thread_id:
+        return await thread_detail(await _own(thread_id, tc.ctx, db), tc.ctx, db)
+    found = await list_threads(status=status or "open", q=search or "", ctx=tc.ctx, db=db)
+    keep = ("id", "email", "name", "subject", "kind", "unread", "draft", "bot_name", "last", "last_at")
+    return {"counts": found["counts"], "unread": found["unread"], "receiving": found["enabled"], "conversations": [{k: t[k] for k in keep} for t in found["items"]]}
+
+
+async def _read_thread(ctx, db, entity: str, keys: list) -> dict:
+    from mail.inbox import _own, thread_detail
+    t = await thread_detail(await _own(entity, ctx, db), ctx, db)
+    return {k: t[k] for k in keys}
+
+
+async def _write_thread(ctx, db, entity: str, values: dict) -> None:
+    from mail.inbox import ThreadIn, update_thread
+    await update_thread(entity, ThreadIn(**values), ctx=ctx, db=db)
+
+
+adapter("email_thread", _read_thread, _write_thread, lambda entity: {"kind": "email_thread", "id": entity})
+
+
+@tool("update_email_conversation", "Change a conversation in Email > Inbox: its status (open, answered, closed), who looks after it "
+      "(a team member's id), or the team's notes. The customer sees none of this.", "Changing a conversation",
+      {"type": "object", "required": ["thread_id"], "properties": {
+          "thread_id": {"type": "string"}, "status": {"type": "string", "enum": ["open", "answered", "closed"]},
+          "assigned_to": {"type": "string"}, "notes": {"type": "string"}}},
+      level="change", roles=MANAGERS, screens=AREAS["email"], routes=("PUT /api/email/inbox/{thread_id}",))
+async def update_email_conversation(tc, db, thread_id, status=None, assigned_to=None, notes=None):
+    from fastapi import HTTPException
+    changes = {k: v for k, v in (("status", status), ("assigned_to", assigned_to), ("notes", notes)) if v is not None}
+    if not changes:
+        raise ToolError("Say what to change: the status, who looks after it, or the notes.")
+    try:
+        before = await _read_thread(tc.ctx, db, thread_id, list(changes))
+        await _write_thread(tc.ctx, db, thread_id, changes)
+        after = await _read_thread(tc.ctx, db, thread_id, list(changes))
+    except HTTPException as e:
+        raise ToolError(str(e.detail))
+    return Change(f"Conversation changed: {', '.join(changes)}", "email_thread", thread_id, before, after, {"kind": "email_thread", "id": thread_id})
+
+
+async def _preview_answer(tc, db, thread_id, text=None, draft_id=None):
+    from mail.inbox import _own, thread_detail
+    t = await thread_detail(await _own(thread_id, tc.ctx, db), tc.ctx, db)
+    draft = next((m for m in t["messages"] if m["id"] == draft_id and m["status"] == "draft"), None)
+    words = (text or (draft or {}).get("text") or "").strip()
+    if not words:
+        raise ToolError("Say what to send, or give the id of the AI's draft.")
+    return {"title": f"Send this answer to {t['email']}", "summary": f"Send to {t['email']}:\n\n{words[:900]}"}
+
+
+@tool("answer_email", "Send an answer to someone in a conversation in Email > Inbox: your text, or the AI's draft by draft_id (its "
+      "booking, if it has one, is made first). The person confirms in the panel first; once sent it can't be taken back.",
+      "Preparing to send an answer", {"type": "object", "required": ["thread_id"], "properties": {
+          "thread_id": {"type": "string"}, "text": {"type": "string"}, "draft_id": {"type": "string"}}},
+      level="confirm", roles=MANAGERS, preview=_preview_answer, screens=AREAS["email"],
+      routes=("POST /api/email/inbox/{thread_id}/reply", "POST /api/email/inbox/{thread_id}/drafts/{message_id}/send"))
+async def answer_email(tc, db, thread_id, text=None, draft_id=None):
+    from mail.inbox import ReplyIn, _own, _own_message, send_draft, team_reply
+    if draft_id:
+        row = await _own_message(await _own(thread_id, tc.ctx, db), draft_id, db)
+        await send_draft(thread_id, draft_id, ReplyIn(text=(text or row.text or "").strip()), ctx=tc.ctx, db=db)
+    else:
+        await team_reply(thread_id, ReplyIn(text=(text or "").strip()), ctx=tc.ctx, db=db)
+    return {"message": "The answer has been sent.", "refresh": {"kind": "email_thread", "id": thread_id}}
+
+
+async def _preview_drop(tc, db, thread_id, draft_id):
+    return {"title": "Drop the AI's draft", "summary": "Drop the AI's draft in this conversation. It won't be sent."}
+
+
+@tool("drop_email_draft", "Drop the AI's draft in a conversation in Email > Inbox: it isn't sent. The person confirms in the panel first.",
+      "Preparing to drop a draft", {"type": "object", "required": ["thread_id", "draft_id"], "properties": {
+          "thread_id": {"type": "string"}, "draft_id": {"type": "string"}}},
+      level="confirm", roles=MANAGERS, preview=_preview_drop, screens=AREAS["email"], routes=("DELETE /api/email/inbox/{thread_id}/drafts/{message_id}",))
+async def drop_email_draft(tc, db, thread_id, draft_id):
+    from mail.inbox import drop_draft
+    await drop_draft(thread_id, draft_id, ctx=tc.ctx, db=db)
+    return {"message": "Dropped the draft.", "refresh": {"kind": "email_thread", "id": thread_id}}
+

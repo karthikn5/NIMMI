@@ -6,13 +6,14 @@ import { usePathname, useRouter } from "next/navigation";
 import AppHeader from "@/components/AppHeader";
 import { EmptyState, ToastProvider, cn } from "@/components/ui";
 import { currentUserId } from "@/lib/api";
-import { DRAFTS_CHANGED, type Drafts } from "@/lib/email";
+import { DRAFTS_CHANGED, type Drafts, type Threads } from "@/lib/email";
 import { PlanNeeded, useLimits } from "@/lib/plan";
 import { useApi } from "@/lib/useApi";
 import { useRole } from "@/lib/whatsapp";
 
 const tabs = [
     { href: "/dashboard/email", label: "Overview", exact: true },
+    { href: "/dashboard/email/inbox", label: "Inbox" },
     { href: "/dashboard/email/automations", label: "Automations" },
     { href: "/dashboard/email/drafts", label: "Drafts" },
     { href: "/dashboard/email/bulk", label: "Bulk email" },
@@ -27,7 +28,9 @@ export default function EmailLayout({ children }: { children: ReactNode }) {
     const limits = useLimits();
     const role = useRole();
     const drafts = useApi<Drafts>(ready && role && role !== "agent" ? "/api/email/drafts?limit=1" : null);
+    const inbox = useApi<Threads>(ready && role && role !== "agent" ? "/api/email/inbox?limit=1" : null);
     const { reload } = drafts;
+    const { reload: reloadInbox } = inbox;
 
     useEffect(() => {
         if (!currentUserId()) router.push("/auth/signup");
@@ -35,9 +38,10 @@ export default function EmailLayout({ children }: { children: ReactNode }) {
     }, [router]);
 
     useEffect(() => {
-        window.addEventListener(DRAFTS_CHANGED, reload);
-        return () => window.removeEventListener(DRAFTS_CHANGED, reload);
-    }, [reload]);
+        const again = () => { void reload(); void reloadInbox(); };
+        window.addEventListener(DRAFTS_CHANGED, again);
+        return () => window.removeEventListener(DRAFTS_CHANGED, again);
+    }, [reload, reloadInbox]);
 
     return (
         <ToastProvider>
@@ -61,6 +65,9 @@ export default function EmailLayout({ children }: { children: ReactNode }) {
                                         {t.label}
                                         {t.label === "Drafts" && !!drafts.data?.total && (
                                             <span className="ml-1.5 text-xs text-plum" aria-label={`, ${drafts.data.total} waiting`}>{drafts.data.total}</span>
+                                        )}
+                                        {t.label === "Inbox" && !!inbox.data?.unread && (
+                                            <span className="ml-1.5 text-xs text-plum" aria-label={`, ${inbox.data.unread} unread`}>{inbox.data.unread}</span>
                                         )}
                                     </Link>
                                 );

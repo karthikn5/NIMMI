@@ -1017,15 +1017,31 @@ Phase 1, as of 1 Nov 2026:
   - the welcome email after a quiet chat, with the AI's note and files;
   - the after-call email (section 5.3), with Email > Drafts and the offer to go automatic;
   - Nimmi's tools for all of it.
-- Not built yet: the `send_email` call tool, meeting emails from the designs with the change-time and cancel page, the thank-you
-  and rebook emails, call-back booked, voicemail, missed live chat, "email me this chat", the book and call pages, the daily
-  summary, plan limits on the number of emails (section 8 needs the owner's numbers).
+- Built since (local until pushed): the `send_email` call tool; meeting emails from the design, with the change-time and cancel page; the
+  thank-you and rebook emails; call-back booked; voicemail; missed live chat; "email me this chat"; the book and call pages; the daily
+  summary.
+- Not built: plan limits on the number of emails (section 8 needs the owner's numbers); a WhatsApp chat's welcome email is still only as
+  good as the chat collecting an address.
 - Checks:
   - backend tests in `test_mail_designs.py` and `test_after_call_email.py`; ten safeguards of the after-call email were each
     switched off once to confirm a test fails without them;
   - browser `email_design_ui.mjs`, `email_drafts_ui.mjs`;
   - `compose_probe.py` on 8 real calls: no invented number (the plan's 30 are still to run, as more real calls come in).
 - Not tried yet: a real call ending in a real email in a Gmail inbox ("Done when", above).
+
+Phase 2, as of 1 Nov 2026 (built locally, off until `REPLY_DOMAIN` is set):
+- Changed from the plan: replies use `mail.nimmiai.in`, which already sends, rather than a new `reply.nimmiai.in`. Turning receiving on
+  there is one switch and one MX record.
+- Built: reply addresses per conversation; receiving, once each, with the mail server's checks; the team's answers from their mailbox;
+  stop on reply; the AI reading each reply, per assistant (ai, draft, team), with Schedule bookings; Email > Inbox; Nimmi's tools.
+- Added along the way: a reply address that can't receive mail is refused; the AI answers only the person in the conversation.
+- Left for later: cleaned HTML view of emails (they're shown as text), assigning from the page, templates in the reply box, the timeline
+  of chats and WhatsApp beside a conversation (the person's details and calls show today), letting agents (not only owners and admins)
+  use the Inbox, meeting emails carrying the conversation's address.
+- Checks:
+  - `test_email_replies.py`; eleven safeguards were each switched off once to confirm a test fails without them;
+  - browser `email_inbox_ui.mjs`, with Resend faked and the real AI answering.
+- Not tried yet: a real reply from Gmail through Resend (it needs receiving on and `REPLY_DOMAIN` on Railway).
 
 ## Words used
 

@@ -191,6 +191,11 @@ async def list_bots(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = Depe
     return out
 
 
+async def _copy_on(db: AsyncSession, bot_id: str) -> bool:
+    from mail import setup
+    return (await setup.settings_for(db, bot_id))["chat_copy"]["enabled"]
+
+
 @router.get("/bots/{bot_id}/config")
 async def get_bot_config(bot_id: str, ctx: Optional[AuthContext] = Depends(get_optional_ctx), db: AsyncSession = Depends(get_db)):
     """Public: the widget reads this. Private fields are included only for the bot's own workspace."""
@@ -219,6 +224,7 @@ async def get_bot_config(bot_id: str, ctx: Optional[AuthContext] = Depends(get_o
         # call-backs (Pro); and "Talk to a person" only on a plan with live chat (plans.py).
         "callbacks_enabled": bool(callbacks and voice_on and sub is not None and included.schedule),
         "live_chat": included.live_chat,
+        "email_copy": bool(included.email_alerts and await _copy_on(db, bot.bot_id)),
         "is_exported": (sub is not None) or bot.export_unlocked,
         "subscription": {
             "active": sub is not None,

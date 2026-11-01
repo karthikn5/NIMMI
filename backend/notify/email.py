@@ -100,14 +100,16 @@ async def deliver(to: str, subject: str, text: str, html_body: Optional[str] = N
                   reply_to: Optional[str] = None, from_name: Optional[str] = None, from_address: Optional[str] = None,
                   unsubscribe_url: Optional[str] = None, attachments: Optional[list[dict]] = None,
                   tags: Optional[dict] = None, idempotency_key: Optional[str] = None,
-                  api_key: Optional[str] = None) -> Delivery:
+                  api_key: Optional[str] = None, headers: Optional[dict] = None) -> Delivery:
     """
     Send one email. `attachments`: [{"filename", "content" (text or bytes), "content_type"}], e.g. a calendar invite.
     `tags` (workspace, email, kind) come back on Resend's events; `idempotency_key` makes a repeated request a no-op at
-    Resend for 24 hours; `api_key` is a domain's own sending key; `from_address` sends from that address.
+    Resend for 24 hours; `api_key` is a domain's own sending key; `from_address` sends from that address; `headers` are
+    added to the email (In-Reply-To and References keep a conversation together).
     """
     # One-click unsubscribe (RFC 8058): Gmail and Yahoo expect it on emails to customers.
     extra = {"List-Unsubscribe": f"<{unsubscribe_url}>", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"} if unsubscribe_url else {}
+    extra.update({k: v for k, v in (headers or {}).items() if v})
     _last_error.set(None)
     key = api_key or os.getenv("RESEND_API_KEY")
     if key:
@@ -123,13 +125,13 @@ async def deliver(to: str, subject: str, text: str, html_body: Optional[str] = N
         if tags:
             payload["tags"] = [{"name": _TAG.sub("_", str(k))[:256], "value": _TAG.sub("_", str(v))[:256]}
                                for k, v in tags.items() if v]
-        headers = {"Authorization": f"Bearer {key}"}
+        sending = {"Authorization": f"Bearer {key}"}
         if idempotency_key:
-            headers["Idempotency-Key"] = idempotency_key[:256]
+            sending["Idempotency-Key"] = idempotency_key[:256]
         try:
             async with resend_client() as client:
                 for attempt in range(2):
-                    resp = await client.post(f"{resend_url()}/emails", headers=headers, json=payload)
+                    resp = await client.post(f"{resend_url()}/emails", headers=sending, json=payload)
                     wait = resp.headers.get("retry-after")
                     # Over 10 requests a second (the team's limit, across four processes): wait it out once.
                     if resp.status_code == 429 and attempt == 0 and "quota" not in resp.text and (wait or "1").isdigit() and int(wait or "1") <= 2:

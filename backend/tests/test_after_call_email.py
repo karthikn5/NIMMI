@@ -203,7 +203,7 @@ def test_a_bad_address_shows_in_history_with_the_reason(business, run, model, mo
     from mail import address
 
     async def lookup(domain):
-        return False
+        return domain != "sunrise-test.in"  # the customer's, not the business's reply address
     monkeypatch.setattr(address, "_lookup", lookup)
     u = business("auto")
     job = run(_job, run(_ended, u))

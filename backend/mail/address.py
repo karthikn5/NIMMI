@@ -133,3 +133,16 @@ async def check(address: str) -> Verdict:
     if await receives_mail(domain) is False:
         return Verdict(False, f"{domain} doesn't receive email", fix)
     return Verdict(True, suggestion=fix, throwaway=throwaway(domain))
+
+
+async def reply_address_works(address: str) -> None:
+    """Where a business's replies go has to take mail, or every reply is lost without anyone knowing. Nov 2026, on live:
+    admin@nimmai.in was saved, a domain that doesn't exist. Raises what to tell them. An empty address is fine here."""
+    from fastapi import HTTPException
+    if not (address or "").strip():
+        return
+    verdict = await check(address)
+    if not verdict.ok:
+        raise HTTPException(status_code=400, detail=f"Replies couldn't reach {address}: {verdict.reason}."
+                                                    + (f" Did you mean {verdict.suggestion}?" if verdict.suggestion else ""))
+

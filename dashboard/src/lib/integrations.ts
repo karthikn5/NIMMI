@@ -33,6 +33,7 @@ export interface IntegrationSettings {
     email_alerts: boolean;          // new leads
     alert_calls: boolean;           // call summaries
     alert_handoffs: boolean;        // a customer asked for a person
+    alert_daily: boolean;           // the owner's daily summary
     alert_email: string;            // comma-separated, up to 5
     default_email: string;
     // Email: to customers

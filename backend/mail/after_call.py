@@ -15,7 +15,6 @@ call is written once more. Emails are held in Drafts, even on automatic, when th
 when the language is still wrong, or when the caller was unhappy. What the knowledge doesn't answer goes to Questions, and the email says the team
 will reply. After APPROVALS_BEFORE_ASKING approved emails the Drafts page offers to send them automatically.
 """
-import asyncio
 import json
 import logging
 import re
@@ -170,20 +169,22 @@ def _when(at: datetime, tz) -> str:
     return schedule.when_text(at, tz, now=at + timedelta(days=30))
 
 
-async def arranged(db, call: CallLog) -> list[str]:
+async def arranged(db, bot_id: str, e164: Optional[str]) -> list[str]:
     """What's really booked for them, from Schedule."""
     from voice import schedule
-    tz = schedule.zone(await schedule.settings_for(call.bot_id, db))
+    tz = schedule.zone(await schedule.settings_for(bot_id, db))
     facts = []
-    meeting = await schedule.upcoming_meeting(db, call.bot_id, call.caller_e164)
+    if not e164:
+        return facts
+    meeting = await schedule.upcoming_meeting(db, bot_id, e164)
     if meeting is not None:
         when = _when(schedule.utc(meeting.starts_at), tz)
         facts.append(f"Their meeting is confirmed for {when}." if meeting.status == "confirmed" else
                      f"They asked to meet on {when}. The team will confirm it.")
-    back = await schedule.waiting_job(db, call.bot_id, call.caller_e164, "callback")
+    back = await schedule.waiting_job(db, bot_id, e164, "callback")
     if back is not None and back.next_attempt_at:
         facts.append(f"We will call them back on {_when(schedule.utc(back.next_attempt_at), tz)}.")
-    if await schedule.waiting_job(db, call.bot_id, call.caller_e164, "person") is not None:
+    if await schedule.waiting_job(db, bot_id, e164, "person") is not None:
         facts.append("Someone from the team will call them.")
     return facts
 
@@ -226,7 +227,7 @@ async def compose_parts(bot: Bot, lines: str, knowledge: str, facts: list[str], 
     ending = f"\n\nWrite the JSON in {language}."
     for _ in range(2):  # a model that drifts into another language gets one more try
         try:
-            data = _read_json(await asyncio.wait_for(llm._complete(bot, system, user + ending, max_tokens=1200), timeout=AI_SECONDS))
+            data = _read_json(await compose.ask_model(bot, system, user + ending, 1200, AI_SECONDS))
         except Exception as e:
             logger.warning(f"Writing the after-call email for {bot.bot_id} failed: {e}")
             return None
@@ -255,10 +256,9 @@ async def compose_parts(bot: Bot, lines: str, knowledge: str, facts: list[str], 
 
     verdict, reason = "unchecked", ""
     try:
-        check = _read_json(await asyncio.wait_for(llm._complete(
+        check = _read_json(await compose.ask_model(
             bot, CHECK.format(business=business),
-            f"The email:\n{json.dumps(call, ensure_ascii=False)}\n\nThe call:\n{lines[-TRANSCRIPT_CHARS:]}\n\n{context}", max_tokens=1200),
-            timeout=AI_SECONDS))
+            f"The email:\n{json.dumps(call, ensure_ascii=False)}\n\nThe call:\n{lines[-TRANSCRIPT_CHARS:]}\n\n{context}", 1200, AI_SECONDS))
         verdict, reason = str(check.get("verdict") or "").lower(), _plain(check.get("reason"))[:300]
         if verdict == "fix":
             fixed = _kept(check.get("email") or {}, sources)
@@ -288,7 +288,7 @@ async def write(job_id: str) -> None:
         design = await setup.design_for(db, job.user_id, bot.bot_id, "after_call", data.get("language") or "en")
         has_summary = any(b.get("type") == "call_summary" for b in design["blocks"])
         replies_left = await plans.can_reply(db, bot.bot_id)
-        facts = await arranged(db, call)
+        facts = await arranged(db, call.bot_id, call.caller_e164)
         files = await compose._files(db, job.user_id, bot.bot_id) if any(b.get("type") == "files" for b in design["blocks"]) else []
         sender = await _sender(db, job, bot)
         lines = llm._lines(call.transcript or [])
@@ -369,7 +369,8 @@ async def made(db, job: EmailJob, sender, unsubscribe_url: Optional[str], link=N
     name = data.get("name")
     values = {"name": name, "first_name": compose._first_name(name), "business": sender.name, "assistant": bot.bot_name if bot else "",
               "email": job.to_email, "phone": data.get("phone") or "", "signature": sender.name, "call": data.get("call") or {},
-              "files": files, "actions": {"whatsapp": await compose.whatsapp_link(db, job.user_id, job.bot_id)}}
+              "files": files, "actions": {"whatsapp": await compose.whatsapp_link(db, job.user_id, job.bot_id),
+                                          **await links.actions_for(db, job.user_id, job.bot_id, job.to_email)}}
     tracker = links.Tracker(job.user_id, job.id)
     track = link or (lambda url, kind, label: tracker(url if kind != "file" else f"file:{url}", kind, label))
     rendered = render.email(design, values, render.brand_of(bot.visual_config if bot else None, sender.name),

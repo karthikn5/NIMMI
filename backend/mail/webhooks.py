@@ -9,6 +9,7 @@ once, so it's kept once by its svix-id.
 - complained (marked as spam): this business never emails the address again.
 - failed / suppressed: Resend didn't send it; History says why.
 - opened / clicked: kept as hints (mail apps open emails by themselves).
+- received: someone replied (mail/inbound.py).
 
 Emails are found by the job tag Nimmi puts on every customer email (or Resend's email id); the workspace by the ws tag.
 """
@@ -95,6 +96,9 @@ async def handle(event_id: str, payload: dict) -> None:
             await db.commit()
         except IntegrityError:
             return  # Resend sent this event before: done then
+        if kind == "email.received":
+            from mail import inbound
+            return await inbound.received(data)
 
         now = datetime.utcnow()
         customer = tags.get("kind") in ("customer", None) and owner is not None

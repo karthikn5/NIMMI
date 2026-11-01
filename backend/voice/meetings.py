@@ -161,9 +161,9 @@ async def _why_not(db: AsyncSession, at: datetime, settings: dict, owner_id: str
 
 # ─── booking on a call ───────────────────────────────────────────
 async def book(settings: dict, *, owner_id: str, bot_id: str, e164: Optional[str], args: dict, name: Optional[str],
-               source_call_id: Optional[str], test: bool) -> tuple[str, Optional[Meeting]]:
+               source_call_id: Optional[str], test: bool, via: str = "a call") -> tuple[str, Optional[Meeting]]:
     """The caller picked a time: ask for it (or move the meeting they have). Returns what to tell the model, and the
-    meeting."""
+    meeting. `via`: how they asked, for its history."""
     mt, tz, now = settings["meetings"], zone(settings), now_utc()
     at = local_time(args.get("date"), args.get("time"), tz)
     if at is None:
@@ -191,10 +191,10 @@ async def book(settings: dict, *, owner_id: str, bot_id: str, e164: Optional[str
         if accepting:
             meeting = existing
             meeting.status = "confirmed"
-            _history(meeting, "Agreed on a call to the time the team proposed")
+            _history(meeting, f"Agreed on {via} to the time the team proposed")
         elif existing is not None:
             meeting = existing
-            _history(meeting, f"Moved on a call from {when_text(starts(meeting), tz, now)} to {when}")
+            _history(meeting, f"Moved on {via} from {when_text(starts(meeting), tz, now)} to {when}")
             meeting.starts_at, meeting.kind = stored(at), kind
             meeting.status = "requested" if mt["approval"] else "confirmed"
             meeting.topic = topic or meeting.topic
@@ -202,7 +202,7 @@ async def book(settings: dict, *, owner_id: str, bot_id: str, e164: Optional[str
             meeting = Meeting(user_id=owner_id, bot_id=bot_id, e164=e164, kind=kind, topic=topic, starts_at=stored(at),
                               minutes=mt["minutes"], status="requested" if mt["approval"] else "confirmed",
                               source_call_id=source_call_id, history=[])
-            _history(meeting, f"Asked for on a call, for {when}")
+            _history(meeting, f"Asked for on {via}, for {when}")
             db.add(meeting)
         meeting.name = person or meeting.name
         meeting.email = email or meeting.email
@@ -227,13 +227,13 @@ async def book(settings: dict, *, owner_id: str, bot_id: str, e164: Optional[str
             "call to confirm."), meeting
 
 
-async def cancel_by_caller(meeting_id: str, reason: str) -> str:
+async def cancel_by_caller(meeting_id: str, reason: str, via: str = "a call") -> str:
     async with async_session() as db:
         meeting = await db.get(Meeting, meeting_id)
         if meeting is None or meeting.status not in ACTIVE:
             return "There's no meeting to cancel."
         meeting.status = "cancelled"
-        _history(meeting, f"Cancelled by them on a call{': ' + reason.strip()[:200] if reason.strip() else ''}")
+        _history(meeting, f"Cancelled by them on {via}{': ' + reason.strip()[:200] if reason.strip() else ''}")
         await _cancel_calls(db, meeting.id)
         await db.commit()
     from notify.events import fire_and_forget
@@ -436,6 +436,14 @@ def _texts(meeting: Meeting, settings: dict, business: str, what: str) -> tuple[
         note = f"A reminder that it's coming up. {joining}"
         text = f"Hi {name}, a reminder: your {kind} meeting with {business} is {when}. {joining}"
         subject = f"Reminder: your meeting with {business}, {when}"
+    elif what == "thanks":
+        note = "Thank you for meeting with us."
+        text = f"Hi {name}, thank you for meeting with {business}. If there's anything else you'd like to know, just reply."
+        subject = f"Thanks for meeting with {business}"
+    elif what == "missed":
+        note = "We missed you. Reply here if you'd like another time."
+        text = f"Hi {name}, we're sorry we missed you at your meeting with {business} {when}. Reply here if you'd like another time."
+        subject = "Sorry we missed you"
     elif what == "cancelled":
         note = "It has been cancelled. Reply here if you'd like another time."
         text = f"Hi {name}, your meeting with {business} {when} has been cancelled. Reply here if you'd like another time."
@@ -500,7 +508,12 @@ async def _to_person(meeting_id: str, what: str) -> Optional[str]:
         # someone who unsubscribed; never to an address that bounced or reported spam.
         sender = await senders.sender_for(db, meeting.user_id, meeting.bot_id)
         blocked = await suppress.why_blocked(db, meeting.user_id, meeting.email, requested=True) if meeting.email else None
-    text, params, subject = _texts(meeting, settings, business, what)
+        text, params, subject = _texts(meeting, settings, business, what)
+        made, reply_to = None, sender.reply_to
+        if meeting.email and not blocked:
+            from mail import meeting_mail
+            made, reply_to = await meeting_mail.made(db, meeting, what, text, subject, settings, sender)
+            await db.commit()
     via, problems = [], []
     if number is not None:
         try:
@@ -522,8 +535,8 @@ async def _to_person(meeting_id: str, what: str) -> Optional[str]:
     elif meeting.email:
         invite = [{"filename": "meeting.ics", "content": ics(meeting, settings, business),
                    "content_type": "text/calendar; charset=utf-8; method=PUBLISH"}] if what == "confirmed" else None
-        sent = await email.deliver(meeting.email, subject, text, from_name=sender.name, from_address=sender.address,
-                                   api_key=sender.api_key, reply_to=sender.reply_to, attachments=invite,
+        sent = await email.deliver(meeting.email, made.subject, made.text, made.html, from_name=sender.name, from_address=sender.address,
+                                   api_key=sender.api_key, reply_to=reply_to, attachments=invite,
                                    tags={"ws": meeting.user_id, "kind": "customer", "meeting": meeting.id})
         if sent.ok:
             via.append("email")
@@ -546,6 +559,17 @@ async def send_confirmation(meeting_id: str) -> None:
     if meeting is not None and meeting.status == "confirmed":
         await _once(meeting, "meeting_confirmed", lambda: _to_person(meeting_id, "confirmed"))
         await notify_team(meeting_id, "confirmed")
+
+
+async def after_meeting(meeting_id: str, attended: bool) -> None:
+    """The team marked it: a thank-you, or "sorry we missed you" with a link to book again (each once; settings "meeting")."""
+    from mail import setup
+    async with async_session() as db:
+        meeting = await db.get(Meeting, meeting_id)
+        if meeting is None or not (await setup.settings_for(db, meeting.bot_id))["meeting"]["thanks" if attended else "missed"]:
+            return
+    what = "thanks" if attended else "missed"
+    await _once(meeting, f"meeting_{what}", lambda: _to_person(meeting_id, what))
 
 
 async def send_cancelled(meeting_id: str) -> None:

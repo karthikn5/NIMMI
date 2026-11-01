@@ -112,6 +112,9 @@ SCREENS: dict[str, dict] = {
     "email_overview": {"title": "Email: Overview", "path": "/dashboard/email", "about": (
         "How their customer emails are going over the last 30 days (sent, delivered, bounced, reported as spam, "
         "failed), which automatic emails are on, their sending domains, and recent problems. Owners and admins.")},
+    "email_inbox": {"title": "Email: Inbox", "path": "/dashboard/email/inbox", "about": (
+        "People who replied to the business's emails: read each conversation, with what the AI made of it and its draft answer; "
+        "send, change or drop the draft, write an answer, ask the AI for one, keep notes, close it.")},
     "email_automations": {"title": "Email: Automations", "path": "/dashboard/email/automations", "about": (
         "Alerts to their team (new leads, call summaries, someone asking for a person) and automatic emails to "
         "customers after a chat, after a call, when a call met its goal, when a call didn't reach them, and after the "
@@ -150,7 +153,7 @@ POINTS = {
         ("questions", "Questions"), ("voice", "Voice"), ("whatsapp", "WhatsApp"), ("email", "Email"),
         ("integrations", "Integrations"), ("analytics", "Analytics"), ("billing", "Billing"))},
     **{f"email.tab.{k}": f"the Email section's {v} tab" for k, v in (
-        ("overview", "Overview"), ("automations", "Automations"), ("drafts", "Drafts"), ("bulk", "Bulk email"), ("history", "History"),
+        ("overview", "Overview"), ("inbox", "Inbox"), ("automations", "Automations"), ("drafts", "Drafts"), ("bulk", "Bulk email"), ("history", "History"),
         ("settings", "Settings"))},
     **{f"builder.tab.{k}": f"the builder's {k.capitalize()} tab" for k in ("design", "knowledge", "behaviour", "flow", "leads")},
     "builder.test": "the builder's Test button", "builder.install": "the builder's 'Add to website' button",

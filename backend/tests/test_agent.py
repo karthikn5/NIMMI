@@ -606,7 +606,7 @@ def test_the_dashboard_and_the_agent_name_the_same_screens_and_elements():
     built = {"nav": ("assistants", "deployments", "live_chat", "questions", "voice", "whatsapp", "email", "integrations", "analytics", "billing"),
              "voice.tab": ("overview", "agents", "knowledge", "contacts", "calls", "schedule", "campaigns", "data", "numbers", "compliance"),
              "whatsapp.tab": ("overview", "inbox", "assistant", "files", "settings"),
-             "email.tab": ("overview", "automations", "drafts", "bulk", "history", "settings"),
+             "email.tab": ("overview", "inbox", "automations", "drafts", "bulk", "history", "settings"),
              "builder.tab": ("design", "knowledge", "behaviour", "flow", "leads")}
     for prefix, values in built.items():
         if "data-agent={`" + prefix + ".${" in pages:
@@ -871,6 +871,52 @@ def test_nimmi_changes_an_email_draft_with_undo_and_sends_or_discards_only_on_co
             await db.delete(await db.get(EmailJob, first))
             await db.commit()
     run(tidy)
+
+
+def test_nimmi_reads_the_inbox_without_marking_it_read_and_answers_only_on_confirm(client, make_user, model, run, monkeypatch):
+    from backend.models import EmailThread, ThreadMessage
+    from database import async_session
+    from notify import email as mailer
+    monkeypatch.setenv("REPLY_DOMAIN", "mail.nimmiai.in")
+    sent = []
+
+    async def deliver(to, subject, text, html_body=None, **more):
+        sent.append({"to": to, "text": text})
+        return mailer.Delivery(True, id="re_1")
+    monkeypatch.setattr(mailer, "deliver", deliver)
+    user = make_user()
+    bot = user.bot()
+
+    async def start():
+        async with async_session() as db:
+            t = EmailThread(user_id=user.id, bot_id=bot, code=uuid.uuid4().hex[:16], email="priya@inbox-test.in", name="Priya", subject="Hello",
+                            status="open", unread=1, reference_ids=[])
+            db.add(t)
+            await db.flush()
+            db.add(ThreadMessage(thread_id=t.id, user_id=user.id, direction="in", who="customer", status="received", text="Is parking free?", kind="question"))
+            await db.commit()
+            return t.id
+
+    async def state(tid):
+        async with async_session() as db:
+            t = await db.get(EmailThread, tid)
+            return t.status, t.unread, t.notes
+    tid = run(start)
+    model([ToolCall("c1", "email_inbox", {})], [ToolCall("c2", "update_email_conversation", {"thread_id": tid, "notes": "Call her"})], [Text("Done.")])
+    evs = ask(user, "who wrote, and note it", screen={"id": "email_inbox"})
+    results = [e for e in evs if e["type"] == "TOOL_CALL_RESULT"]
+    assert all(r["ok"] for r in results) and "Is parking free?" in results[0]["content"]
+    assert run(state, tid) == ("open", 1, "Call her")  # still unread
+    assert client.post(f"/api/agent/actions/{results[1]['actionId']}/undo", headers=user.h()).status_code == 200
+    assert run(state, tid)[2] is None
+
+    model([ToolCall("c3", "answer_email", {"thread_id": tid, "text": "Yes, it's free."})], [Text("Confirm above.")])
+    evs = ask(user, "tell her yes", screen={"id": "email_inbox"})
+    card = next(x["value"] for x in evs if x["type"] == "CUSTOM" and x["name"] == "confirm")
+    assert "priya@inbox-test.in" in card["summary"] and sent == []
+    done = client.post(f"/api/agent/actions/{card['actionId']}/confirm", headers=user.h()).json()
+    assert done["state"] == "done" and sent[0]["to"] == "priya@inbox-test.in" and "Yes, it's free." in sent[0]["text"]
+    assert run(state, tid)[0] == "answered"
 
 
 def test_every_route_is_a_tool_or_excluded_with_a_reason_or_pending_for_a_phase(client):

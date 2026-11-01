@@ -31,10 +31,11 @@ export function EmailMovedPanel() {
 
 /** Alerts to the workspace's team (Email > Automations). Customers' emails are per assistant: AssistantEmails. */
 export function TeamAlerts({ draft, set, test, testing }: PanelProps) {
-    const alerts: { key: "email_alerts" | "alert_calls" | "alert_handoffs"; label: string; hint: string }[] = [
+    const alerts: { key: "email_alerts" | "alert_calls" | "alert_handoffs" | "alert_daily"; label: string; hint: string }[] = [
         { key: "email_alerts", label: "New leads", hint: "Someone shares a phone number or email in chat, on WhatsApp or on a call" },
         { key: "alert_calls", label: "Call summaries", hint: "Every answered or transferred call, with the summary and a link to the recording" },
         { key: "alert_handoffs", label: "A customer asks for a person", hint: "So someone can reply from Live chat while they're still there" },
+        { key: "alert_daily", label: "Daily summary", hint: "Each morning: yesterday's leads and calls, and what's waiting for you" },
     ];
 
     return (

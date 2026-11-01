@@ -75,7 +75,7 @@ KINDS: dict[str, dict] = {
         "designs": {
             "en": {"subject": "{{meeting_subject}}", "blocks": [
                 _t("{{meeting_text}}"), {"type": "meeting"}, _button("Join the meeting", "join"),
-                _button("Change the time", "change"), _button("Cancel", "cancel"), SIG]},
+                _button("Change the time", "change"), _button("Cancel", "cancel"), _button("Book another time", "book"), SIG]},
         }},
     "callback_booked": {
         "label": "Call-back booked", "about": "When a call-back is booked for them: on a call, in a chat or from an email.",
@@ -175,6 +175,14 @@ def written_in(text: Optional[str], language: str) -> bool:
     if script == "LATIN":
         return own >= 0.8
     return own >= 0.5 and (len(names) - names.count(script) - names.count("LATIN")) / len(names) <= 0.1
+
+
+def script_of(text: Optional[str]) -> str:
+    """The language code of the script someone wrote in (of the languages in SCRIPTS), else "en"."""
+    names = [unicodedata.name(ch, "").split(" ")[0] for ch in text or "" if ch.isalpha()]
+    found = {script: names.count(script) for script in set(SCRIPTS.values()) if script != "LATIN"}
+    best = max(found, key=found.get)
+    return next(k for k, v in SCRIPTS.items() if v == best) if found[best] >= 3 and found[best] >= names.count("LATIN") / 2 else "en"
 
 
 def language_of(text: Optional[str]) -> str:

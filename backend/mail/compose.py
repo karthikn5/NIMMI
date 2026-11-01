@@ -30,6 +30,17 @@ CHAT_MESSAGES = 24
 _running = False
 
 
+async def ask_model(bot: Bot, system: str, user: str, max_tokens: int, seconds: float) -> str:
+    """One answer for an email. When Gemini is slow (20 s for one word, Nov 2026) the time can run out before the backups get a
+    turn, so a second try starts with them."""
+    from voice import llm
+    try:
+        return await asyncio.wait_for(llm._complete(bot, system, user, max_tokens=max_tokens), timeout=seconds)
+    except asyncio.TimeoutError:
+        logger.info(f"The email model was slow for {bot.bot_id}: trying the backups")
+        return await asyncio.wait_for(llm._complete(bot, system, user, max_tokens=max_tokens, urgent=True), timeout=seconds)
+
+
 def needs_writing(kind: str) -> bool:
     return kind in ("chat_lead",)
 
@@ -86,7 +97,7 @@ async def welcome_parts(bot: Bot, chat: str, captured: dict, files: list[WhatsAp
     user = (f"Conversation:\n{chat[:6000]}\n\nWhat they told us: "
             f"{json.dumps({k: v for k, v in captured.items() if v}, ensure_ascii=False)[:800]}\n\nKnowledge:\n{knowledge[:6000]}")
     try:
-        raw = await asyncio.wait_for(llm._complete(bot, system, user, max_tokens=300), timeout=AI_SECONDS)
+        raw = await ask_model(bot, system, user, 300, AI_SECONDS)
         found = re.search(r"\{.*\}", raw or "", re.S)
         data = json.loads(found.group(0)) if found else {}
     except Exception as e:
@@ -221,7 +232,8 @@ async def welcome(db, job: EmailJob, values: dict, sender, unsubscribe_url: str)
     values = {**values, "first_name": _first_name(values.get("name")), "signature": sender.name,
               "ai_note": data.get("ai_note") if growth else "", "files": files,
               "details_map": (conv.captured_data or {}) if conv else {},
-              "actions": {"whatsapp": await whatsapp_link(db, job.user_id, bot.bot_id if bot else None)}}
+              "actions": {"whatsapp": await whatsapp_link(db, job.user_id, bot.bot_id if bot else None),
+                          **await links.actions_for(db, job.user_id, bot.bot_id if bot else None, job.to_email)}}
     if not growth:  # Starter: the text and buttons, without the AI's note or files
         design = {**design, "blocks": [b for b in design["blocks"] if b["type"] not in ("ai_note", "files")]}
     tracker = links.Tracker(job.user_id, job.id)

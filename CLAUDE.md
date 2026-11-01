@@ -327,8 +327,8 @@ only on the owner's machines): @.claude/private-notes.md
 ## Email (mail_plan.md)
 
 - Phases 0-9 in `mail_plan.md` (written 1 Nov 2026 from the owner's idea, with market research). Phase 0 live 1 Nov
-  2026: sending foundations and the dashboard's Email section (Overview, Automations, Drafts, Bulk email, History, Settings;
-  Integrations > Email points there). Phase 1 in progress: the status is in mail_plan.md section 11.
+  2026: sending foundations and the dashboard's Email section (Overview, Inbox, Automations, Drafts, Bulk email, History, Settings;
+  Integrations > Email points there). Phases 1 and 2 in progress: the status is in mail_plan.md section 11.
 - Sending: `notify/email.py` `deliver()` (Resend, else SMTP) returns Resend's email id; `send_email()` wraps it. Every
   customer email carries tags (`ws`, `job`, `kind`: customer / alert) and an idempotency key (`email-<job>-<attempt>`, so
   "Send again" really sends). Nimmi's own emails come from `EMAIL_FROM`; customer emails from `CUSTOMER_EMAIL_FROM`
@@ -355,9 +355,18 @@ only on the owner's machines): @.claude/private-notes.md
 - Nimmi agent: email tools in `agent/tools/email.py` (group "email", screens `email_*`).
 - An assistant's emails (phase 1): `mail/setup.py` (`EmailSetup`: its own automations and settings over the workspace's;
   a design is what it saved in that language, else in English, else for welcome the workspace's old text, else ready-made),
-  `designs.py` (`KINDS`, blocks, languages; only welcome and after_call are used so far: the other kinds and their settings do
-  nothing yet, so Nimmi doesn't offer them), `render.py` (blocks to mail-safe HTML and text; a block with nothing to show is
-  left out, and so are `book` and `call` buttons until their pages exist), `links.py` (`EmailLink`: tracked links, downloads).
+  `designs.py` (`KINDS`, blocks, languages), `render.py` (blocks to mail-safe HTML and text; a block with nothing to show is left
+  out), `links.py` (`EmailLink`: tracked links, downloads; the signed links below; `actions_for`: Book a time and Call me buttons, only
+  when Schedule takes those).
+- Pages from an email (`mail/public.py`, `/api/email/p/{meeting,book,call}?token=`, signed per meeting or person): a GET only shows,
+  because scanners open links; buttons post. Only times on offer are accepted; bookings go through Schedule (`via` in their history).
+- Meeting emails (`mail/meeting_mail.py`): the `meeting` design around the text `meetings._texts` writes, with the buttons that fit;
+  the team marking one sends the thank-you or "sorry we missed you" (`meetings.after_meeting`, settings `meeting`).
+- During a call (`mail/during_call.py`): `send_email` in `CallTools`, on with `settings.during_call`, sent at once, not queued. The agent
+  knows an address exists and is never told it; one given on the call is spelt back first. 3 a call. A browser test sends nothing.
+- Smaller emails (`mail/small.py`, queued): callback_booked (`book_callback`; `tell_them=False` from an email answer, which says so),
+  voicemail, missed_chat (`Conversation.handoff_at`), chat_copy (`POST /api/chat/email-copy`, only to the address given in that chat;
+  config `email_copy` shows the widget's button). Owner's daily summary: `notify/digest.py`, `alert_daily`, from 9 am India time.
 - The AI's parts are never written in the email loop: `compose.prepare_due` runs by `fire_and_forget`, claims each email
   (`compose_state` pending, working, done, failed) and holds no database connection while a model answers. A sentence with a
   number the sources don't have goes (`keep_known_numbers`). AI-written emails count as AI replies and stop when they're used up.
@@ -375,9 +384,21 @@ only on the owner's machines): @.claude/private-notes.md
   after 14 days): `/api/email/drafts`, `/dashboard/email/drafts`; an approved one goes whatever the setting says by then. After 20
   approvals it offers automatic once. Real calls, Nov 2026 (`dev-scripts/email/compose_probe.py`, 8 calls): no invented numbers, 2-4 s
   for the two model calls when Gemini is quick; the same day it took 20 s for a one-word answer, hence the long time limits.
-- Tests: `tests/test_mail_foundation.py`, `test_mail_designs.py`, `test_after_call_email.py`; browser: `dev-scripts/ui-checks/
-  email_ui.mjs`, `email_design_ui.mjs`, `email_drafts_ui.mjs` with `email_seed.py` and `dev-scripts/email/fake_resend.py` (domains,
-  keys, sending, and Resend's signed reports back to the backend).
+- Replies (phase 2, off until `REPLY_DOMAIN` is set; then customer emails carry `r-<code>@REPLY_DOMAIN` as Reply-To, `threads.py`). Any
+  address at a domain with receiving on reaches the webhook (`email.received`, metadata only); `inbound.py` keeps the row before
+  answering Resend (one per Resend id), fetches the text (`GET /emails/receiving/{id}`, needs a full-access key), and keeps only the new
+  part, as text, never HTML. Their reply stops follow-ups and sends a copy to the business's mailbox, whose Reply-To is the same address:
+  answering it goes on to the person as the business, if `authentication` (from Resend's mail server) passes for a team address.
+  Someone testing with their own address is the person, not the team. `replies.py`: per assistant `settings.replies.mode`: ai, draft
+  (default), team (no AI at all). It answers only the person in the conversation; a stranger's email waits for the team. "Stop" unsubscribes.
+  Call-backs and meetings go through Schedule, at once on ai, when the draft is sent on draft. Answers pass the same checks as the
+  after-call email. Machines are never answered; the AI stops at 3 answers a day, 10 in a conversation, and for a day after the team
+  answers. Dashboard: `/dashboard/email/inbox`, `mail/inbox.py` (`/api/email/inbox`).
+- A reply address must take mail (`address.reply_address_works`): on live, `admin@nimmai.in` was saved, a domain that doesn't exist.
+- Tests: `tests/test_mail_foundation.py`, `test_mail_designs.py`, `test_after_call_email.py`, `test_email_replies.py`,
+  `test_call_emails.py`, `test_email_pages.py`, `test_small_emails.py`; browser: `dev-scripts/ui-checks/email_ui.mjs`,
+  `email_design_ui.mjs`, `email_drafts_ui.mjs`, `email_inbox_ui.mjs`, `email_pages_ui.mjs` with `email_seed.py` and
+  `dev-scripts/email/fake_resend.py` (domains, keys, sending, received emails, and Resend's signed reports back to the backend).
 - Backups (`ops/backup.py`) never run with LOCAL_DEV: a developer's .env can hold the live storage keys.
 
 ## Public site and SEO

@@ -436,7 +436,7 @@ def callback_time(args: dict, settings: dict, now: Optional[datetime] = None) ->
 
 async def book_callback(*, owner_id: str, bot_id: str, e164: str, at: datetime, about: str, name: Optional[str],
                         source_call_id: Optional[str], number_id: Optional[str], tz: ZoneInfo,
-                        created_by: Optional[str] = None, consent: Optional[str] = None) -> CallbackJob:
+                        created_by: Optional[str] = None, consent: Optional[str] = None, tell_them: bool = True) -> CallbackJob:
     """One call-back per person: a newer one replaces the one waiting, and any follow-up planned (it's what they asked
     for instead)."""
     async with async_session() as db:
@@ -453,7 +453,11 @@ async def book_callback(*, owner_id: str, bot_id: str, e164: str, at: datetime, 
         await db.flush()
         await cancel_waiting(db, bot_id, e164, "They asked for a call-back instead", kinds=("follow_up",))
         await db.commit()
-        return job
+    if tell_them:  # the "we'll call you at 4" email, when the assistant sends it
+        from mail import small
+        from notify.events import fire_and_forget
+        fire_and_forget(small.callback_booked(job.id))
+    return job
 
 
 # ─── after a call ─────────────────────────────────────────────────
@@ -1062,7 +1066,7 @@ class CallTools:
 
     def __init__(self, settings: dict, *, owner_id: str, bot_id: str, e164: Optional[str], number_id: Optional[str],
                  test: bool = False, upcoming: Optional[dict] = None, name: Optional[str] = None, call_id=None,
-                 open_calls: Optional[list[OpenCall]] = None):
+                 open_calls: Optional[list[OpenCall]] = None, emails: Optional[dict] = None):
         self.settings, self.tz = settings, zone(settings)
         self.owner_id, self.bot_id, self.e164, self.number_id = owner_id, bot_id, e164, number_id
         self.test = test or not e164  # a browser test: nothing is booked
@@ -1071,6 +1075,8 @@ class CallTools:
         self.call_id = call_id or (lambda: None)
         self.open = list(open_calls or [])
         self.checked_return = False  # a call-back asked for while they may be returning a missed call: checked once
+        self.emails = emails          # what send_email can do on this call (mail/during_call.py); None when it's off
+        self.emailed = 0
 
     @property
     def callbacks(self) -> bool:
@@ -1134,11 +1140,17 @@ class CallTools:
                 out.append({"name": "cancel_meeting", "description": "Cancel this caller's upcoming meeting, when they ask to.",
                             "parameters": {"type": "object", "properties": {
                                 "reason": {"type": "string", "description": "Why, in a few words, if they said"}}}})
+        if self.emails:
+            from mail import during_call
+            out.append(during_call.spec(self.emails))
         return out
 
     def rules(self) -> str:
         """For the instructions: when to use them, and what's already waiting for this caller."""
         lines: list[str] = []
+        if self.emails:
+            from mail import during_call
+            lines.append(during_call.rules(self.emails))
         if self.callbacks:
             lines.append("- If the caller is busy or asks you to call later, book it straight away with schedule_callback "
                          "(it checks the calling hours and tells you the nearest time when theirs is outside them), then "
@@ -1189,6 +1201,8 @@ class CallTools:
         try:
             if name == "schedule_callback":
                 return await self._callback(args or {})
+            if name == "send_email":
+                return await self._email(args or {})
             if name == "cancel_callback":
                 return await self._cancel_callback()
             from voice import meetings
@@ -1202,6 +1216,14 @@ class CallTools:
             logger.warning(f"Schedule function {name} failed: {e}")
             return "That couldn't be done just now. Tell the caller the team will follow up."
         return f"There's no function called {name}. Answer without it."
+
+    async def _email(self, args: dict) -> str:
+        from mail import during_call
+        if self.test:
+            return "This is a test call in the browser, so no email goes. On a phone call it would. Tell the tester that."
+        result = await during_call.send(self.owner_id, self.bot_id, self.e164, self.call_id(), self.name, args, self.emailed)
+        self.emailed += 1 if result.startswith("Sent") else 0
+        return result
 
     async def _callback(self, args: dict) -> str:
         if any(o.tried_at for o in self.open) and not self.checked_return:
@@ -1258,7 +1280,9 @@ async def tools_for(owner_id: str, bot_id: str, e164: Optional[str], number_id: 
             settings = {**settings, "callbacks": {**settings["callbacks"], "enabled": False},
                         "meetings": {**settings["meetings"], "enabled": False}}
         waiting = await open_calls(db, bot_id, e164, settings, skip=skip) if e164 and not test else []
-        if not (settings["callbacks"]["enabled"] or settings["meetings"]["enabled"] or waiting):
+        from mail import during_call
+        emails = await during_call.offer(db, owner_id, bot_id, e164)
+        if not (settings["callbacks"]["enabled"] or settings["meetings"]["enabled"] or waiting or emails):
             return None
         upcoming = {}
         if e164:
@@ -1266,7 +1290,7 @@ async def tools_for(owner_id: str, bot_id: str, e164: Optional[str], number_id: 
                         "callback": await waiting_job(db, bot_id, e164, "callback")}
     return CallTools(settings, owner_id=owner_id, bot_id=bot_id, e164=e164, number_id=number_id, test=test,
                      upcoming={k: v for k, v in upcoming.items() if v is not None}, name=name, call_id=call_id,
-                     open_calls=waiting)
+                     open_calls=waiting, emails=emails)
 
 
 # ─── overview counts ──────────────────────────────────────────────

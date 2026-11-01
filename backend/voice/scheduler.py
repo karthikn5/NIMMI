@@ -332,10 +332,14 @@ async def _loop() -> None:
             from mail import compose
             fire_and_forget(compose.prepare_due())  # the AI's parts of emails due soon, without holding up this loop
             await automations.process_due()  # automatic customer emails
+            from mail import inbound
+            fire_and_forget(inbound.process_due())  # replies that came in, in case their process went down
             from whatsapp import memory as whatsapp_memory, replies as whatsapp_replies
             await whatsapp_replies.sweep()  # WhatsApp answers whose timer was lost (a restart)
             if datetime.utcnow() - last_summaries > timedelta(minutes=2):
                 await whatsapp_memory.summarise_quiet()  # what quiet WhatsApp chats were about, for calls and later chats
+                from mail import small
+                await small.missed_chats()  # someone asked for a person and nobody came
                 last_summaries = datetime.utcnow()
             # Always: customers' own phone accounts work even when Nimmi has none configured.
             await expire_stale_calls()
@@ -364,6 +368,8 @@ async def _loop() -> None:
                 await mail_domains.check_pending()  # businesses' own sending domains waiting for their DNS records
                 from mail import after_call
                 await after_call.expire_drafts()  # after-call emails nobody looked at for two weeks
+                from notify import digest
+                await digest.maybe_send()  # the owner's daily summary
                 last_billing = datetime.utcnow()
             if datetime.utcnow() - last_sites > timedelta(minutes=2):
                 from sites import deploy as site_deploys

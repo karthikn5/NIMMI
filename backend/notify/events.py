@@ -146,6 +146,8 @@ async def call_completed(call_id: str) -> None:
 
     if call.channel == "browser":
         return  # test calls don't notify anyone
+    from mail import small
+    await small.voicemail(call.id)
     bot_name = bot.bot_name if bot else "Your assistant"
     captured = call.captured or {}
     contact = extract_contact(captured)

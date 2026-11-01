@@ -385,7 +385,7 @@ function BlockEditor({ block: b, index: i, update, insert, texts, placeholders, 
                 ) : (
                     <p className="sm:col-span-2 text-xs text-stone-500">
                         {b.action === "whatsapp" ? "Your WhatsApp number, when one is connected to this assistant. Otherwise the button is left out."
-                            : b.action === "book" || b.action === "call" ? "Left out of emails for now: the page it opens isn't ready yet."
+                            : b.action === "book" || b.action === "call" ? "Shown when this assistant takes meetings or call-backs (Voice > Schedule)."
                                 : "Filled in for each meeting."}
                     </p>
                 )}

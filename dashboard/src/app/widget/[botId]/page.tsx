@@ -66,6 +66,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     const [pending, setPending] = useState<Pending | null>(null);
     const [flowDone, setFlowDone] = useState(false); // no flow, or it has finished: free chat
     const [askedOwnQuestion, setAskedOwnQuestion] = useState(false); // typed to the assistant, not an answer to the flow
+    const [chatCopy, setChatCopy] = useState<"idle" | "sent" | "no_address" | "failed" | "hidden">("idle");
     const [callback, setCallback] = useState<{ open: boolean; phone: string; consent: boolean; state: "idle" | "sending" | "done" | "error"; error: string }>(
         { open: false, phone: "", consent: false, state: "idle", error: "" });
     const socketRef = useRef<Socket | null>(null);
@@ -398,6 +399,19 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
         })();
     }, [botId, apiBase]);
 
+    const emailCopy = async () => {
+        try {
+            const res = await fetch(`${apiBase}/api/chat/email-copy`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ bot_id: botId, visitor_session_id: aiSession }),
+            });
+            const data = await res.json().catch(() => ({}));
+            setChatCopy(data.status === "sent" ? "sent" : data.status === "no_address" ? "no_address" : "failed");
+        } catch {
+            setChatCopy("failed");
+        }
+    };
+
     // Start the flow once, after the config (and so callbacks_enabled) is known.
     useEffect(() => {
         if (!botConfig || flowStarted.current) return;
@@ -704,6 +718,17 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                         <Clock size={10} />
                         <span>Chat history is kept for 24 hours</span>
                     </div>
+                )}
+                {botConfig?.email_copy && mode === "ai" && !pending && chatCopy !== "hidden" && (
+                    chatCopy === "idle" ? (
+                        <button onClick={emailCopy} className={`self-start text-[11px] underline underline-offset-2 px-1 ${onFooter("text-stone-500", "text-white/60")}`}>
+                            Email me this chat
+                        </button>
+                    ) : (
+                        <p className={`text-[11px] px-1 ${onFooter("text-stone-600", "text-white/70")}`}>
+                            {chatCopy === "sent" ? "It's on its way to your email." : chatCopy === "no_address" ? "Share your email in this chat first, and I can send it." : "Sorry, that didn't work."}
+                        </p>
+                    )
                 )}
                 {botConfig?.callbacks_enabled && mode === "ai" && !pending && (
                     callback.state === "done" ? (

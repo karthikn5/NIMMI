@@ -21,7 +21,7 @@ from auth import AuthContext, rate_limit, require_manager
 from backend.models import (Bot, EmailDomain, EmailJob, EmailLink, EmailSender, EmailSetup, EmailTemplate, EmailUnsubscribe,
                             IntegrationSettings, User, WhatsAppFile)
 from database import get_db
-from mail import after_call, compose, designs, domains, links, render, senders, setup, suppress, webhooks
+from mail import address, after_call, compose, designs, domains, links, render, senders, setup, suppress, threads, webhooks
 from notify import automations, email
 
 router = APIRouter(prefix="/api/email", tags=["email"])
@@ -181,6 +181,7 @@ async def save_sender(bot_id: str, data: SenderIn, ctx: AuthContext = Depends(re
     reply_to = data.reply_to.strip()
     if reply_to and not automations.EMAIL_RE.fullmatch(reply_to):
         raise HTTPException(status_code=400, detail="Enter a valid reply-to email address")
+    await address.reply_address_works(reply_to)
     domain_id = data.domain_id.strip() or None
     if domain_id:
         await _own_domain(domain_id, ctx, db)
@@ -261,7 +262,7 @@ async def get_setup(bot_id: str, ctx: AuthContext = Depends(require_manager), db
     return {"bot_id": bot.bot_id, "bot_name": bot.bot_name,
             "automations": await setup.automations_for(db, ctx.owner_id, bot.bot_id),
             "own_automations": bool(row is not None and row.automations),
-            "settings": await setup.settings_for(db, bot.bot_id),
+            "settings": await setup.settings_for(db, bot.bot_id), "replies_on": threads.enabled(),
             "kinds": [{"kind": k, "label": v["label"], "about": v["about"], "placeholders": v["placeholders"],
                        "languages": list(v["designs"]), "saved": saved[k]} for k, v in designs.KINDS.items()],
             "languages": designs.LANGUAGES, "delays": list(automations.DELAYS)}
@@ -272,7 +273,7 @@ class SetupIn(BaseModel):
     settings: Optional[dict] = None     # {"after_call": {...}, "welcome": {...}}
 
 
-GROWTH_SETTINGS = {"after_call", "callback_booked", "voicemail", "missed_chat", "chat_copy"}
+GROWTH_SETTINGS = {"after_call", "replies", "during_call", "callback_booked", "voicemail", "missed_chat", "chat_copy"}
 
 
 @router.put("/setup/{bot_id}")
@@ -300,13 +301,15 @@ async def save_setup(bot_id: str, data: SetupIn, ctx: AuthContext = Depends(requ
         if kind not in setup.SETTINGS or not isinstance(values, dict):
             raise HTTPException(status_code=400, detail="Unknown email setting")
         allowed = {k: v for k, v in values.items() if k in setup.SETTINGS[kind] and k not in ("approved", "approved_unchanged", "suggested")}
-        turning_on = any(v not in (False, "off", 0, None, []) for k, v in allowed.items() if k in ("enabled", "inbound", "outbound"))
+        turning_on = any(v not in (False, "off", 0, None, []) for k, v in allowed.items() if k in ("enabled", "inbound", "outbound", "mode"))
         if kind in GROWTH_SETTINGS and turning_on:
             await plans.require_feature(db, bot.bot_id, "email_alerts")
             if not (await senders.sender_for(db, ctx.owner_id, bot.bot_id)).reply_to:
                 raise HTTPException(status_code=400, detail="Add where replies go (Email > Settings) so customers can answer you")
         if kind == "after_call" and any(allowed.get(d) not in (None, "off", "review", "auto") for d in ("inbound", "outbound")):
             raise HTTPException(status_code=400, detail="The after-call email is off, review first, or automatic")
+        if kind == "replies" and allowed.get("mode") not in (None, "ai", "draft", "team"):
+            raise HTTPException(status_code=400, detail="Replies are answered by the AI, drafted by it, or left to your team")
         await setup.save_settings(db, ctx.owner_id, bot.bot_id, kind, allowed)
     await db.commit()
     return await get_setup(bot.bot_id, ctx, db)
@@ -386,7 +389,7 @@ async def _sample(db: AsyncSession, ctx: AuthContext, bot: Bot, sender: senders.
     return {**SAMPLE, "business": sender.name, "assistant": bot.bot_name, "signature": sender.name,
             "files": [{"name": f.name, "url": "#", "size": compose._size(f.size)} for f in files] or
                      [{"name": "Brochure.pdf", "url": "#", "size": "1.2 MB"}],
-            "actions": {"whatsapp": wa or "https://wa.me/919876543210", "join": "https://meet.google.com",
+            "actions": {"whatsapp": wa or "https://wa.me/919876543210", "book": "https://nimmiai.in", "call": "https://nimmiai.in", "join": "https://meet.google.com",
                         "change": "https://nimmiai.in", "cancel": "https://nimmiai.in"}}
 
 

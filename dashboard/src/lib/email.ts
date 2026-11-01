@@ -86,12 +86,15 @@ export interface AssistantEmails {
     settings: {
         welcome: { ai_note: boolean; files: string[]; ai_files: boolean; max_files: number };
         after_call: { inbound: AfterCallMode; outbound: AfterCallMode; approved: number; approved_unchanged: number; suggested: boolean };
+        replies: { mode: ReplyMode };
+        during_call: { enabled: boolean };
         callback_booked: { enabled: boolean }; voicemail: { enabled: boolean }; missed_chat: { enabled: boolean; minutes: number };
         chat_copy: { enabled: boolean }; meeting: { thanks: boolean; missed: boolean };
     };
     kinds: { kind: EmailKind; label: string; about: string; placeholders: string[]; languages: Language[]; saved: Language[] }[];
     languages: Record<Language, string>;
     delays: string[];
+    replies_on: boolean;  // REPLY_DOMAIN is set on the server: replies come back to Nimmi
 }
 
 export interface Preview { subject: string; html: string; text: string; preheader: string; from: string; reply_to: string | null; too_big: boolean }
@@ -151,3 +154,60 @@ export const ACTION_LABEL: Record<ButtonAction, string> = {
     book: "Book a time", call: "Call me back", whatsapp: "Chat on WhatsApp", link: "Open a link", join: "Join the meeting",
     change: "Change the meeting's time", cancel: "Cancel the meeting",
 };
+
+/* Conversations by email (backend mail/inbox.py, mail/replies.py). */
+export type ReplyMode = "ai" | "draft" | "team";
+export type ThreadStatus = "open" | "answered" | "closed";
+export type ReplyKind = "question" | "call_me" | "meeting" | "not_interested" | "stop" | "thanks" | "auto_reply" | "other";
+
+export interface ThreadRow {
+    id: string;
+    email: string;
+    name: string | null;
+    subject: string | null;
+    status: ThreadStatus | "quiet";
+    kind: ReplyKind | null;
+    unread: number;
+    assigned_to: string | null;
+    bot_id: string | null;
+    bot_name: string | null;
+    last_at: string | null;
+    last: string | null;   // their latest words
+    draft: boolean;        // the AI's answer is waiting
+}
+
+export interface Threads { items: ThreadRow[]; counts: Record<ThreadStatus, number>; unread: number; enabled: boolean }
+
+export interface ThreadMessageRow {
+    id: string;
+    direction: "in" | "out";
+    who: "customer" | "team" | "ai" | "nimmi";
+    status: string;
+    subject: string | null;
+    text: string | null;
+    kind: ReplyKind | null;
+    note: string | null;
+    sender: string | null;
+    attachments: { id: string; filename: string; content_type: string; size: number | null }[];
+    automatic: boolean;
+    by: string | null;
+    action: { type: "callback" | "meeting"; at?: string; date?: string; time?: string } | null;
+    created_at: string | null;
+}
+
+export interface Thread extends ThreadRow {
+    notes: string;
+    messages: ThreadMessageRow[];
+    contact: { name: string | null; phone: string | null; lead_status: string | null; details: Record<string, string> } | null;
+    calls: { id: string; at: string | null; summary: string | null; direction: string }[];
+    mode: ReplyMode;
+}
+
+export const KIND_LABEL: Record<ReplyKind, string> = {
+    question: "Question", call_me: "Wants a call", meeting: "Wants to meet", not_interested: "Not interested", stop: "Asked to stop",
+    thanks: "Thanks", auto_reply: "Automatic message", other: "Other",
+};
+
+export const REPLY_MODES: { value: ReplyMode; label: string }[] = [
+    { value: "draft", label: "AI writes, your team sends" }, { value: "ai", label: "AI answers" }, { value: "team", label: "Your team only" },
+];

@@ -460,6 +460,22 @@ def test_chat_leads_become_contacts_by_email_or_number(client, make_user, run):
 
 # ─── meetings ────────────────────────────────────────────────────
 
+def test_a_reply_address_that_cant_receive_mail_is_refused(client, make_user, monkeypatch):
+    """On live, admin@nimmai.in was saved: that domain doesn't exist, so replies to the business would be lost."""
+    from mail import address
+
+    async def lookup(domain):
+        return domain != "nimmai.in"
+    monkeypatch.setattr(address, "_lookup", lookup)
+    address._cache.clear()
+    u = make_user()
+    bot = u.bot("Sunrise")
+    refused = client.put(f"/api/email/senders/{bot}", json={"reply_to": "admin@nimmai.in"}, headers=u.h())
+    assert refused.status_code == 400 and "nimmai.in doesn't receive email" in refused.json()["detail"]
+    assert client.put("/api/integrations", json={**BASE, "reply_to": "admin@nimmai.in"}, headers=u.h()).status_code == 400
+    assert client.put(f"/api/email/senders/{bot}", json={"reply_to": "admin@nimmiai.in"}, headers=u.h()).status_code == 200
+
+
 def test_meeting_emails_reply_to_the_business_and_skip_bounced_addresses(client, make_user, run, monkeypatch):
     from voice import meetings
     u = make_user()

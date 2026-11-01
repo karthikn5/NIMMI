@@ -18,6 +18,9 @@ SETTINGS: dict[str, dict] = {
     "welcome": {"ai_note": True, "files": [], "ai_files": True, "max_files": 2},
     # The AI's email after a call, per direction: off, review (the team approves each), auto.
     "after_call": {"inbound": "off", "outbound": "off", "approved": 0, "approved_unchanged": 0, "suggested": False},
+    # Who answers when someone replies (mail/replies.py): ai, draft (the AI writes, the team sends), team.
+    "replies": {"mode": "draft"},
+    "during_call": {"enabled": False},  # the phone agent can email a file or a note while they talk (mail/during_call.py)
     "callback_booked": {"enabled": False},
     "voicemail": {"enabled": False},
     "missed_chat": {"enabled": False, "minutes": 10},

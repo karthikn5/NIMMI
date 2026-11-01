@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, JSON, Integer, Float, UniqueConstraint
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, JSON, Index, Integer, Float, UniqueConstraint
 from sqlalchemy.sql import func
 import uuid
 from datetime import datetime, timezone
@@ -45,6 +45,7 @@ class Conversation(Base):
     captured_data = Column(JSON, default={})
     handoff_requested = Column(Boolean, default=False)
     handoff_status = Column(String, default="ai") # ai, pending, human
+    handoff_at = Column(DateTime(timezone=True), nullable=True)  # when they asked for a person
     agent_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     current_node_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -526,6 +527,7 @@ class IntegrationSettings(Base):
     # Email: which team alerts go out, and automatic emails to customers
     alert_calls = Column(Boolean, nullable=True)        # call summaries (None = on, the original behaviour)
     alert_handoffs = Column(Boolean, nullable=True)     # "a customer asked for a person"
+    alert_daily = Column(Boolean, nullable=True)        # the owner's daily summary (notify/digest.py)
     sender_name = Column(String, nullable=True)         # shown as the From name on customer emails
     reply_to = Column(String, nullable=True)            # where customers' replies go
     email_automations = Column(JSON, nullable=True)     # {"chat_lead": {...}, "call_lead": {...}}
@@ -663,6 +665,58 @@ class EmailTemplate(Base):
     blocks = Column(JSON, nullable=False)
     updated_by = Column(String(36), nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class EmailThread(Base):
+    """A conversation by email with one person, per assistant (mail plan, phase 2). Customer emails carry its own reply
+    address (r-<code>@REPLY_DOMAIN), so a reply comes back to it (mail/threads.py)."""
+    __tablename__ = "email_threads"
+    __table_args__ = (Index("ix_email_thread_person", "bot_id", "email"),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), nullable=True)  # None: a bulk email
+    code = Column(String(24), unique=True, nullable=False)
+    email = Column(String, nullable=False)  # the person's address, in lower case
+    name = Column(String, nullable=True)
+    subject = Column(String(300), nullable=True)
+    status = Column(String(12), default="quiet", index=True)  # quiet (nothing from them yet), open, answered, closed
+    kind = Column(String(20), nullable=True)   # what their last email was (mail/replies.py KINDS)
+    unread = Column(Integer, default=0)
+    assigned_to = Column(String(36), nullable=True)  # the team member looking after it
+    notes = Column(Text, nullable=True)              # the team's own
+    last_message_id = Column(String, nullable=True)  # their newest email's Message-ID, for In-Reply-To
+    reference_ids = Column(JSON, nullable=True)      # the Message-IDs so far, oldest first
+    last_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ThreadMessage(Base):
+    """One email in a conversation. What comes in is kept before Resend gets its answer, then fetched and handled by one
+    process (status new -> working -> received); what goes out is an automatic email, or an answer by the AI or the team."""
+    __tablename__ = "email_messages"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    thread_id = Column(String(36), ForeignKey("email_threads.id", ondelete="CASCADE"), index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    direction = Column(String(4), nullable=False)  # in, out
+    who = Column(String(10), nullable=False)       # customer, team, ai, nimmi (an automatic email)
+    # new, working, received, failed; out: draft (the AI's, waiting for the team), sent, failed, discarded
+    status = Column(String(10), default="sent", index=True)
+    provider_id = Column(String, nullable=True, unique=True)  # Resend's id for a received email: each is kept once
+    message_id = Column(String, nullable=True)     # the email's own Message-ID
+    job_id = Column(String(36), nullable=True)     # the automatic email it was
+    sender = Column(String, nullable=True)         # the address it came from
+    subject = Column(String(300), nullable=True)
+    text = Column(Text, nullable=True)             # what's new in it, without the email it quotes
+    attachments = Column(JSON, nullable=True)      # [{id, filename, content_type, size}]: they stay at Resend
+    authentication = Column(JSON, nullable=True)   # {spf, dkim, dmarc}: from Resend's mail server, not from the email
+    automatic = Column(Boolean, nullable=True)     # an out-of-office, a delivery report
+    kind = Column(String(20), nullable=True)       # what the AI read it as (mail/replies.py KINDS)
+    note = Column(String(300), nullable=True)      # what the AI did about it, or why it waits for a person
+    action = Column(JSON, nullable=True)           # on a draft: the booking to make when it's sent
+    by = Column(String(36), nullable=True)         # the team member
+    attempts = Column(Integer, default=0)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 class EmailLink(Base):

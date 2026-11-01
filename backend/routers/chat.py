@@ -183,7 +183,7 @@ async def _pre_ai(chat: ChatMessage, bot: Bot, db: AsyncSession, live_chat: bool
         if not conv:
             conv = Conversation(bot_id=bot.bot_id, visitor_session_id=chat.visitor_session_id)
             db.add(conv)
-        conv.handoff_requested, conv.handoff_status = True, "pending"
+        conv.handoff_requested, conv.handoff_status, conv.handoff_at = True, "pending", datetime.utcnow()
         await db.commit()
         await _request_handoff(bot, conv, chat.message)
         away = await assist.away_reply(bot.user_id)
@@ -359,6 +359,23 @@ async def transcribe_speech(request: Request, bot_id: str = Form(..., max_length
         logger.warning(f"Voice input failed: {e}")
         raise HTTPException(status_code=502, detail="Couldn't understand that. Please try again or type your message.")
     return {"text": text}
+
+
+class CopyRequest(BaseModel):
+    bot_id: str = Field(..., max_length=36)
+    visitor_session_id: str = Field(..., max_length=200)
+
+
+@router.post("/chat/email-copy")
+async def email_copy(data: CopyRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Email me this chat. It only ever goes to the address given in this chat, so it can't be aimed at anyone else."""
+    _limit(request, "email-copy", data.bot_id, 3)
+    bot = await _load_bot(data.bot_id, db)
+    conv = await _conversation(bot, data.visitor_session_id, db)
+    if conv is None:
+        return {"status": "no_address"}  # nothing said yet, so no address either
+    from mail import small
+    return {"status": await small.chat_copy(bot, conv)}
 
 
 @router.post("/chat/variables")

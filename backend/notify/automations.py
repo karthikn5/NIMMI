@@ -29,7 +29,7 @@ from sqlalchemy.future import select
 
 from database import async_session
 from backend.models import CallLog, Conversation, EmailJob, IntegrationSettings, NotificationLog
-from mail import address as mail_address, senders, setup, suppress
+from mail import address as mail_address, senders, setup, suppress, threads
 from notify import email
 from phone import display, extract_contact
 
@@ -74,7 +74,8 @@ DEFAULTS: dict[str, dict] = {
 
 LABELS = {"chat_lead": "After a chat", "call_lead": "After a call", "goal_met": "Goal met on a call",
           "call_missed": "Couldn't reach them", "handoff_done": "After your team helps", "broadcast": "Bulk email",
-          "after_call": "After a call, by the AI"}
+          "after_call": "After a call, by the AI", "during_call": "Sent during a call", "callback_booked": "Call-back booked",
+          "voicemail": "Voicemail left", "missed_chat": "Missed live chat", "chat_copy": "Copy of the chat"}
 
 
 def _normalize(saved: Optional[dict], default: dict) -> dict:
@@ -273,7 +274,7 @@ async def _reached_goal_since(db, job: EmailJob) -> bool:
 async def process_due() -> None:
     """Send queued customer emails whose time has come (called by the background loop)."""
     from notify.events import _once  # the delivery log, one row per (kind, ref)
-    from mail import after_call, compose
+    from mail import after_call, compose, small
     now = datetime.utcnow()
     async with async_session() as db:
         jobs = (await db.execute(select(EmailJob).where(EmailJob.status == "queued", EmailJob.send_at <= now)
@@ -291,6 +292,11 @@ async def process_due() -> None:
                 stop = await after_call.hold_back(db, job)
                 if stop == "wait":
                     continue
+                if stop:
+                    job.status, job.error = "cancelled", stop
+                    continue
+            elif job.automation in small.KINDS:
+                stop = await small.hold_back(db, job)
                 if stop:
                     job.status, job.error = "cancelled", stop
                     continue
@@ -316,9 +322,14 @@ async def process_due() -> None:
                 job.subject = render(job.subject_tpl, values)[:200] or job.subject
                 job.body = render(job.body_tpl or "", values) or job.body
             link = unsubscribe_url(job.user_id, job.to_email, bot_id)
-            designed = job.automation == "after_call" or (values is not None and job.automation == "chat_lead" and (job.step or 1) == 1)
+            thread = await threads.thread_for(db, job.user_id, bot_id, job.to_email, (job.merge_data or {}).get("name"), job.subject) \
+                if threads.enabled() else None
+            reply_to = threads.address(thread) if thread else sender.reply_to  # a reply comes back to Nimmi, when that's set up
+            designed = job.automation == "after_call" or job.automation in small.KINDS or (
+                values is not None and job.automation == "chat_lead" and (job.step or 1) == 1)
             if designed:  # from the assistant's design
                 made, tracked = await (after_call.made(db, job, sender, link) if job.automation == "after_call"
+                                       else small.made(db, job, sender, link) if job.automation in small.KINDS
                                        else compose.welcome(db, job, values, sender, link))
                 job.subject, job.body = made.subject, made.text.split("\n\n--\n")[0]
                 text, html_body = made.text, made.html
@@ -329,10 +340,10 @@ async def process_due() -> None:
             job.attempts = (job.attempts or 0) + 1
             result: dict = {}
 
-            async def send(job=job, text=text, html_body=html_body, sender=sender, link=link, result=result):
+            async def send(job=job, text=text, html_body=html_body, sender=sender, link=link, result=result, reply_to=reply_to):
                 result["called"] = True
                 sent = await email.deliver(
-                    job.to_email, job.subject, text, html_body, reply_to=sender.reply_to,
+                    job.to_email, job.subject, text, html_body, reply_to=reply_to,
                     from_name=sender.name, from_address=sender.address, api_key=sender.api_key, unsubscribe_url=link,
                     tags={"ws": job.user_id, "job": job.id, "kind": "customer"},
                     idempotency_key=f"email-{job.id}-{job.attempts}")  # a retry of this send is a no-op at Resend
@@ -343,6 +354,8 @@ async def process_due() -> None:
             sent = result.get("sent")
             if sent is not None and sent.ok:
                 job.status, job.error, job.sent_at, job.provider_id = "sent", None, datetime.utcnow(), sent.id
+                if thread:
+                    threads.note_sent(db, thread, job)
             elif result.get("called"):
                 job.status, job.error = "failed", (sent.error if sent else None) or "Email provider not configured or rejected the message"
             else:  # another process sent it already (its claim was there first)

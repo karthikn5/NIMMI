@@ -12,7 +12,7 @@ A button's action: book (a time with the team), call (a call-back), whatsapp, li
 import unicodedata
 from typing import Optional
 
-LANGUAGES = {"en": "English", "ta": "Tamil", "hi": "Hindi"}
+LANGUAGES = {"en": "English", "ta": "Tamil", "hi": "Hindi", "te": "Telugu", "kn": "Kannada", "ml": "Malayalam", "mr": "Marathi", "bn": "Bengali", "gu": "Gujarati", "pa": "Punjabi", "od": "Odia"}
 SCRIPTS = {"en": "LATIN", "hi": "DEVANAGARI", "mr": "DEVANAGARI", "ta": "TAMIL", "te": "TELUGU", "kn": "KANNADA", "ml": "MALAYALAM",
            "bn": "BENGALI", "gu": "GUJARATI", "pa": "GURMUKHI", "od": "ORIYA"}
 BLOCK_TYPES = ("text", "heading", "ai_note", "call_summary", "meeting", "files", "button", "details", "transcript",
@@ -148,6 +148,57 @@ WORDS = {
            "team_replies": "इस बारे में हमारी टीम आपको जवाब देगी।"},
 }
 
+# The welcome and after-call frames in the other languages the phone agent speaks: (welcome subject, greeting line, thanks, book, WhatsApp, questions; call subject, thanks, corrections).
+FRAMES = {
+    "te": ("{{business}} ను సంప్రదించినందుకు ధన్యవాదాలు", "నమస్కారం {{first_name|}},", "{{business}} పట్ల మీ ఆసక్తికి ధన్యవాదాలు. మా బృందంలోని ఒకరు త్వరలో మిమ్మల్ని సంప్రదిస్తారు.", "సమయం బుక్ చేయండి",
+           "WhatsApp లో మాట్లాడండి", "ఏవైనా ప్రశ్నలు ఉంటే, ఈ ఈమెయిల్‌కు సమాధానం ఇవ్వండి.", "{{business}} తో మీ కాల్", "మాతో మాట్లాడినందుకు ధన్యవాదాలు. మన సంభాషణ సారాంశం కింద ఉంది.",
+           "ఇందులో ఏదైనా సరిదిద్దాలంటే, ఈ ఈమెయిల్‌కు సమాధానం ఇవ్వండి."),
+    "kn": ("{{business}} ಅನ್ನು ಸಂಪರ್ಕಿಸಿದ್ದಕ್ಕಾಗಿ ಧನ್ಯವಾದಗಳು", "ನಮಸ್ಕಾರ {{first_name|}},", "{{business}} ಬಗ್ಗೆ ನಿಮ್ಮ ಆಸಕ್ತಿಗೆ ಧನ್ಯವಾದಗಳು. ನಮ್ಮ ತಂಡದವರೊಬ್ಬರು ಶೀಘ್ರದಲ್ಲೇ ನಿಮ್ಮನ್ನು ಸಂಪರ್ಕಿಸುತ್ತಾರೆ.", "ಸಮಯವನ್ನು ಬುಕ್ ಮಾಡಿ",
+           "WhatsApp ನಲ್ಲಿ ಮಾತನಾಡಿ", "ಏನಾದರೂ ಪ್ರಶ್ನೆಗಳಿದ್ದರೆ, ಈ ಇಮೇಲ್‌ಗೆ ಉತ್ತರಿಸಿ.", "{{business}} ಜೊತೆಗಿನ ನಿಮ್ಮ ಕರೆ", "ನಮ್ಮೊಂದಿಗೆ ಮಾತನಾಡಿದ್ದಕ್ಕಾಗಿ ಧನ್ಯವಾದಗಳು. ನಮ್ಮ ಸಂಭಾಷಣೆಯ ಸಾರಾಂಶ ಕೆಳಗಿದೆ.",
+           "ಇದರಲ್ಲಿ ಏನಾದರೂ ಸರಿಪಡಿಸಬೇಕಿದ್ದರೆ, ಈ ಇಮೇಲ್‌ಗೆ ಉತ್ತರಿಸಿ."),
+    "ml": ("{{business}} മായി ബന്ധപ്പെട്ടതിന് നന്ദി", "നമസ്കാരം {{first_name|}},", "{{business}} നോടുള്ള നിങ്ങളുടെ താൽപ്പര്യത്തിന് നന്ദി. ഞങ്ങളുടെ ടീമിലെ ഒരാൾ ഉടൻ നിങ്ങളെ ബന്ധപ്പെടും.", "സമയം ബുക്ക് ചെയ്യുക",
+           "WhatsApp-ൽ സംസാരിക്കുക", "എന്തെങ്കിലും ചോദ്യങ്ങളുണ്ടെങ്കിൽ, ഈ ഇമെയിലിന് മറുപടി നൽകുക.", "{{business}} യുമായുള്ള നിങ്ങളുടെ കോൾ", "ഞങ്ങളുമായി സംസാരിച്ചതിന് നന്ദി. നമ്മുടെ സംഭാഷണത്തിന്റെ ചുരുക്കം താഴെ കൊടുത്തിരിക്കുന്നു.",
+           "ഇതിൽ എന്തെങ്കിലും തിരുത്തണമെങ്കിൽ, ഈ ഇമെയിലിന് മറുപടി നൽകുക."),
+    "mr": ("{{business}} शी संपर्क साधल्याबद्दल धन्यवाद", "नमस्कार {{first_name|}},", "{{business}} मध्ये दाखवलेल्या रुचीबद्दल धन्यवाद. आमच्या टीममधील कोणीतरी लवकरच तुमच्याशी संपर्क साधेल.", "वेळ बुक करा",
+           "WhatsApp वर बोला", "काही प्रश्न असल्यास, या ईमेलला उत्तर द्या.", "{{business}} सोबतचा तुमचा कॉल", "आमच्याशी बोलल्याबद्दल धन्यवाद. आपल्या संभाषणाचा सारांश खाली दिला आहे.",
+           "यात काही दुरुस्ती हवी असल्यास, या ईमेलला उत्तर द्या."),
+    "bn": ("{{business}}-এর সঙ্গে যোগাযোগ করার জন্য ধন্যবাদ", "নমস্কার {{first_name|}},", "{{business}}-এর প্রতি আপনার আগ্রহের জন্য ধন্যবাদ। আমাদের টিমের কেউ শীঘ্রই আপনার সঙ্গে যোগাযোগ করবেন।", "সময় বুক করুন",
+           "WhatsApp-এ কথা বলুন", "কোনো প্রশ্ন থাকলে এই ইমেলের উত্তর দিন।", "{{business}}-এর সঙ্গে আপনার কল", "আমাদের সঙ্গে কথা বলার জন্য ধন্যবাদ। আমাদের কথোপকথনের সারসংক্ষেপ নিচে দেওয়া হলো।",
+           "এতে কিছু সংশোধনের দরকার হলে এই ইমেলের উত্তর দিন।"),
+    "gu": ("{{business}} નો સંપર્ક કરવા બદલ આભાર", "નમસ્તે {{first_name|}},", "{{business}} માં તમારી રુચિ બદલ આભાર. અમારી ટીમમાંથી કોઈ ટૂંક સમયમાં તમારો સંપર્ક કરશે.", "સમય બુક કરો",
+           "WhatsApp પર વાત કરો", "કોઈ પ્રશ્ન હોય તો આ ઈમેલનો જવાબ આપો.", "{{business}} સાથેનો તમારો કૉલ", "અમારી સાથે વાત કરવા બદલ આભાર. અમારી વાતચીતનો સારાંશ નીચે છે.",
+           "આમાં કંઈ સુધારવાનું હોય તો આ ઈમેલનો જવાબ આપો."),
+    "pa": ("{{business}} ਨਾਲ ਸੰਪਰਕ ਕਰਨ ਲਈ ਧੰਨਵਾਦ", "ਸਤ ਸ੍ਰੀ ਅਕਾਲ {{first_name|}},", "{{business}} ਵਿੱਚ ਤੁਹਾਡੀ ਦਿਲਚਸਪੀ ਲਈ ਧੰਨਵਾਦ। ਸਾਡੀ ਟੀਮ ਦਾ ਕੋਈ ਮੈਂਬਰ ਜਲਦੀ ਹੀ ਤੁਹਾਡੇ ਨਾਲ ਸੰਪਰਕ ਕਰੇਗਾ।", "ਸਮਾਂ ਬੁੱਕ ਕਰੋ",
+           "WhatsApp 'ਤੇ ਗੱਲ ਕਰੋ", "ਜੇ ਕੋਈ ਸਵਾਲ ਹੈ ਤਾਂ ਇਸ ਈਮੇਲ ਦਾ ਜਵਾਬ ਦਿਓ।", "{{business}} ਨਾਲ ਤੁਹਾਡੀ ਕਾਲ", "ਸਾਡੇ ਨਾਲ ਗੱਲ ਕਰਨ ਲਈ ਧੰਨਵਾਦ। ਸਾਡੀ ਗੱਲਬਾਤ ਦਾ ਸਾਰ ਹੇਠਾਂ ਹੈ।",
+           "ਜੇ ਇਸ ਵਿੱਚ ਕੁਝ ਠੀਕ ਕਰਨਾ ਹੋਵੇ ਤਾਂ ਇਸ ਈਮੇਲ ਦਾ ਜਵਾਬ ਦਿਓ।"),
+    "od": ("{{business}} ସହ ଯୋଗାଯୋଗ କରିଥିବାରୁ ଧନ୍ୟବାଦ", "ନମସ୍କାର {{first_name|}},", "{{business}} ପ୍ରତି ଆପଣଙ୍କ ଆଗ୍ରହ ପାଇଁ ଧନ୍ୟବାଦ। ଆମ ଟିମ୍‌ର ଜଣେ ଶୀଘ୍ର ଆପଣଙ୍କ ସହ ଯୋଗାଯୋଗ କରିବେ।", "ସମୟ ବୁକ୍ କରନ୍ତୁ",
+           "WhatsApp ରେ କଥା ହୁଅନ୍ତୁ", "କୌଣସି ପ୍ରଶ୍ନ ଥିଲେ ଏହି ଇମେଲର ଉତ୍ତର ଦିଅନ୍ତୁ।", "{{business}} ସହ ଆପଣଙ୍କ କଲ୍", "ଆମ ସହ କଥା ହୋଇଥିବାରୁ ଧନ୍ୟବାଦ। ଆମ କଥାବାର୍ତ୍ତାର ସାରାଂଶ ତଳେ ଅଛି।",
+           "ଏଥିରେ କିଛି ସଂଶୋଧନ ଦରକାର ହେଲେ ଏହି ଇମେଲର ଉତ୍ତର ଦିଅନ୍ତୁ।"),
+}
+WORDS.update({
+    "te": {"talked": "మనం మాట్లాడినది", "answers": "మీ ప్రశ్నలు", "next": "తదుపరి అడుగు", "files": "ఫైళ్లు", "download": "డౌన్‌లోడ్", "when": "ఎప్పుడు", "where": "ఎక్కడ", "join": "చేరే లింక్",
+           "details": "మీరు చెప్పినది", "team_replies": "దీని గురించి మా బృందం మీకు సమాధానం ఇస్తుంది."},
+    "kn": {"talked": "ನಾವು ಮಾತನಾಡಿದ್ದು", "answers": "ನಿಮ್ಮ ಪ್ರಶ್ನೆಗಳು", "next": "ಮುಂದಿನ ಹಂತ", "files": "ಫೈಲ್‌ಗಳು", "download": "ಡೌನ್‌ಲೋಡ್", "when": "ಯಾವಾಗ", "where": "ಎಲ್ಲಿ", "join": "ಸೇರುವ ಲಿಂಕ್",
+           "details": "ನೀವು ಹೇಳಿದ್ದು", "team_replies": "ಈ ಬಗ್ಗೆ ನಮ್ಮ ತಂಡ ನಿಮಗೆ ಉತ್ತರಿಸುತ್ತದೆ."},
+    "ml": {"talked": "നമ്മൾ സംസാരിച്ചത്", "answers": "നിങ്ങളുടെ ചോദ്യങ്ങൾ", "next": "അടുത്ത ഘട്ടം", "files": "ഫയലുകൾ", "download": "ഡൗൺലോഡ്", "when": "എപ്പോൾ", "where": "എവിടെ", "join": "ചേരാനുള്ള ലിങ്ക്",
+           "details": "നിങ്ങൾ പറഞ്ഞത്", "team_replies": "ഇതിനെക്കുറിച്ച് ഞങ്ങളുടെ ടീം നിങ്ങൾക്ക് മറുപടി നൽകും."},
+    "mr": {"talked": "आपण काय बोललो", "answers": "तुमचे प्रश्न", "next": "पुढील पाऊल", "files": "फायली", "download": "डाउनलोड", "when": "कधी", "where": "कुठे", "join": "सामील होण्याची लिंक",
+           "details": "तुम्ही सांगितलेले", "team_replies": "याबद्दल आमची टीम तुम्हाला उत्तर देईल."},
+    "bn": {"talked": "আমরা যা কথা বললাম", "answers": "আপনার প্রশ্ন", "next": "পরবর্তী ধাপ", "files": "ফাইল", "download": "ডাউনলোড", "when": "কখন", "where": "কোথায়", "join": "যোগ দেওয়ার লিঙ্ক",
+           "details": "আপনি যা জানিয়েছেন", "team_replies": "এ বিষয়ে আমাদের টিম আপনাকে উত্তর দেবে।"},
+    "gu": {"talked": "આપણે શું વાત કરી", "answers": "તમારા પ્રશ્નો", "next": "આગળનું પગલું", "files": "ફાઇલો", "download": "ડાઉનલોડ", "when": "ક્યારે", "where": "ક્યાં", "join": "જોડાવાની લિંક",
+           "details": "તમે જણાવેલું", "team_replies": "આ વિશે અમારી ટીમ તમને જવાબ આપશે."},
+    "pa": {"talked": "ਅਸੀਂ ਕੀ ਗੱਲ ਕੀਤੀ", "answers": "ਤੁਹਾਡੇ ਸਵਾਲ", "next": "ਅਗਲਾ ਕਦਮ", "files": "ਫ਼ਾਈਲਾਂ", "download": "ਡਾਊਨਲੋਡ", "when": "ਕਦੋਂ", "where": "ਕਿੱਥੇ", "join": "ਜੁੜਨ ਦਾ ਲਿੰਕ",
+           "details": "ਤੁਸੀਂ ਦੱਸਿਆ", "team_replies": "ਇਸ ਬਾਰੇ ਸਾਡੀ ਟੀਮ ਤੁਹਾਨੂੰ ਜਵਾਬ ਦੇਵੇਗੀ।"},
+    "od": {"talked": "ଆମେ କ'ଣ କଥା ହେଲୁ", "answers": "ଆପଣଙ୍କ ପ୍ରଶ୍ନ", "next": "ପରବର୍ତ୍ତୀ ପଦକ୍ଷେପ", "files": "ଫାଇଲ୍", "download": "ଡାଉନଲୋଡ୍", "when": "କେବେ", "where": "କେଉଁଠି", "join": "ଯୋଗଦେବା ଲିଙ୍କ୍",
+           "details": "ଆପଣ ଜଣାଇଥିବା କଥା", "team_replies": "ଏ ବିଷୟରେ ଆମ ଟିମ୍ ଆପଣଙ୍କୁ ଉତ୍ତର ଦେବ।"},
+})
+for code, (subject, hello, thanks, book, whatsapp, questions, call_subject, call_thanks, corrections) in FRAMES.items():
+    KINDS["welcome"]["designs"][code] = {"subject": subject, "blocks": [
+        _t(f"{hello}\n\n{thanks}"), {"type": "ai_note", "guidance": "A sentence or two about what they asked about and how we can help."},
+        FILES, _button(book, "book"), _button(whatsapp, "whatsapp"), _t(questions), SIG]}
+    KINDS["after_call"]["designs"][code] = {"subject": call_subject, "blocks": [_t(f"{hello}\n\n{call_thanks}"), {"type": "call_summary"}, FILES, _t(corrections), SIG]}
+
 
 def default(kind: str, language: str = "en") -> dict:
     """The ready-made design: in the language when it has one, else English."""
@@ -202,10 +253,5 @@ def script_of(text: Optional[str]) -> str:
 
 
 def language_of(text: Optional[str]) -> str:
-    """The script someone wrote or spoke in: Tamil, Hindi (Devanagari), else English (Tanglish stays English)."""
-    text = text or ""
-    tamil = sum(1 for ch in text if "஀" <= ch <= "௿")
-    hindi = sum(1 for ch in text if "ऀ" <= ch <= "ॿ")
-    if max(tamil, hindi) < 3:
-        return "en"
-    return "ta" if tamil >= hindi else "hi"
+    """The script someone wrote or spoke in, else English (Tanglish stays English). Devanagari is Hindi: Marathi looks the same, and only a call's language can tell them apart."""
+    return script_of(text)

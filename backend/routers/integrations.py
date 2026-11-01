@@ -17,7 +17,7 @@ from backend.models import IntegrationSettings, NotificationLog, User
 from phone import to_e164
 from netsafe import UnsafeUrl, assert_public_url
 from mail import address as mail_address, senders, suppress
-from notify import automations, channels, email
+from notify import automations, channels, crm, email
 from notify.events import recipients
 from whatsapp.numbers import workspace_number
 
@@ -35,6 +35,8 @@ def _json(s: IntegrationSettings, owner_email: str, whatsapp_number: bool = Fals
         "leadsquared_enabled": bool(s.leadsquared_enabled), "leadsquared_host": s.leadsquared_host or "",
         "leadsquared_access_key": s.leadsquared_access_key or "",
         "leadsquared_has_secret": bool(s.leadsquared_secret_key),
+        "hubspot_enabled": bool(s.hubspot_enabled), "hubspot_has_token": bool(s.hubspot_token),
+        "zoho": {"available": crm.zoho_available(), "connected": bool(s.zoho_refresh_token), "enabled": bool(s.zoho_enabled), "data_centre": s.zoho_accounts_url},
         # Email automation
         "alert_calls": s.alert_calls is not False, "alert_handoffs": bool(s.alert_handoffs), "alert_daily": bool(s.alert_daily),
         "alert_engaged": s.alert_engaged is not False, "leadsquared_activity": s.leadsquared_activity,
@@ -90,6 +92,9 @@ class IntegrationUpdate(BaseModel):
     leadsquared_access_key: str = ""
     leadsquared_secret_key: Optional[str] = None  # blank keeps the saved one
     leadsquared_activity: Optional[int] = Field(None, ge=1, le=99999)  # the business's custom activity for email events
+    hubspot_enabled: Optional[bool] = None   # None (an older dashboard): as it is
+    hubspot_token: Optional[str] = Field(None, max_length=500)  # blank keeps the saved one
+    zoho_enabled: Optional[bool] = None
     # Email automation
     alert_calls: bool = True
     alert_handoffs: bool = False
@@ -105,7 +110,7 @@ async def update_settings(data: IntegrationUpdate, ctx: AuthContext = Depends(re
     await plans.require_workspace_feature(db, ctx.owner_id, "team_alerts")  # alerts to the team: Starter up
     s, owner = await _load(ctx.owner_id, db)
     adding = ((data.webhook_url.strip() and data.webhook_url.strip() != (s.webhook_url or ""))
-              or (data.leadsquared_enabled and not s.leadsquared_enabled))
+              or (data.leadsquared_enabled and not s.leadsquared_enabled) or (data.hubspot_enabled and not s.hubspot_enabled))
     if adding:  # webhooks and LeadSquared: Pro (what's already set stays, and stops sending without Pro)
         await plans.require_workspace_feature(db, ctx.owner_id, "integrations")
     if data.whatsapp_enabled and not s.whatsapp_enabled:
@@ -137,6 +142,8 @@ async def update_settings(data: IntegrationUpdate, ctx: AuthContext = Depends(re
         raise HTTPException(status_code=400, detail="Enter the name of your approved WhatsApp template")
     if data.leadsquared_enabled and not (data.leadsquared_host and data.leadsquared_access_key and (data.leadsquared_secret_key or s.leadsquared_secret_key)):
         raise HTTPException(status_code=400, detail="LeadSquared needs the API host, access key and secret key")
+    if data.hubspot_enabled and not (data.hubspot_token or s.hubspot_token):
+        raise HTTPException(status_code=400, detail="HubSpot needs your private app's access token")
 
     s.email_alerts = data.email_alerts
     s.alert_email = ", ".join(alert_list) or None
@@ -153,6 +160,12 @@ async def update_settings(data: IntegrationUpdate, ctx: AuthContext = Depends(re
     s.leadsquared_enabled, s.leadsquared_host, s.leadsquared_access_key = data.leadsquared_enabled, data.leadsquared_host.strip() or None, data.leadsquared_access_key.strip() or None
     if data.leadsquared_secret_key:
         s.leadsquared_secret_key = data.leadsquared_secret_key.strip()
+    if data.hubspot_enabled is not None:
+        s.hubspot_enabled = data.hubspot_enabled
+    if data.hubspot_token and data.hubspot_token.strip():
+        s.hubspot_token = data.hubspot_token.strip()
+    if data.zoho_enabled is not None:
+        s.zoho_enabled = data.zoho_enabled and bool(s.zoho_refresh_token)
 
     db.add(s)
     await db.commit()
@@ -160,7 +173,7 @@ async def update_settings(data: IntegrationUpdate, ctx: AuthContext = Depends(re
 
 
 class TestRequest(BaseModel):
-    channel: str  # email, email_automation, webhook, leadsquared, whatsapp
+    channel: str  # email, email_automation, webhook, leadsquared, hubspot, zoho, whatsapp
     to_phone: Optional[str] = None
     message: Optional[str] = None
     automation: Optional[str] = None  # chat_lead, or chat_lead#2 for a follow-up
@@ -211,6 +224,14 @@ async def send_test(req: TestRequest, ctx: AuthContext = Depends(require_manager
             if not (s.leadsquared_host and s.leadsquared_access_key and s.leadsquared_secret_key):
                 raise channels.ChannelError("Save your LeadSquared details first")
             await channels.push_leadsquared(s.leadsquared_host, s.leadsquared_access_key, s.leadsquared_secret_key, sample)
+        elif req.channel == "hubspot":
+            if not s.hubspot_token:
+                raise channels.ChannelError("Save your HubSpot access token first")
+            await crm.hubspot_lead(s.hubspot_token, sample)
+        elif req.channel == "zoho":
+            if not s.zoho_refresh_token:
+                raise channels.ChannelError("Connect Zoho CRM first")
+            await crm.zoho_lead(ctx.owner_id, sample)
         elif req.channel == "whatsapp":
             target = to_e164(req.to_phone or "")
             if not target:
@@ -322,3 +343,38 @@ def _page(title: str, text: str, buttons: Optional[list[tuple[str, str, bool]]] 
             f'<body style="margin:0;background:#faf9f7"><div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:420px;'
             f'margin:15vh auto;padding:0 16px;color:#1c1719"><h1 style="font-size:20px;margin:0 0 8px">{h.escape(title)}</h1>'
             f'<p style="color:#57534e;line-height:1.6;margin:0 0 20px">{h.escape(text)}</p>{forms}</div></body>')
+
+
+# ─── Zoho CRM ─────────────────────────────────────────────────────
+@router.post("/zoho/start")
+async def zoho_start(ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    if not crm.zoho_available():
+        raise HTTPException(status_code=409, detail="Zoho CRM isn't set up on Nimmi yet")
+    await plans.require_workspace_feature(db, ctx.owner_id, "integrations")
+    return {"url": crm.zoho_start_url(ctx.owner_id, ctx.user_id)}
+
+
+class ZohoFinish(BaseModel):
+    code: str = Field(..., min_length=1, max_length=4000)
+    state: str = Field(..., min_length=1, max_length=2000)
+    accounts_server: str = Field(..., max_length=100)
+
+
+@router.post("/zoho/finish")
+async def zoho_finish(data: ZohoFinish, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    """Zoho sent them back here: finished with the signed-in person, as mailboxes are (mail/connections_api.py)."""
+    if crm.zoho_state(data.state) != (ctx.owner_id, ctx.user_id):
+        raise HTTPException(status_code=403, detail="This connection was started from another account, or too long ago. Start it again from this page.")
+    await db.commit()  # Zoho answers next: no connection waits on it
+    try:
+        await crm.zoho_finish(ctx.owner_id, data.code, data.accounts_server)
+    except channels.ChannelError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
+@router.delete("/zoho")
+async def zoho_disconnect(ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    await db.commit()
+    await crm.zoho_disconnect(ctx.owner_id)
+    return {"ok": True}

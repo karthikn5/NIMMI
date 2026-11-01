@@ -15,7 +15,7 @@ from sqlalchemy.future import select
 
 from database import async_session
 from backend.models import Bot, CallLog, Conversation, DncEntry, IntegrationSettings, NotificationLog, User
-from notify import automations, channels, email
+from notify import automations, channels, crm, email
 from phone import display, extract_contact
 
 logger = logging.getLogger(__name__)
@@ -129,6 +129,12 @@ async def lead_captured(conversation_id: str) -> None:
                     lambda: _none(channels.push_leadsquared(settings.leadsquared_host, settings.leadsquared_access_key,
                                                             settings.leadsquared_secret_key, lead)))
 
+    told = {**lead, "summary": _lines(fields)}
+    if settings.hubspot_enabled and settings.hubspot_token and shared.integrations:
+        await _once(bot.user_id, "lead_hubspot", conversation_id, lambda: _none(crm.hubspot_lead(settings.hubspot_token, told)))
+    if settings.zoho_enabled and settings.zoho_refresh_token and shared.integrations:
+        await _once(bot.user_id, "lead_zoho", conversation_id, lambda: _none(crm.zoho_lead(bot.user_id, told)))
+
 
 async def call_completed(call_id: str) -> None:
     async with async_session() as db:
@@ -189,6 +195,10 @@ async def call_completed(call_id: str) -> None:
         await _once(call.user_id, "call_leadsquared", call.id,
                     lambda: _none(channels.push_leadsquared(settings.leadsquared_host, settings.leadsquared_access_key,
                                                             settings.leadsquared_secret_key, payload)))
+    if settings.hubspot_enabled and settings.hubspot_token and call.outcome == "lead_captured" and shared.integrations:
+        await _once(call.user_id, "call_hubspot", call.id, lambda: _none(crm.hubspot_lead(settings.hubspot_token, payload)))
+    if settings.zoho_enabled and settings.zoho_refresh_token and call.outcome == "lead_captured" and shared.integrations:
+        await _once(call.user_id, "call_zoho", call.id, lambda: _none(crm.zoho_lead(call.user_id, payload)))
 
     if (settings.whatsapp_enabled and settings.whatsapp_template and call.caller_e164
             and call.outcome == "lead_captured" and not blocked and included.whatsapp):

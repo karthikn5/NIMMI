@@ -44,7 +44,7 @@ export interface EmailReports {
         bounce_rate: number | null; complaint_rate: number | null;
         bounce_level: "good" | "warn" | "bad" | "unknown"; complaint_level: "good" | "warn" | "bad" | "unknown";
         scanner_clicks: number;
-        domains: { name: string; status: string; dmarc: string | null; checked: boolean }[];
+        domains: { name: string; status: string; dmarc: string | null; checked: boolean; logo?: "on" | "needs_certificate" | "ready" | "needs_dmarc" | null }[];
     };
 }
 
@@ -93,7 +93,7 @@ export interface Suppressions {
 
 /* An assistant's emails and their designs (backend mail/api.py setup and designs; mail/designs.py). */
 export type EmailKind = "welcome" | "after_call" | "meeting" | "lead_email" | "callback_booked" | "voicemail" | "missed_chat" | "chat_copy" | "during_call";
-export type Language = "en" | "ta" | "hi";
+export type Language = "en" | "ta" | "hi" | "te" | "kn" | "ml" | "mr" | "bn" | "gu" | "pa" | "od";
 export type ButtonAction = "book" | "call" | "whatsapp" | "link" | "join" | "change" | "cancel";
 
 export type Block =

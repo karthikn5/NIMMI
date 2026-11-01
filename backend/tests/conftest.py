@@ -99,5 +99,9 @@ def _no_dns(monkeypatch):
 
     async def lookup(domain):
         return True
+    async def no_logo(name):
+        return None
     monkeypatch.setattr(address, "_lookup", lookup)
+    monkeypatch.setattr(address, "_bimi_lookup", no_logo)
     address._cache.clear()
+    address._bimi_cache.clear()

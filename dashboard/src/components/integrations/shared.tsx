@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { IntegrationSettings } from "@/lib/integrations";
 
-export type TestChannel = "email" | "email_automation" | "webhook" | "leadsquared" | "whatsapp";
+export type TestChannel = "email" | "email_automation" | "webhook" | "leadsquared" | "hubspot" | "zoho" | "whatsapp";
 
 export interface PanelProps {
     draft: IntegrationSettings;

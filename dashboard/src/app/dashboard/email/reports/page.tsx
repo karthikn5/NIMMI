@@ -10,6 +10,12 @@ const pct = (part: number, whole: number) => (whole ? `${Math.round((part / whol
 const rate = (r: number | null) => (r === null ? "–" : `${(r * 100).toFixed(r < 0.01 ? 2 : 1)}%`);
 const TYPE: Record<ReportRow["type"], string> = { automatic: "Automatic", journey: "Journey", bulk: "Bulk email" };
 const LEVEL = { good: { tone: "good", text: "Fine" }, warn: { tone: "warn", text: "Watch it" }, bad: { tone: "bad", text: "Too high" }, unknown: { tone: "neutral", text: "Not enough yet" } } as const;
+const LOGO = {
+    on: "Your logo can show in Gmail.",
+    needs_certificate: "Logo in Gmail: the record is there; Gmail also wants a mark certificate.",
+    ready: "Logo in Gmail: DMARC is ready. Next is a mark certificate (about $500 to $2,000 a year) and one DNS record.",
+    needs_dmarc: "Logo in Gmail: first DMARC has to be quarantine or reject, on all your mail.",
+};
 const DMARC: Record<string, { tone: "good" | "warn" | "bad" | "neutral"; text: string }> = {
     reject: { tone: "good", text: "DMARC: reject" }, quarantine: { tone: "good", text: "DMARC: quarantine" }, none: { tone: "warn", text: "DMARC: monitoring only" },
     missing: { tone: "bad", text: "No DMARC record" }, unreadable: { tone: "warn", text: "DMARC record unreadable" },
@@ -129,10 +135,13 @@ export default function EmailReportsPage() {
                                     {n(d.scanner_clicks)} {d.scanner_clicks === 1 ? "click was" : "clicks were"} by security scanners, not people, and {d.scanner_clicks === 1 ? "is" : "are"} left out.
                                 </li>
                                 {d.domains.map((dm) => (
-                                    <li key={dm.name} className="flex items-center justify-between gap-3 px-5 py-2.5 border-t border-line">
-                                        <span className="truncate">{dm.name}</span>
-                                        {dm.checked && dm.dmarc ? <Status tone={DMARC[dm.dmarc]?.tone ?? "neutral"}>{DMARC[dm.dmarc]?.text ?? dm.dmarc}</Status>
-                                            : <span className="text-stone-500">Couldn&apos;t check DMARC just now</span>}
+                                    <li key={dm.name} className="px-5 py-2.5 border-t border-line">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <span className="truncate">{dm.name}</span>
+                                            {dm.checked && dm.dmarc ? <Status tone={DMARC[dm.dmarc]?.tone ?? "neutral"}>{DMARC[dm.dmarc]?.text ?? dm.dmarc}</Status>
+                                                : <span className="text-stone-500">Couldn&apos;t check DMARC just now</span>}
+                                        </div>
+                                        {dm.logo && <p className="text-stone-600 mt-1">{LOGO[dm.logo]}</p>}
                                     </li>
                                 ))}
                             </ul>

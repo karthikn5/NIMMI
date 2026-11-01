@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Copy } from "lucide-react";
 import { Button, Card, EmptyState, Input, Segmented, SettingRow, Skeleton, Status, Switch, useToast } from "@/components/ui";
+import { apiJson } from "@/lib/api";
 import { logKind, type LogRow } from "@/lib/integrations";
 import { formatWhen } from "@/lib/voice/api";
 import { PanelHeader, type PanelProps } from "./shared";
@@ -34,6 +35,73 @@ export function WebhookPanel({ draft, saved, set, test, testing }: PanelProps) {
   "bot": "Front desk", "fields": { "Budget": "45" }, "source": "chat"
 }`}</pre>
                 </SettingRow>
+            </Card>
+        </>
+    );
+}
+
+export function HubSpotPanel({ draft, set, test, testing }: PanelProps) {
+    return (
+        <>
+            <PanelHeader title="HubSpot" description="New leads and calls become contacts in HubSpot, found by email or phone. Replies, clicks, bounces and unsubscribes appear as notes on them." />
+            <Card className="px-5 py-1">
+                <SettingRow label="Send to HubSpot">
+                    <Switch checked={!!draft.hubspot_enabled} onChange={(v) => set("hubspot_enabled", v)} label="Send to HubSpot" />
+                </SettingRow>
+                <SettingRow label="Access token" htmlFor="hs-token"
+                            hint={draft.hubspot_has_token ? "Saved. Enter a new one to replace it." : "In HubSpot: Development, Legacy apps, Create legacy app, Private. Give it the scopes crm.objects.contacts.read and crm.objects.contacts.write, then copy its access token."}>
+                    <div className="flex gap-2">
+                        <Input id="hs-token" type="password" autoComplete="off" placeholder={draft.hubspot_has_token ? "Saved" : ""}
+                               value={draft.hubspot_token ?? ""} onChange={(e) => set("hubspot_token", e.target.value)} />
+                        <Button onClick={() => test("hubspot")} disabled={testing === "hubspot"}>{testing === "hubspot" ? "Sending…" : "Send test"}</Button>
+                    </div>
+                </SettingRow>
+            </Card>
+        </>
+    );
+}
+
+export function ZohoPanel({ draft, test, testing, onChanged }: PanelProps & { onChanged: () => void }) {
+    const toast = useToast();
+    const [busy, setBusy] = useState(false);
+    const zoho = draft.zoho;
+    const connect = async () => {
+        setBusy(true);
+        try {
+            window.location.assign((await apiJson<{ url: string }>("/api/integrations/zoho/start", { method: "POST" })).url);
+        } catch (e) {
+            toast((e as Error).message);
+            setBusy(false);
+        }
+    };
+    const disconnect = async () => {
+        setBusy(true);
+        try {
+            await apiJson("/api/integrations/zoho", { method: "DELETE" });
+            toast("Zoho CRM is disconnected");
+            onChanged();
+        } catch (e) {
+            toast((e as Error).message);
+        } finally {
+            setBusy(false);
+        }
+    };
+    return (
+        <>
+            <PanelHeader title="Zoho CRM" description="New leads and calls become leads in Zoho CRM, found by email or phone. Replies, clicks, bounces and unsubscribes appear as notes on them." />
+            <Card className="px-5 py-1">
+                {zoho?.connected ? (
+                    <SettingRow label="Connected" hint={zoho.data_centre ?? undefined}>
+                        <div className="flex flex-wrap gap-2">
+                            <Button onClick={() => test("zoho")} disabled={testing === "zoho" || busy}>{testing === "zoho" ? "Sending…" : "Send test"}</Button>
+                            <Button variant="ghost" disabled={busy} onClick={disconnect}>Disconnect</Button>
+                        </div>
+                    </SettingRow>
+                ) : (
+                    <SettingRow label="Connect your Zoho account" hint={zoho?.available ? "It opens Zoho's page, where you allow Nimmi to add leads and notes." : "This isn't set up on Nimmi yet. A webhook through Zoho Flow works today."}>
+                        <Button variant="primary" disabled={busy || !zoho?.available} onClick={connect}>Connect Zoho CRM</Button>
+                    </SettingRow>
+                )}
             </Card>
         </>
     );

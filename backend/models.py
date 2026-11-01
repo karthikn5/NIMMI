@@ -543,6 +543,15 @@ class IntegrationSettings(Base):
     alert_daily = Column(Boolean, nullable=True)        # the owner's daily summary (notify/digest.py)
     alert_engaged = Column(Boolean, nullable=True)      # "Karthi just downloaded the price list" (mail/engagement.py; None = on)
     leadsquared_activity = Column(Integer, nullable=True)  # LeadSquared's code for a custom activity: email events go there (mail/outbox.py)
+    hubspot_enabled = Column(Boolean, nullable=True)       # notify/crm.py
+    hubspot_token = Column(EncryptedText, nullable=True)   # a private app's token
+    zoho_enabled = Column(Boolean, nullable=True)
+    zoho_accounts_url = Column(String, nullable=True)      # the data centre the account lives in
+    zoho_api_domain = Column(String, nullable=True)
+    zoho_refresh_token = Column(EncryptedText, nullable=True)
+    zoho_access_token = Column(EncryptedText, nullable=True)
+    zoho_expires_at = Column(DateTime(timezone=True), nullable=True)
+    email_keep_months = Column(Integer, nullable=True)     # how long the words of emails are kept (mail/retention.py); None = 12
     sender_name = Column(String, nullable=True)         # shown as the From name on customer emails
     reply_to = Column(String, nullable=True)            # where customers' replies go
     email_automations = Column(JSON, nullable=True)     # {"chat_lead": {...}, "call_lead": {...}}

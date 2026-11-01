@@ -1,12 +1,13 @@
 "use client";
 
-import { Suspense, useEffect, type ComponentType } from "react";
+import { Suspense, useEffect, useRef, type ComponentType } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Activity, Contact, Mail, MessageCircle, Webhook } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
+import { apiJson } from "@/lib/api";
 import { SaveBar, Skeleton, Status, ToastProvider, cn, useToast } from "@/components/ui";
 import { EmailMovedPanel } from "@/components/integrations/EmailPanel";
-import { ActivityPanel, LeadSquaredPanel, WebhookPanel } from "@/components/integrations/OtherPanels";
+import { ActivityPanel, HubSpotPanel, LeadSquaredPanel, WebhookPanel, ZohoPanel } from "@/components/integrations/OtherPanels";
 import { WhatsAppPanel } from "@/components/integrations/WhatsAppPanel";
 import { useIntegrations } from "@/components/integrations/useIntegrations";
 import { currentUserId } from "@/lib/api";
@@ -14,7 +15,7 @@ import type { IntegrationSettings, LogRow } from "@/lib/integrations";
 import { useApi } from "@/lib/useApi";
 import { PlanNeeded, useLimits } from "@/lib/plan";
 
-type Tab = "email" | "whatsapp" | "webhook" | "leadsquared" | "activity";
+type Tab = "email" | "whatsapp" | "webhook" | "leadsquared" | "hubspot" | "zoho" | "activity";
 type Tone = "good" | "neutral" | "warn" | "bad";
 
 const TABS: { id: Tab; label: string; hint: string; icon: ComponentType<{ size?: number; className?: string }> }[] = [
@@ -22,6 +23,8 @@ const TABS: { id: Tab; label: string; hint: string; icon: ComponentType<{ size?:
     { id: "whatsapp", label: "WhatsApp", hint: "Now its own section", icon: MessageCircle },
     { id: "webhook", label: "Webhook", hint: "Your own system, Zapier, Make", icon: Webhook },
     { id: "leadsquared", label: "LeadSquared", hint: "CRM sync", icon: Contact },
+    { id: "hubspot", label: "HubSpot", hint: "CRM sync", icon: Contact },
+    { id: "zoho", label: "Zoho CRM", hint: "CRM sync", icon: Contact },
     { id: "activity", label: "Activity", hint: "What went out", icon: Activity },
 ];
 
@@ -38,6 +41,10 @@ function status(tab: Tab, s: IntegrationSettings, log: LogRow[] | null): { label
             return s.webhook_url ? { label: "On", tone: "good" } : { label: "Off", tone: "neutral" };
         case "leadsquared":
             return s.leadsquared_enabled ? { label: "On", tone: "good" } : { label: "Off", tone: "neutral" };
+        case "hubspot":
+            return s.hubspot_enabled ? { label: "On", tone: "good" } : { label: "Off", tone: "neutral" };
+        case "zoho":
+            return s.zoho?.connected ? { label: "Connected", tone: "good" } : { label: "Not connected", tone: "neutral" };
         case "activity": {
             const failed = (log ?? []).filter((r) => r.status === "failed").length;
             return failed ? { label: `${failed} failed`, tone: "bad" } : { label: "All clear", tone: "neutral" };
@@ -86,7 +93,22 @@ function Integrations() {
     const toast = useToast();
     const log = useApi<LogRow[]>("/api/integrations/log");
     const { settings, draft, dirty, saving, save, discard, props } = useIntegrations(() => log.reload());
-    const requested = params.get("tab") as Tab | null;
+    const zohoServer = params.get("accounts-server"), zohoCode = params.get("code"), zohoState = params.get("state"), zohoDenied = params.get("error");
+    const requested = (zohoServer || zohoCode || zohoDenied ? "zoho" : params.get("tab")) as Tab | null;
+    const finished = useRef(false);
+    const { reload } = settings;
+    useEffect(() => {  // back from Zoho: finished here, with this person's sign-in
+        if (finished.current || (!zohoCode && !zohoDenied)) return;
+        finished.current = true;
+        router.replace(`${pathname}?tab=zoho`, { scroll: false });
+        if (!zohoCode) {
+            toast("Nothing was connected: the permission wasn't given");
+            return;
+        }
+        apiJson("/api/integrations/zoho/finish", { method: "POST", json: { code: zohoCode, state: zohoState, accounts_server: zohoServer } })
+            .then(async () => { toast("Zoho CRM is connected"); await reload(); })
+            .catch((e) => toast((e as Error).message));
+    }, [zohoCode, zohoState, zohoServer, zohoDenied, router, pathname, toast, reload]);
     const tab: Tab = TABS.some((t) => t.id === requested) ? requested! : "email";
 
     useEffect(() => { if (!currentUserId()) router.push("/auth/login"); }, [router]);
@@ -136,6 +158,8 @@ function Integrations() {
                 {tab === "whatsapp" && <WhatsAppPanel />}
                 {tab === "webhook" && <WebhookPanel {...props} />}
                 {tab === "leadsquared" && <LeadSquaredPanel {...props} />}
+                {tab === "hubspot" && <HubSpotPanel {...props} />}
+                {tab === "zoho" && <ZohoPanel {...props} onChanged={reload} />}
                 {tab === "activity" && <ActivityPanel log={log.data} onRefresh={log.reload} />}
             </section>
 

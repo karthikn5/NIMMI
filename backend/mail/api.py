@@ -21,7 +21,7 @@ from auth import AuthContext, rate_limit, require_manager
 from backend.models import (Bot, EmailDomain, EmailJob, EmailLink, EmailSender, EmailSetup, EmailTemplate, EmailUnsubscribe,
                             IntegrationSettings, MailConnection, User, WhatsAppFile)
 from database import get_db
-from mail import engagement, address, after_call, compose, designs, domains, links, mailbox, render, senders, setup, suppress, threads, webhooks
+from mail import engagement, address, after_call, compose, designs, domains, links, mailbox, render, retention, senders, setup, suppress, threads, webhooks
 from notify import automations, email
 
 router = APIRouter(prefix="/api/email", tags=["email"])
@@ -73,6 +73,32 @@ async def overview(ctx: AuthContext = Depends(require_manager), db: AsyncSession
         "problems": [_job_json(j) for j in problems],
         "hot": await engagement.hot(db, None, owner_id=ctx.owner_id, limit=10),
     }
+
+
+class KeepIn(BaseModel):
+    months: int
+
+
+def _keep_json(s: Optional[IntegrationSettings]) -> dict:
+    return {"months": (s.email_keep_months if s else None) or retention.DEFAULT_MONTHS, "choices": list(retention.CHOICES)}
+
+
+@router.get("/retention")
+async def keep_settings(ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    return _keep_json((await db.execute(select(IntegrationSettings).where(IntegrationSettings.user_id == ctx.owner_id))).scalars().first())
+
+
+@router.put("/retention")
+async def save_keep(data: KeepIn, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    if data.months not in retention.CHOICES:
+        raise HTTPException(status_code=400, detail="Choose 6, 12, 24 or 36 months")
+    s = (await db.execute(select(IntegrationSettings).where(IntegrationSettings.user_id == ctx.owner_id))).scalars().first()
+    if s is None:
+        s = IntegrationSettings(user_id=ctx.owner_id)
+        db.add(s)
+    s.email_keep_months = data.months
+    await db.commit()
+    return _keep_json(s)
 
 
 @router.get("/reports")

@@ -160,3 +160,14 @@ def test_hot_now_is_on_the_overview(seeded, client, run):
             await db.commit()
     run(hot)
     assert [h["email"] for h in client.get("/api/email/overview", headers=owner.h()).json()["hot"]] == ["e@x.in"]
+
+
+def test_how_far_a_domain_is_from_its_logo_in_gmail():
+    from mail.address import bimi_stage
+    strict = "v=DMARC1; p=quarantine; rua=mailto:x@y.in"
+    assert bimi_stage(None, None) == "needs_dmarc"
+    assert bimi_stage("v=DMARC1; p=none;", None) == "needs_dmarc"
+    assert bimi_stage("v=DMARC1; p=quarantine; pct=50", None) == "needs_dmarc", "it has to cover all mail"
+    assert bimi_stage(strict, None) == "ready" and bimi_stage("v=DMARC1; p=reject; pct=100", None) == "ready"
+    assert bimi_stage(strict, "v=BIMI1; l=https://x.in/logo.svg") == "needs_certificate", "Gmail wants a certificate"
+    assert bimi_stage(strict, "v=BIMI1; l=https://x.in/logo.svg; a=https://x.in/cert.pem") == "on"

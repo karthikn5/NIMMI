@@ -1,8 +1,8 @@
 """
 Email events for the business's own systems (mail plan 5.8, phase 6; Pro's integrations): its webhook gets email.sent, email.replied, email.clicked, email.bounced
 and email.unsubscribed, signed as the lead webhooks are (X-Nimmi-Signature); LeadSquared gets the same as activities on the lead, found by email (a custom activity
-whose code the business enters), except "sent": a bulk email would go past LeadSquared's limit of about 10 calls every 5 seconds. Each event is kept first, then sent
-by the scheduler, with retries; deliveries show in Integrations > Activity.
+whose code the business enters), except "sent": a bulk email would go past LeadSquared's limit of about 10 calls every 5 seconds. HubSpot and Zoho CRM get them as notes
+(notify/crm.py). Each event is kept first, then sent by the scheduler, with retries; deliveries show in Integrations > Activity.
 """
 import asyncio
 import logging
@@ -21,7 +21,7 @@ EVENTS = ("email.sent", "email.replied", "email.clicked", "email.bounced", "emai
 TO_LEADSQUARED = ("email.replied", "email.clicked", "email.bounced", "email.unsubscribed")
 TRIES = 6
 WAITS = (1, 5, 30, 120, 360)   # minutes before trying again
-BATCH = {"webhook": 100, "leadsquared": 20}
+BATCH = {"webhook": 100, "leadsquared": 20, "hubspot": 20, "zoho": 20}
 LEADSQUARED_GAP = 0.6           # seconds between calls: LeadSquared allows about 10 every 5 seconds
 STUCK = timedelta(minutes=10)
 KEEP = timedelta(days=30)
@@ -38,6 +38,10 @@ async def emit(db, owner_id: str, event: str, data: dict) -> None:
         targets = ["webhook"] if s.webhook_url else []
         if event in TO_LEADSQUARED and s.leadsquared_enabled and s.leadsquared_activity and s.leadsquared_host and s.leadsquared_access_key and s.leadsquared_secret_key:
             targets.append("leadsquared")
+        if event in TO_LEADSQUARED and s.hubspot_enabled and s.hubspot_token:
+            targets.append("hubspot")
+        if event in TO_LEADSQUARED and s.zoho_enabled and s.zoho_refresh_token:
+            targets.append("zoho")
         if not targets or not (await plans.workspace_includes(db, owner_id)).integrations:
             return
         for target in targets:
@@ -54,16 +58,26 @@ async def emit_now(owner_id: str, event: str, data: dict) -> None:
 
 
 async def _deliver(row: IntegrationEvent, s: IntegrationSettings) -> None:
-    from notify import channels
+    from notify import channels, crm
     if row.target == "webhook":
         if not s.webhook_url:
             raise channels.ChannelError("The webhook was removed")
         await channels.post_webhook(s.webhook_url, s.webhook_secret, row.event, row.data)
         return
-    if not (s.leadsquared_enabled and s.leadsquared_activity):
-        raise channels.ChannelError("LeadSquared's email activity was turned off")
     d = row.data or {}
     note = "; ".join(x for x in (NOTES.get(row.event, row.event), d.get("subject") and f"\"{d['subject']}\"", d.get("link"), d.get("detail"), d.get("text")) if x)
+    if row.target == "hubspot":
+        if not (s.hubspot_enabled and s.hubspot_token):
+            raise channels.ChannelError("HubSpot was turned off")
+        await crm.hubspot_note(s.hubspot_token, d.get("lead") or d.get("to") or "", note[:1000], d.get("at"))
+        return
+    if row.target == "zoho":
+        if not (s.zoho_enabled and s.zoho_refresh_token):
+            raise channels.ChannelError("Zoho CRM was disconnected")
+        await crm.zoho_note(row.user_id, d.get("lead") or d.get("to") or "", NOTES.get(row.event, row.event), note[:1000])
+        return
+    if not (s.leadsquared_enabled and s.leadsquared_activity):
+        raise channels.ChannelError("LeadSquared's email activity was turned off")
     await channels.post_leadsquared_activity(s.leadsquared_host, s.leadsquared_access_key, s.leadsquared_secret_key, d.get("lead") or d.get("to") or "",
                                              int(s.leadsquared_activity), note[:1000], d.get("at"))
 

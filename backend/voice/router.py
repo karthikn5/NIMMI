@@ -1503,6 +1503,7 @@ async def erase_caller(data: EraseRequest, ctx: AuthContext = Depends(require_ow
     await db.execute(sa_delete(CallbackJob).where(CallbackJob.user_id == ctx.owner_id, CallbackJob.e164 == e164))
     await db.execute(sa_delete(Meeting).where(Meeting.user_id == ctx.owner_id, Meeting.e164 == e164))
     addresses = (await db.execute(select(Contact.email).where(Contact.user_id == ctx.owner_id, Contact.e164 == e164, Contact.email.isnot(None)))).scalars().all()
+    contact_ids = (await db.execute(select(Contact.id).where(Contact.user_id == ctx.owner_id, Contact.e164 == e164))).scalars().all()
     await db.execute(sa_delete(Contact).where(Contact.user_id == ctx.owner_id, Contact.e164 == e164))
 
     # Chat leads that captured the same number.
@@ -1510,10 +1511,13 @@ async def erase_caller(data: EraseRequest, ctx: AuthContext = Depends(require_ow
     convs = (await db.execute(select(Conversation).where(Conversation.bot_id.in_(bot_ids)))).scalars().all() if bot_ids else []
     chats = [c for c in convs if extract_contact(c.captured_data).get("phone") == e164]
     from backend.models import Consent, EmailRsvp, QuestionAsker
+    from mail import retention
     gone = [a.lower() for a in addresses]
     if gone:
         await db.execute(sa_delete(Consent).where(Consent.user_id == ctx.owner_id, Consent.email.in_(gone)))
         await db.execute(sa_delete(EmailRsvp).where(EmailRsvp.user_id == ctx.owner_id, EmailRsvp.email.in_(gone)))
+        await retention.erase(db, ctx.owner_id, gone)
+    await retention.erase_leads(db, ctx.owner_id, contact_ids)
     if bot_ids:
         await db.execute(sa_delete(QuestionAsker).where(QuestionAsker.bot_id.in_(bot_ids), QuestionAsker.who.in_(
             [f"phone:{e164}", *(f"email:{a.lower()}" for a in addresses), *(f"chat:{c.conversation_id}" for c in chats)])))

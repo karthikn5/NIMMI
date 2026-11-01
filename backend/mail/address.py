@@ -113,6 +113,7 @@ async def _lookup(domain: str) -> Optional[bool]:
 TWO_LABEL_SUFFIXES = {"co.in", "net.in", "org.in", "firm.in", "gen.in", "ind.in", "ac.in", "edu.in", "res.in", "gov.in", "nic.in", "co.uk", "org.uk", "com.au",
                       "net.au", "co.nz", "com.sg", "com.my", "co.za", "com.br", "ae.org", "co.ae"}
 _dmarc_cache: dict[str, tuple[float, Optional[str]]] = {}
+_bimi_cache: dict[str, tuple[float, Optional[str]]] = {}
 
 
 def organisation(domain: str) -> str:
@@ -153,6 +154,45 @@ async def dmarc_of(domain: str) -> Optional[str]:
     if found != "":
         _dmarc_cache[domain] = (time.monotonic() + _CACHE_SECONDS, found)
     return found
+
+
+async def bimi_of(domain: str) -> Optional[str]:
+    """The BIMI record of a sending domain (the logo in Gmail): its own, else its organisation's. None: there's none; "": couldn't tell. Cached a day."""
+    domain = domain.lower().strip(".")
+    hit = _bimi_cache.get(domain)
+    if hit and hit[0] > time.monotonic():
+        return hit[1]
+    found = await _bimi_lookup(domain)
+    if found is None and organisation(domain) != domain:
+        found = await _bimi_lookup(organisation(domain))
+    if found != "":
+        _bimi_cache[domain] = (time.monotonic() + _CACHE_SECONDS, found)
+    return found
+
+
+async def _bimi_lookup(name: str) -> Optional[str]:
+    try:
+        import dns.asyncresolver
+        resolver = dns.asyncresolver.Resolver()
+        resolver.timeout, resolver.lifetime = 2.0, 4.0
+        answer = await resolver.resolve(f"default._bimi.{name}", "TXT")
+    except Exception as e:
+        return None if e.__class__.__name__ in ("NXDOMAIN", "NoAnswer") else ""
+    for record in answer:
+        text = b"".join(record.strings).decode(errors="replace")
+        if text.lower().startswith("v=bimi1"):
+            return text
+    return None
+
+
+def bimi_stage(dmarc_record: Optional[str], bimi_record: Optional[str]) -> str:
+    """How far a domain is from its logo in Gmail: "on" (a record with a certificate), "needs_certificate" (a record without one: Gmail wants a VMC or CMC), "ready" (DMARC is
+    strict enough, no record yet), "needs_dmarc" (DMARC must be quarantine or reject, on all mail)."""
+    if bimi_record:
+        return "on" if re.search(r"(?:^|;)\s*a\s*=\s*https://", bimi_record, re.I) else "needs_certificate"
+    pct = re.search(r"(?:^|;)\s*pct\s*=\s*(\d+)", dmarc_record or "", re.I)
+    strict = dmarc_policy(dmarc_record) in ("quarantine", "reject") and (pct is None or int(pct.group(1)) == 100)
+    return "ready" if strict else "needs_dmarc"
 
 
 def dmarc_policy(record: Optional[str]) -> Optional[str]:

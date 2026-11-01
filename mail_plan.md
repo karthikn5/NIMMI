@@ -889,6 +889,7 @@ Existing tables that change:
   - a meeting booked by the agent appears in the connected calendar.
 
 ### Phase 9: scale
+- See section 11 for what was built on 2 Nov 2026 and what waits.
 - **Amazon SES** (with tenants) when volume makes it cheaper: Resend Scale costs $90 per 100,000 emails, SES about $10.
 - **Dedicated IPs.**
 - **BIMI:** the business's logo next to its emails in Gmail. It needs DMARC at quarantine or reject, and a paid mark
@@ -977,6 +978,7 @@ its AI replies). That is small next to ₹2,499.
     needed for customers who email people in the US.)
 11. **OK to read counts from live** (read-only): how many chats and calls collect an email, to size the allowances?
 12. **The email agent's default level** (phase 7): off (today), or Drafts only for new Growth and Pro customers?
+13. **Translations** (phase 9): who reads the eight new languages' frames before customers see them?
 
 ## 11. Status
 
@@ -1203,6 +1205,33 @@ Phase 8, as of 2 Nov 2026 (built and tested against fakes; nothing shows on live
   3. Certificates & secrets > New client secret. Note when it expires.
   4. Branding & properties > Publisher verification (needs a Microsoft partner account).
   5. Railway: `MICROSOFT_MAIL_CLIENT_ID`, `MICROSOFT_MAIL_CLIENT_SECRET`.
+- Pushed to live 2 Nov 2026.
+
+Phase 9, as of 2 Nov 2026 (what fits today built; what needs volume or money left, with its trigger):
+- Built:
+  - **How long email text is kept** (`mail/retention.py`, Email > Settings): 6, 12, 24 or 36 months, 12 by default. After that the words of emails and replies go, and the record that an email was sent stays
+    (who, when, what happened). Waiting emails and drafts are never touched. Consent, unsubscribes and bounces are kept: they are the proof.
+  - **Compliance > Erase now removes the person's emails too:** the plan said it did, and it didn't. Emails, conversations, links, clicks and their leads from other places go; their unsubscribe stays, because
+    it's what stops them being emailed again.
+  - **Eleven languages:** Telugu, Kannada, Malayalam, Marathi, Bengali, Gujarati, Punjabi and Odia join English, Tamil and Hindi for the welcome and after-call frames and the words emails show by themselves.
+    The language someone wrote in is found by its script. Meeting and smaller emails stay in English frames.
+  - **HubSpot and Zoho CRM** (`notify/crm.py`, Integrations, Pro): new leads and calls become contacts or leads, found by email, else by phone; replies, clicks, bounces and unsubscribes become notes, kept first and
+    sent with the retries of phase 6. HubSpot takes a private app's token. Zoho connects through its permission page and stays on the account's own data centre; only Zoho's own hosts are believed.
+  - **The logo in Gmail (BIMI):** Reports says how far each domain is: DMARC first, then a certificate, then one DNS record. Nothing is bought.
+- Found on the way: the check that removes numbers the sources don't have treated `৪৫` and `45` as different numbers, so sentences with correct prices in Indian digits were dropped. It now reads any digits. (`language_probe.py` showed
+  it: a Bengali email had lost everything but its last question.)
+- Real models, 2 Nov 2026 (`dev-scripts/email/language_probe.py`, the email agent, one lead per new language): 8 of 8 in their own script with nothing held, 2.4 to 5.8 s each. On the first run one answer failed on Gemini's free quota and the backups took
+  over. Translations of the frames were written by Claude and checked by script, not by native speakers: worth a read by someone who speaks each.
+- Not built, on purpose:
+  - **Amazon SES:** it costs money, needs the owner's AWS account, and saves nothing yet. Resend Scale is $90 per 100,000 emails, SES about $10. Build it when customer email passes about 100,000 a month.
+  - **Dedicated IPs:** $30 a month on Resend Scale, and only worth it above 3,000 emails a day. It's a switch at Resend, not code.
+  - **Mark certificates for BIMI:** about $500 to $2,000 a year (secondary sources). Each business buys its own; Reports says when a domain is ready.
+  - **Salesforce sync:** each customer would need their own connected app, and no customer has asked. The webhook reaches it through Zapier or Make today.
+- Honest limits: HubSpot and Zoho ran against fakes written from their documents, not real accounts. HubSpot's note-to-contact association type (202) comes from memory and one example, not its list of types. Zoho's refresh tokens were
+  sent to the account's own data centre, which its documents imply and don't say outright.
+- Checks: `test_crm.py`, `test_retention.py`, languages in `test_mail_designs.py`, logo in `test_reports.py`; 44 safeguards each switched off once (one wasn't caught and got its own assertion); browser `email_crm_ui.mjs` on Postgres.
+- **The owner's part, Zoho:** api-console.zoho.com > Add Client > Server-based Applications. Homepage `https://nimmiai.in`, redirect URI `https://nimmiai.in/dashboard/integrations`. Tick "Use the same OAuth credentials for all data centers" under Settings if asked. Then Railway:
+  `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`. HubSpot needs nothing from Nimmi: each customer makes their own private app.
 
 ## Words used
 

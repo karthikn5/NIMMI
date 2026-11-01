@@ -50,6 +50,11 @@ export interface IntegrationSettings {
     // Webhook and CRM
     webhook_url: string;
     webhook_secret: string;
+    hubspot_enabled?: boolean;
+    hubspot_has_token?: boolean;
+    hubspot_token?: string;
+    zoho?: { available: boolean; connected: boolean; enabled: boolean; data_centre: string | null };
+    zoho_enabled?: boolean;
     leadsquared_enabled: boolean;
     leadsquared_host: string;
     leadsquared_access_key: string;
@@ -81,6 +86,18 @@ export const LOG_KIND: Record<string, { label: string; channel: "email" | "whats
     call_webhook: { label: "Webhook: call", channel: "webhook" },
     lead_leadsquared: { label: "LeadSquared: lead", channel: "crm" },
     call_leadsquared: { label: "LeadSquared: call", channel: "crm" },
+    lead_hubspot: { label: "HubSpot: lead", channel: "crm" },
+    call_hubspot: { label: "HubSpot: call", channel: "crm" },
+    lead_zoho: { label: "Zoho CRM: lead", channel: "crm" },
+    call_zoho: { label: "Zoho CRM: call", channel: "crm" },
+    email_replied_hubspot: { label: "HubSpot: a reply", channel: "crm" },
+    email_clicked_hubspot: { label: "HubSpot: a click", channel: "crm" },
+    email_bounced_hubspot: { label: "HubSpot: a bounce", channel: "crm" },
+    email_unsubscribed_hubspot: { label: "HubSpot: an unsubscribe", channel: "crm" },
+    email_replied_zoho: { label: "Zoho CRM: a reply", channel: "crm" },
+    email_clicked_zoho: { label: "Zoho CRM: a click", channel: "crm" },
+    email_bounced_zoho: { label: "Zoho CRM: a bounce", channel: "crm" },
+    email_unsubscribed_zoho: { label: "Zoho CRM: an unsubscribe", channel: "crm" },
 };
 
 /** How a log row's kind reads, including follow-ups ("auto_chat_lead#2") and bulk email ("auto_broadcast:<id>"). */

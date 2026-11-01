@@ -455,14 +455,21 @@ only on the owner's machines): @.claude/private-notes.md
 - Calendars (phase 8, `voice/calendars.py`, Schedule > Settings `meetings.calendar`, `calendar_video`): busy times read every 5 minutes onto the connection (a live call never waits), off `free_times` and `_why_not`; `wanted`
   says what the calendar should show and `sync` makes it so (claimed, retried by `tick`), first thing in `send_confirmation` so a Meet or Teams link gets into `Meeting.link`. Its own events aren't busy (they count as seats). Nobody is
   invited on the provider's side. Outlook reads calendarView: getSchedule refuses personal accounts.
+- How long email text is kept (phase 9, `mail/retention.py`, Email > Settings; `email_keep_months`, None = 12): `purge` in the 6-hourly block clears the words of sent emails, replies and portal leads and drops old agent notes; the record
+  stays; waiting emails, drafts, consent, unsubscribes and bounces are never touched. Compliance > Erase calls `erase` and `erase_leads` (Nov 2026: it left the person's emails behind).
+- Languages (phase 9): `designs.FRAMES` gives welcome and after_call in te, kn, ml, mr, bn, gu, pa, od beside en, ta, hi; `language_of` goes by script. A business's own saved English design or old text still comes before a ready-made frame.
+  Numbers are compared whatever digits they're in (`compose._numbers`: ৪৫ is 45). Real models: `dev-scripts/email/language_probe.py`.
+- HubSpot and Zoho CRM (phase 9, `notify/crm.py`, Integrations, Pro): leads and calls through `events`, email events through `mail/outbox.py` as notes. HubSpot: a private app's token (`hubspot_token`). Zoho: its permission page on `ZOHO_CLIENT_ID` /
+  `_SECRET`, back to `/dashboard/integrations`, finished with the signed-in person's token; `accounts-server` and `api_domain` must be Zoho's own; the access token is kept its hour because Zoho limits refreshes. `CRM_API_URL` points at
+  `dev-scripts/email/fake_crm.py`. Reports says how far each domain is from its logo in Gmail (`address.bimi_stage`). SES, dedicated IPs and Salesforce aren't built: mail_plan.md section 11 has the trigger for each.
 - Before a push that changes tables or queries: `dev-scripts/postgres` (README there): the same tests on a local Postgres (`TEST_DATABASE_URL`), and the upgrade from what's live compared
   with a fresh schema. `init_db` prints errors and goes on, and SQLite accepts things Postgres doesn't.
 - A reply address must take mail (`address.reply_address_works`): on live, `admin@nimmai.in` was saved, a domain that doesn't exist.
 - Tests: `tests/test_mail_foundation.py`, `test_mail_designs.py`, `test_after_call_email.py`, `test_email_replies.py`,
   `test_call_emails.py`, `test_email_pages.py`, `test_small_emails.py`, `test_lead_intake.py`, `test_journeys.py`, `test_question_answers.py`, `test_broadcasts.py`,
-  `test_clicks.py`, `test_engagement.py`, `test_outbox.py`, `test_reports.py`, `test_email_agent.py`, `test_mailbox.py`;
+  `test_clicks.py`, `test_engagement.py`, `test_outbox.py`, `test_reports.py`, `test_email_agent.py`, `test_mailbox.py`, `test_crm.py`, `test_retention.py`;
   browser: `dev-scripts/ui-checks/email_ui.mjs`, `email_design_ui.mjs`, `email_drafts_ui.mjs`, `email_inbox_ui.mjs`, `email_pages_ui.mjs`, `email_leads_ui.mjs`,
-  `email_journeys_ui.mjs`, `email_bulk_ui.mjs`, `email_reports_ui.mjs` with `email_seed.py`, `email_agent_ui.mjs` (+ `email_agent_seed.py`), `email_mailbox_ui.mjs` (+ `fake_mailbox.py`), `dev-scripts/email/bulk_probe.py` (1,000 people, run the trial with `--workers 2`) and
+  `email_journeys_ui.mjs`, `email_bulk_ui.mjs`, `email_reports_ui.mjs` with `email_seed.py`, `email_agent_ui.mjs` (+ `email_agent_seed.py`), `email_mailbox_ui.mjs` (+ `fake_mailbox.py`), `email_crm_ui.mjs` (+ `fake_crm.py`), `dev-scripts/email/bulk_probe.py` (1,000 people, run the trial with `--workers 2`) and
   `dev-scripts/email/fake_resend.py` (domains, keys, sending, received emails, and Resend's signed reports back to the backend).
 - Backups (`ops/backup.py`) never run with LOCAL_DEV: a developer's .env can hold the live storage keys.
 

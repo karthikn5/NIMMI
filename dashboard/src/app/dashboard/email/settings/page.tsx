@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { DomainSetup } from "@/components/email/DomainSetup";
+import { KeepEmails } from "@/components/email/KeepEmails";
 import { MailboxSetup } from "@/components/email/MailboxSetup";
 import { SenderSettings } from "@/components/email/SenderSettings";
 import { StoppedAddresses } from "@/components/email/StoppedAddresses";
@@ -14,6 +15,7 @@ export default function EmailSettingsPage() {
             <Suspense fallback={null}><MailboxSetup /></Suspense>
             <SenderSettings reloadKey={domainsChanged} />
             <StoppedAddresses />
+            <KeepEmails />
         </div>
     );
 }

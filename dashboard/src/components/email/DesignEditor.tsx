@@ -187,15 +187,9 @@ export function DesignEditor({ open, onClose, botId, botName, kind, label, place
                     <p className="text-[13px] text-stone-500 truncate">{botName}</p>
                 </div>
                 {languages.length > 1 && (
-                    <div role="group" aria-label="Language" className="inline-flex rounded-md border border-line p-0.5 bg-paper">
-                        {languages.map((l) => (
-                            <button key={l} type="button" aria-pressed={language === l} onClick={() => setLanguage(l)}
-                                    className={cn("h-7 px-3 rounded text-[13px] focus-visible:outline-2 focus-visible:outline-plum",
-                                        language === l ? "bg-white shadow-[0_1px_2px_rgba(28,23,25,0.08)] text-ink font-medium" : "text-stone-500 hover:text-ink")}>
-                                {setup.languages[l]}{saved.includes(l) && <span className="text-plum" aria-label=", saved"> ·</span>}
-                            </button>
-                        ))}
-                    </div>
+                    <Select aria-label="Language" className="w-44" value={language} onChange={(e) => setLanguage(e.target.value as Language)}>
+                        {languages.map((l) => <option key={l} value={l}>{setup.languages[l]}{saved.includes(l) ? " (saved)" : ""}</option>)}
+                    </Select>
                 )}
                 <Button size="sm" variant="ghost" onClick={reset} disabled={!design?.saved || busy !== null}>
                     <RotateCcw size={13} aria-hidden /> Ready-made design

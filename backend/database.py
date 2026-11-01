@@ -291,7 +291,7 @@ def _reseal_secrets(sync_conn, metadata) -> None:
 # Columns stored with secretbox.EncryptedText: (table, primary key, columns).
 SECRET_COLUMNS = [
     ("bots", "bot_id", ["ai_api_key"]),
-    ("integration_settings", "user_id", ["webhook_secret", "leadsquared_access_key", "leadsquared_secret_key", "whatsapp_access_token"]),
+    ("integration_settings", "user_id", ["webhook_secret", "leadsquared_access_key", "leadsquared_secret_key", "whatsapp_access_token", "hubspot_token", "zoho_refresh_token", "zoho_access_token"]),
 ]
 
 

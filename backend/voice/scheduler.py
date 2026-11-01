@@ -363,9 +363,10 @@ async def _loop() -> None:
             if datetime.utcnow() - last_purge > timedelta(hours=6):
                 await purge_expired_recordings()
                 await purge_email_events()
-                from mail import clicks, engagement, outbox
+                from mail import clicks, engagement, outbox, retention
                 await clicks.purge()
                 await outbox.purge()
+                await retention.purge()  # the words of emails past the time each business keeps them
                 await engagement.decay()  # scores of people who went quiet
                 if twilio.configured():
                     await renew_numbers()

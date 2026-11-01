@@ -364,3 +364,31 @@ def test_starter_can_turn_on_the_welcome_email_but_not_the_rest(client, make_use
     assert ai.status_code == 402 and "Growth" in ai.json()["detail"]
     assert client.put(f"/api/email/designs/{bot}/welcome", json={"language": "en", "subject": "Hello", "blocks": [
         {"type": "text", "text": "Hi"}]}, headers=u.h()).status_code == 200
+
+
+# ─── more languages (phase 9) ────────────────────────────────────
+@pytest.mark.parametrize("code", ["te", "kn", "ml", "mr", "bn", "gu", "pa", "od"])
+def test_each_language_has_its_frames_in_its_own_script(code):
+    for kind in ("welcome", "after_call"):
+        design = designs.default(kind, code)
+        words = " ".join(b.get("text", "") for b in design["blocks"] if b["type"] == "text")
+        assert designs.written_in(design["subject"] + " " + words, code), (code, kind)
+        assert "{{business}}" in design["subject"] and "{{first_name|}}" in words
+        assert [b["type"] for b in design["blocks"]] == [b["type"] for b in designs.default(kind, "hi")["blocks"]], "the same shape as the others"
+    assert set(designs.WORDS[code]) == set(designs.WORDS["en"]) and all(designs.WORDS[code].values())
+    assert designs.written_in(" ".join(designs.WORDS[code].values()), code)
+
+
+@pytest.mark.parametrize("text,code", [("నాకు 2BHK ఇల్లు కావాలి", "te"), ("ನನಗೆ ಮನೆ ಬೇಕು ದಯವಿಟ್ಟು", "kn"), ("എനിക്ക് ഒരു വീട് വേണം", "ml"), ("আমার একটি বাড়ি চাই", "bn"), ("મને ઘર જોઈએ છે", "gu"),
+                                       ("ਮੈਨੂੰ ਘਰ ਚਾਹੀਦਾ ਹੈ", "pa"), ("ମୋତେ ଘର ଦରକାର", "od"), ("எனக்கு வீடு வேண்டும்", "ta"), ("मुझे घर चाहिए", "hi"), ("enakku veedu venum", "en"), ("", "en")])
+def test_the_language_they_wrote_in_is_found_by_its_script(text, code):
+    assert designs.language_of(text) == code
+
+
+@pytest.mark.parametrize("said", ["দাম ৪৫ লক্ষ থেকে শুরু।", "कीमत ४५ लाख से शुरू है।", "ਕੀਮਤ ੪੫ ਲੱਖ ਤੋਂ ਸ਼ੁਰੂ ਹੈ।", "விலை ௪௫ லட்சம்.", "The price is 45 lakh."])
+def test_a_number_in_any_indian_digits_is_the_same_number(said):
+    assert compose.keep_known_numbers(said, "2BHK homes from 45 lakh") == said
+
+
+def test_a_number_nobody_gave_goes_in_any_digits():
+    assert compose.keep_known_numbers("দাম ৯৯ লক্ষ।", "2BHK homes from 45 lakh") == ""

@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import re
+import unicodedata
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -48,7 +49,9 @@ def needs_writing(kind: str) -> bool:
 
 # ─── the AI's parts ──────────────────────────────────────────────
 def _numbers(text: str) -> set[str]:
-    return {re.sub(r"[,\s]", "", n).rstrip(".") for n in re.findall(r"\d[\d,]*(?:\.\d+)?", text or "")}
+    """The numbers in a text, whatever digits they're written in: a Bengali ৪৫ is the 45 in the knowledge (Nov 2026: such sentences were being dropped as invented)."""
+    plain = "".join(str(unicodedata.decimal(ch)) if ch.isdecimal() else ch for ch in text or "")
+    return {re.sub(r"[,\s]", "", n).rstrip(".") for n in re.findall(r"\d[\d,]*(?:\.\d+)?", plain)}
 
 
 def keep_known_numbers(note: str, sources: str) -> str:

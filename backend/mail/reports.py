@@ -159,9 +159,9 @@ async def deliverability(db, owner_id: str, jobs: list, since: datetime) -> dict
                                                                                     EmailClick.at >= since))).scalar_one()
     domains = []
     for d in (await db.execute(select(EmailDomain).where(EmailDomain.user_id == owner_id).order_by(EmailDomain.created_at))).scalars().all():
-        record = await address.dmarc_of(d.name)
+        record, logo = await address.dmarc_of(d.name), await address.bimi_of(d.name)
         domains.append({"name": d.name, "status": d.status, "dmarc": None if record == "" else address.dmarc_policy(record) or ("missing" if record is None else "unreadable"),
-                        "checked": record != ""})
+                        "checked": record != "", "logo": None if "" in (record, logo) else address.bimi_stage(record, logo)})
     bounce_rate, complaint_rate = _rate(bounced, sent), _rate(complained, delivered)
     return {"sent": sent, "delivered": delivered, "bounced": bounced, "complained": complained, "bounce_rate": bounce_rate, "complaint_rate": complaint_rate,
             "bounce_level": _level(bounce_rate, BOUNCES), "complaint_level": _level(complaint_rate, COMPLAINTS), "scanner_clicks": scanners, "domains": domains}

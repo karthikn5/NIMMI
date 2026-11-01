@@ -78,6 +78,8 @@ only on the owner's machines): @.claude/private-notes.md
   New nullable columns are added at startup (no migration tool); other schema changes need care.
 - Regions: Railway and Supabase both in Singapore since 28 Oct 2026 (before: US West and Sydney, ~0.2-0.75 s per
   DB round trip; the widget config now answers in ~0.13-0.15 s). Users in India. Deploys happen on push to `main`.
+- The dashboard and the backend deploy separately, so for a minute either can be newer: a page must survive a field the server doesn't send yet (a row waits for its setting;
+  1 Nov 2026: a new dashboard on an older backend crashed Email > Automations), and `app/dashboard/error.tsx` catches what's left.
 - DNS at GoDaddy: `api` CNAME to Railway; Google Workspace mail on nimmiai.in (MX smtp.google.com, one SPF record).
 - Transactional email via Resend (`notify/email.py`), SMTP fallback.
 
@@ -327,8 +329,8 @@ only on the owner's machines): @.claude/private-notes.md
 ## Email (mail_plan.md)
 
 - Phases 0-9 in `mail_plan.md` (written 1 Nov 2026 from the owner's idea, with market research). Phase 0 live 1 Nov
-  2026: sending foundations and the dashboard's Email section (Overview, Inbox, Automations, Drafts, Lead sources, Bulk email, History, Settings;
-  Integrations > Email points there). Phases 1 to 3 in progress: the status is in mail_plan.md section 11.
+  2026: sending foundations and the dashboard's Email section (Overview, Inbox, Automations, Journeys, Lead board, Drafts, Lead sources, Bulk email, History,
+  Settings; Integrations > Email points there). Phases 1 to 4 in progress: the status is in mail_plan.md section 11.
 - Sending: `notify/email.py` `deliver()` (Resend, else SMTP) returns Resend's email id; `send_email()` wraps it. Every
   customer email carries tags (`ws`, `job`, `kind`: customer / alert) and an idempotency key (`email-<job>-<attempt>`, so
   "Send again" really sends). Nimmi's own emails come from `EMAIL_FROM`; customer emails from `CUSTOMER_EMAIL_FROM`
@@ -400,10 +402,26 @@ only on the owner's machines): @.claude/private-notes.md
   push has no signature, retries anything but 200 and turns itself off after 48 hours of failures, and its documents don't say whether a
   listener gets the wrapper: `indiamart_lead` takes either. Each lead: a contact (merged by number, else email), the team told, the
   `lead_email` design at once, and on Pro a call in `lead_call.minutes` inside calling hours. Gmail's forwarding code shows on the page.
+- Journeys and the lead board (phase 4, `mail/journeys.py`, `journeys_api.py`, `/dashboard/email/journeys`, `/dashboard/email/board`; Growth up): a `Journey` per assistant
+  (trigger, goal, steps, off until turned on), a `JourneyRun` per person (slot "active": one at a time; not again for 30 days). `journeys.fire` comes from
+  `events.lead_captured`, `intake.act`, `schedule.after_call` (never a test call), the team's rating, the board and meetings; `_dates` once a day for a date in their details.
+  `tick` (scheduler, `fire_and_forget`) claims what's due; each step is saved before the next, and no connection is held while a model writes or a message goes out.
+  Steps: email (`ai` fits it to the person, one AI reply), wait (a time, a weekday, until something happens), whatsapp (inside the window; else the same words by email; else a
+  template), call (a Schedule `follow_up` with `variables.journey`: skips the lead-status check, keeps the 7-day rule, counted from when they came in if they never spoke; needs
+  follow-ups on), branch, update, notify (or a to-do). Any reply ends every journey with that assistant; an unsubscribe (offers-only too), do-not-call or the plan ending stop
+  it before the next step. One cap (`settings.journeys`, 1 a day, 3 a week) counts everything sent to the person, so a journey's email waits behind a welcome email; only
+  journeys wait for it. Quiet hours 9 am to 8 pm, except the first answer to a new lead. A journey starts 30 s after its trigger, so the cap sees a welcome email being
+  queued. Their links go through `EmailLink` when sent, so "clicked" works. `{{feedback_link}}` opens `/api/email/p/feedback`.
+  Stages (`Contact.stage`) move forward by themselves (`move_stage`, called from `schedule.rate`, the one place a status changes, and on booking); the team can put anyone anywhere,
+  and the board keeps customer and lost in step with the status. The older automations and Schedule's follow-ups aren't moved in: the page lists them. Real models
+  (`dev-scripts/email/journey_probe.py`, 1 Nov 2026, 1-2 s each): "the next morning" came out as "wait until Monday" and every journey as a new lead until the prompt said
+  otherwise; a ready-made email lost its date, so one that drops a placeholder keeps the ready-made words; "customer" as the goal of a customer journey ended it before step 1.
+- Answers to who asked (`mail/answers.py`): `assist.record_gap` keeps who asked (`QuestionAsker`, `chat:`, `phone:`, `email:`; a chat's email can come later, so it's looked up when
+  needed). On Questions the team ticks who gets the answer (kind `question_answer`, once each). Compliance > Erase removes the record.
 - A reply address must take mail (`address.reply_address_works`): on live, `admin@nimmai.in` was saved, a domain that doesn't exist.
 - Tests: `tests/test_mail_foundation.py`, `test_mail_designs.py`, `test_after_call_email.py`, `test_email_replies.py`,
-  `test_call_emails.py`, `test_email_pages.py`, `test_small_emails.py`, `test_lead_intake.py`; browser: `dev-scripts/ui-checks/email_ui.mjs`,
-  `email_design_ui.mjs`, `email_drafts_ui.mjs`, `email_inbox_ui.mjs`, `email_pages_ui.mjs` with `email_seed.py` and
+  `test_call_emails.py`, `test_email_pages.py`, `test_small_emails.py`, `test_lead_intake.py`, `test_journeys.py`, `test_question_answers.py`; browser:
+  `dev-scripts/ui-checks/email_ui.mjs`, `email_design_ui.mjs`, `email_drafts_ui.mjs`, `email_inbox_ui.mjs`, `email_pages_ui.mjs`, `email_leads_ui.mjs`, `email_journeys_ui.mjs` with `email_seed.py` and
   `dev-scripts/email/fake_resend.py` (domains, keys, sending, received emails, and Resend's signed reports back to the backend).
 - Backups (`ops/backup.py`) never run with LOCAL_DEV: a developer's .env can hold the live storage keys.
 

@@ -108,8 +108,10 @@ async def lead_captured(conversation_id: str) -> None:
             f"{bot.bot_name} captured a new lead in {channel}.\n\n{_lines(fields)}\n\n"
             f"See all leads: {email.dashboard_url()}/dashboard/builder/{bot.bot_id}", bot.user_id))
 
-    from mail import contacts  # the lead as a contact of the assistant, with the details they gave
+    from mail import contacts, journeys  # the lead as a contact of the assistant, with the details they gave
     await contacts.remember_lead(conversation_id)
+    await journeys.fire_for(bot.user_id, bot.bot_id, "new_lead", contact.get("phone"), contact.get("email"),
+                            "whatsapp" if (conv.visitor_session_id or "").startswith("wa:") else "chat")
 
     # Automatic email to the customer (if they gave an email and the automation is on, on a plan with follow-ups).
     await (automations.schedule if included.welcome_email else _skip)(bot.user_id, "chat_lead", conversation_id, contact.get("email"), {

@@ -346,7 +346,7 @@ async def answer(message_id: str, asked: bool = False) -> None:
 
     unanswered = [str(q).strip()[:200] for q in (read.get("unanswered") or []) if str(q).strip()][:5]
     for question in unanswered if not asked else []:
-        await assist.record_gap(bot.bot_id, question, "email", None)
+        await assist.record_gap(bot.bot_id, question, "email", None, f"email:{thread.email}")
     text, check_held = await _checked(bot, sender.name, text, code, f"{sources}\n\nTheir email:\n{their_text}", their_text)
     await plans.count_reply(bot.bot_id)  # an AI-written email counts as one AI reply
     held = held or check_held

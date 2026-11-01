@@ -880,7 +880,7 @@ class CallSession:
             if heard:
                 self.history.append({"role": "assistant", "content": " ".join(heard)})
             if said and self.s.channel == "phone" and assist.is_unanswered(" ".join(said)):
-                fire_and_forget(assist.record_gap(self.s.bot.bot_id, text, "voice", None))
+                fire_and_forget(assist.record_gap(self.s.bot.bot_id, text, "voice", None, f"phone:{self.s.caller_e164}" if self.s.caller_e164 else None))
 
     async def _hold_on(self, holding: dict) -> None:
         """The answer is slow (a busy AI service): say "one moment" once, instead of leaving the caller wondering

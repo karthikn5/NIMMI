@@ -546,6 +546,7 @@ async def update_lead(contact_id: str, data: LeadUpdate, ctx: AuthContext = Depe
     if data.lead_status is not None:
         if data.lead_status not in schedule.LEAD_STATUSES:
             raise HTTPException(status_code=400, detail="Unknown lead status")
+        changed = contact.lead_status != data.lead_status
         schedule.rate(contact, data.lead_status, "Set by the team", by=ctx.user_id)
         if data.lead_status not in schedule.FOLLOWED_UP:
             await schedule.cancel_waiting(db, contact.bot_id, contact.e164,
@@ -559,6 +560,9 @@ async def update_lead(contact_id: str, data: LeadUpdate, ctx: AuthContext = Depe
             if last is not None:
                 await schedule.plan_follow_up(db, last, contact, await schedule.settings_for(contact.bot_id, db))
     await db.commit()
+    if data.lead_status is not None and changed:
+        from mail import journeys
+        await journeys.fire(ctx.owner_id, contact.bot_id, "customer" if data.lead_status == "customer" else "status", contact.id, data.lead_status)
     return {"id": contact.id, "lead_status": contact.lead_status, "lead_reason": contact.lead_reason or "",
             "lead_set_by_team": bool(contact.lead_set_by), "follow_ups_off": bool(contact.follow_ups_off)}
 

@@ -219,6 +219,8 @@ async def book(settings: dict, *, owner_id: str, bot_id: str, e164: Optional[str
         meeting_id, confirmed = meeting.id, meeting.status == "confirmed"
         join = how_they_join(meeting, settings, await channels_for(db, meeting, settings)) if confirmed else ""
     from notify.events import fire_and_forget
+    if existing is None:
+        fire_and_forget(_journeys_for(meeting_id, "meeting_booked"))
     if confirmed:
         fire_and_forget(send_confirmation(meeting_id))
         return f"Booked and confirmed: {when}, {MEETING_LABELS[kind]}. Tell them, and that {join}.", meeting
@@ -564,12 +566,29 @@ async def send_confirmation(meeting_id: str) -> None:
 async def after_meeting(meeting_id: str, attended: bool) -> None:
     """The team marked it: a thank-you, or "sorry we missed you" with a link to book again (each once; settings "meeting")."""
     from mail import setup
+    await _journeys_for(meeting_id, "meeting_attended" if attended else "meeting_missed")
     async with async_session() as db:
         meeting = await db.get(Meeting, meeting_id)
         if meeting is None or not (await setup.settings_for(db, meeting.bot_id))["meeting"]["thanks" if attended else "missed"]:
             return
     what = "thanks" if attended else "missed"
     await _once(meeting, f"meeting_{what}", lambda: _to_person(meeting_id, what))
+
+
+async def _journeys_for(meeting_id: str, trigger: str) -> None:
+    """Best effort; never raises."""
+    from mail import journeys
+    try:
+        async with async_session() as db:
+            meeting = await db.get(Meeting, meeting_id)
+            contact = await journeys.find_contact(db, meeting.bot_id, meeting.e164, meeting.email) if meeting else None
+            if contact is not None and trigger == "meeting_booked":
+                journeys.move_stage(contact, "meeting")
+                await db.commit()
+        if contact is not None:
+            await journeys.fire(meeting.user_id, meeting.bot_id, trigger, contact.id)
+    except Exception as e:
+        logger.warning(f"Journeys for meeting {meeting_id} failed: {e}")
 
 
 async def send_cancelled(meeting_id: str) -> None:

@@ -212,6 +212,8 @@ async def _their_reply(db, row: ThreadMessage, thread: EmailThread) -> None:
         EmailJob.to_email.ilike(thread.email)))).scalars().all()
     for job in jobs:
         job.status, job.error = "cancelled", "They replied"
+    from mail import journeys
+    await journeys.stopped_by_reply(db, thread)
 
 
 async def forward(thread_id: str, message_id: str) -> None:

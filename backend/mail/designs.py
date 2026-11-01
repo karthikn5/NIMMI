@@ -118,6 +118,13 @@ KINDS: dict[str, dict] = {
             "en": {"subject": "Your chat with {{business}}", "blocks": [
                 _t("Here's a copy of your chat with {{business}}."), {"type": "transcript"}, SIG]},
         }},
+    "question_answer": {
+        "label": "The answer to their question", "about": "When your team answers a question the assistant couldn't, and sends it to the people who asked.",
+        "placeholders": ["first_name", "name", "business", "question", "answer"],
+        "designs": {
+            "en": {"subject": "The answer to your question", "blocks": [
+                _t("Hi {{first_name|there}},\n\nYou asked: {{question}}\n\n{{answer}}"), _t("You can also reply to this email."), SIG]},
+        }},
     "during_call": {
         "label": "Sent during a call", "about": "When the phone agent emails a file or a note while they talk.",
         "placeholders": ["first_name", "name", "business"],

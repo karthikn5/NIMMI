@@ -119,6 +119,11 @@ SCREENS: dict[str, dict] = {
         "Alerts to their team (new leads, call summaries, someone asking for a person) and automatic emails to "
         "customers after a chat, after a call, when a call met its goal, when a call didn't reach them, and after the "
         "team helped in Live chat; each one email or a short sequence, with placeholders and a test send.")},
+    "email_journeys": {"title": "Email: Journeys", "path": "/dashboard/email/journeys", "about": (
+        "What each lead gets, as a list of steps: emails, WhatsApp messages, calls, waits, checks, changes to the contact, a word to the team. Each starts from a trigger and ends at "
+        "its goal; a reply ends it, and so does an unsubscribe or the do-not-call list. One cap limits emails to one person.")},
+    "email_board": {"title": "Email: Lead board", "path": "/dashboard/email/board", "about": (
+        "Every lead by stage: new, contacted, interested, meeting, customer, lost, with who looks after them and their tags. Stages move forward by themselves; the team can move anyone.")},
     "email_drafts": {"title": "Email: Drafts", "path": "/dashboard/email/drafts", "about": (
         "The AI's emails after calls that wait for the team: read each with the reason it was held, change the recap, "
         "answers, next step, files or subject, then send or discard it, or have it written again. After 20 approved "

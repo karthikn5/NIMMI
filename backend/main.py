@@ -50,6 +50,8 @@ from mail.api import router as mail_router  # noqa: E402
 from mail.inbox import router as inbox_router  # noqa: E402
 from mail.public import router as email_pages_router  # noqa: E402
 from mail.leads_api import router as leads_router  # noqa: E402
+from mail.journeys_api import router as journeys_router  # noqa: E402
+from mail.answers import router as answers_router  # noqa: E402
 from routers.team import router as team_router  # noqa: E402
 from voice import scheduler as voice_scheduler  # noqa: E402
 from voice.numbers_api import router as numbers_router  # noqa: E402
@@ -119,7 +121,7 @@ app.mount("/static", StaticFiles(directory=os.path.join(_HERE, "static")), name=
 
 for router in (auth_router, bots_router, chat_router, handoffs_router, numbers_router, phone_accounts_router, campaigns_router,
                schedule_router, live_calls_router, voice_router,
-               integrations_router, email_center_router, mail_router, inbox_router, email_pages_router, leads_router, analytics_router, team_router, whatsapp_router, whatsapp_webhook_router, workspace_router,
+               integrations_router, email_center_router, mail_router, inbox_router, email_pages_router, leads_router, journeys_router, answers_router, analytics_router, team_router, whatsapp_router, whatsapp_webhook_router, workspace_router,
                sites_router, plans_router, agent_router, mcp_router):
     app.include_router(router)
 app.include_router(payments_router, prefix="/api/payments")

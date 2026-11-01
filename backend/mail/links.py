@@ -57,6 +57,10 @@ def call_url(owner_id: str, bot_id: str, to: str) -> str:
     return _signed("call", f"{owner_id}|{bot_id}|{to.lower()}", "email_call")
 
 
+def feedback_url(contact_id: str) -> str:
+    return _signed("feedback", contact_id, "email_feedback")
+
+
 async def actions_for(db, owner_id: str, bot_id: Optional[str], to: str) -> dict:
     """The Book a time and Call me buttons, when the assistant takes those (Voice > Schedule, on a plan with it)."""
     import plans

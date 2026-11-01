@@ -489,3 +489,86 @@ async def set_lead_sources(tc, db, assistant_id, on):
     return Change(f"{bot.bot_name}'s lead sources turned {'on' if on else 'off'}", "email_leads", bot.bot_id, before, {"enabled": bool(on)},
                   {"kind": "email_leads", "id": bot.bot_id})
 
+
+# ─── Journeys and lead stages ───────────────────────────────────────
+
+@tool("email_journeys", "One assistant's journeys: what starts each, what ends it, its steps, whether it's on, how many people are on it; the ready-made ones "
+      "it can start from; and, with journey_id, who's on that journey and where they are.", "Reading journeys",
+      {"type": "object", "required": ["assistant_id"], "properties": {"assistant_id": {"type": "string"}, "journey_id": {"type": "string"}}},
+      roles=MANAGERS, screens=AREAS["email"], routes=("GET /api/email/journeys", "GET /api/email/journeys/{journey_id}/runs"))
+async def email_journeys(tc, db, assistant_id, journey_id=None):
+    from mail.journeys_api import journey_runs, list_journeys
+    bot = await get_owned_bot(assistant_id, tc.ctx, db)
+    if journey_id:
+        return await journey_runs(journey_id, ctx=tc.ctx, db=db)
+    return await list_journeys(bot.bot_id, ctx=tc.ctx, db=db)
+
+
+async def _read_journey(ctx, db, entity: str, keys: list) -> dict:
+    from mail.journeys_api import _own
+    return {"enabled": bool((await _own(entity, ctx, db)).enabled)}
+
+
+async def _write_journey(ctx, db, entity: str, values: dict) -> None:
+    from mail.journeys_api import JourneyIn, _own, save_journey
+    j = await _own(entity, ctx, db)
+    await save_journey(entity, JourneyIn(name=j.name, trigger=j.trigger, trigger_value=j.trigger_value, goal=j.goal, options=j.options, steps=j.steps or [], enabled=bool(values["enabled"])), ctx=ctx, db=db)
+
+
+adapter("email_journey", _read_journey, _write_journey, lambda entity: {"kind": "email_journey", "id": entity})
+
+
+@tool("set_journey", "Turn one of an assistant's journeys on or off. On, it starts for each lead its trigger fires for.", "Changing a journey",
+      {"type": "object", "required": ["journey_id", "on"], "properties": {"journey_id": {"type": "string"}, "on": {"type": "boolean"}}},
+      level="change", roles=MANAGERS, screens=AREAS["email"])
+async def set_journey(tc, db, journey_id, on):
+    from fastapi import HTTPException
+    try:
+        before = await _read_journey(tc.ctx, db, journey_id, ["enabled"])
+        await _write_journey(tc.ctx, db, journey_id, {"enabled": bool(on)})
+    except HTTPException as e:
+        raise ToolError(str(e.detail))
+    return Change(f"Journey turned {'on' if on else 'off'}", "email_journey", journey_id, before, {"enabled": bool(on)}, {"kind": "email_journey", "id": journey_id})
+
+
+@tool("lead_board", "One assistant's leads by stage (new, contacted, interested, meeting, customer, lost), with status, who looks after each, and tags.", "Reading the lead board",
+      {"type": "object", "required": ["assistant_id"], "properties": {"assistant_id": {"type": "string"}}}, roles=MANAGERS, screens=AREAS["email"], routes=("GET /api/email/board/{bot_id}",))
+async def lead_board(tc, db, assistant_id):
+    from mail.journeys_api import board
+    return await board((await get_owned_bot(assistant_id, tc.ctx, db)).bot_id, ctx=tc.ctx, db=db)
+
+
+async def _read_lead(ctx, db, entity: str, keys: list) -> dict:
+    from sqlalchemy.future import select
+    from backend.models import Contact
+    c = (await db.execute(select(Contact).where(Contact.id == entity, Contact.user_id == ctx.owner_id))).scalars().first()
+    if c is None:
+        raise ToolError("Lead not found.")
+    found = {"stage": c.stage or "new", "assigned_to": c.assigned_to or "", "tags": c.tags or []}
+    return {k: found[k] for k in keys}
+
+
+async def _write_lead(ctx, db, entity: str, values: dict) -> None:
+    from mail.journeys_api import LeadIn, update_lead
+    await update_lead(entity, LeadIn(**values), ctx=ctx, db=db)
+
+
+adapter("lead", _read_lead, _write_lead, lambda entity: {"kind": "lead", "id": entity})
+
+
+@tool("update_lead", "Change a lead's stage (new, contacted, interested, meeting, customer, lost), who looks after them, or their tags.", "Changing a lead",
+      {"type": "object", "required": ["lead_id"], "properties": {"lead_id": {"type": "string"}, "stage": {"type": "string"}, "assigned_to": {"type": "string"},
+                                                                 "tags": {"type": "array", "items": {"type": "string"}}}},
+      level="change", roles=MANAGERS, screens=AREAS["email"], routes=("PUT /api/email/board/leads/{contact_id}",))
+async def update_lead_tool(tc, db, lead_id, stage=None, assigned_to=None, tags=None):
+    from fastapi import HTTPException
+    changes = {k: v for k, v in (("stage", stage), ("assigned_to", assigned_to), ("tags", tags)) if v is not None}
+    if not changes:
+        raise ToolError("Say what to change: the stage, who looks after them, or the tags.")
+    try:
+        before = await _read_lead(tc.ctx, db, lead_id, list(changes))
+        await _write_lead(tc.ctx, db, lead_id, changes)
+    except HTTPException as e:
+        raise ToolError(str(e.detail))
+    return Change(f"Lead changed: {', '.join(changes)}", "lead", lead_id, before, await _read_lead(tc.ctx, db, lead_id, list(changes)), {"kind": "lead", "id": lead_id})
+

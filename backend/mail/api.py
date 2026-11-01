@@ -273,7 +273,7 @@ class SetupIn(BaseModel):
     settings: Optional[dict] = None     # {"after_call": {...}, "welcome": {...}}
 
 
-GROWTH_SETTINGS = {"after_call", "replies", "during_call", "lead_email", "lead_call", "callback_booked", "voicemail", "missed_chat", "chat_copy"}
+GROWTH_SETTINGS = {"after_call", "replies", "journeys", "question_answer", "during_call", "lead_email", "lead_call", "callback_booked", "voicemail", "missed_chat", "chat_copy"}
 
 
 @router.put("/setup/{bot_id}")
@@ -308,6 +308,8 @@ async def save_setup(bot_id: str, data: SetupIn, ctx: AuthContext = Depends(requ
                 raise HTTPException(status_code=400, detail="Add where replies go (Email > Settings) so customers can answer you")
         if kind == "after_call" and any(allowed.get(d) not in (None, "off", "review", "auto") for d in ("inbound", "outbound")):
             raise HTTPException(status_code=400, detail="The after-call email is off, review first, or automatic")
+        if kind == "journeys" and not all(isinstance(allowed.get(k, 1), int) and 1 <= allowed.get(k, 1) <= 14 for k in ("per_day", "per_week")):
+            raise HTTPException(status_code=400, detail="Choose between 1 and 14 emails")
         if kind == "replies" and allowed.get("mode") not in (None, "ai", "draft", "team"):
             raise HTTPException(status_code=400, detail="Replies are answered by the AI, drafted by it, or left to your team")
         await setup.save_settings(db, ctx.owner_id, bot.bot_id, kind, allowed)

@@ -313,7 +313,7 @@ async def write(job_id: str) -> None:
     held = (parts["reason"] or "The AI's check asked for a person to read this one") if parts["verdict"] == "hold" else \
         COULD_NOT_CHECK if parts["verdict"] == "unchecked" else UNHAPPY if unhappy else None
     for question in parts["unanswered"] if not counted else []:
-        await assist.record_gap(bot.bot_id, question, "voice", None)
+        await assist.record_gap(bot.bot_id, question, "voice", None, f"email:{job.to_email.lower()}")
     if not counted:
         await plans.count_reply(bot.bot_id)  # an AI-written email counts as one AI reply
     fresh = {"call": written, "original": {"call": written, "file_ids": parts["file_ids"]}, "file_ids": parts["file_ids"],

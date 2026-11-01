@@ -75,7 +75,7 @@ DEFAULTS: dict[str, dict] = {
 LABELS = {"chat_lead": "After a chat", "call_lead": "After a call", "goal_met": "Goal met on a call",
           "call_missed": "Couldn't reach them", "handoff_done": "After your team helps", "broadcast": "Bulk email",
           "after_call": "After a call, by the AI", "during_call": "Sent during a call", "callback_booked": "Call-back booked",
-          "voicemail": "Voicemail left", "missed_chat": "Missed live chat", "chat_copy": "Copy of the chat", "lead_email": "New lead from another place"}
+          "voicemail": "Voicemail left", "missed_chat": "Missed live chat", "chat_copy": "Copy of the chat", "lead_email": "New lead from another place", "journey": "A journey", "question_answer": "The answer to their question"}
 
 
 def _normalize(saved: Optional[dict], default: dict) -> dict:
@@ -136,9 +136,14 @@ def details_text(fields: Optional[dict]) -> str:
     return "\n".join(f"{k}: {v}" for k, v in (fields or {}).items() if str(v).strip())
 
 
+def _with_links(line: str) -> str:
+    """A line for an email: escaped, with its web addresses as links."""
+    return re.sub(r"https?://(?:[^\s<>&]|&amp;)+", lambda m: f'<a href="{m.group(0)}" style="color:#5b1f6a">{m.group(0)}</a>', html.escape(line))
+
+
 def html_email(body: str, business: str, unsubscribe_url: Optional[str]) -> str:
     paragraphs = "".join(
-        f'<p style="margin:0 0 14px">{"<br>".join(html.escape(line) for line in block.splitlines())}</p>'
+        f'<p style="margin:0 0 14px">{"<br>".join(_with_links(line) for line in block.splitlines())}</p>'
         for block in re.split(r"\n\s*\n", body) if block.strip()
     )
     footer = (f'{html.escape(business)}' +
@@ -274,14 +279,14 @@ async def _reached_goal_since(db, job: EmailJob) -> bool:
 async def process_due() -> None:
     """Send queued customer emails whose time has come (called by the background loop)."""
     from notify.events import _once  # the delivery log, one row per (kind, ref)
-    from mail import after_call, compose, small
+    from mail import after_call, compose, journeys, small
     now = datetime.utcnow()
     async with async_session() as db:
         jobs = (await db.execute(select(EmailJob).where(EmailJob.status == "queued", EmailJob.send_at <= now)
                                  .order_by(EmailJob.send_at).limit(BATCH))).scalars().all()
         for job in jobs:
             settings = (await db.execute(select(IntegrationSettings).where(IntegrationSettings.user_id == job.user_id))).scalars().first()
-            why = await suppress.why_blocked(db, job.user_id, job.to_email, marketing=bool(job.broadcast_id))
+            why = await suppress.why_blocked(db, job.user_id, job.to_email, marketing=bool(job.broadcast_id) or job.automation == "journey")
             if why:
                 job.status, job.error = "cancelled", why
                 continue
@@ -297,6 +302,11 @@ async def process_due() -> None:
                     continue
             elif job.automation in small.KINDS:
                 stop = await small.hold_back(db, job)
+                if stop:
+                    job.status, job.error = "cancelled", stop
+                    continue
+            elif job.automation == "journey":
+                stop = await journeys.hold_back(db, job)
                 if stop:
                     job.status, job.error = "cancelled", stop
                     continue
@@ -335,8 +345,12 @@ async def process_due() -> None:
                 text, html_body = made.text, made.html
                 db.add_all(tracked)
             else:
-                text = f"{job.body}\n\n--\n{sender.name}\nUnsubscribe: {link}"
-                html_body = html_email(job.body, sender.name, link)
+                plain = job.body
+                if job.automation == "journey":  # so a journey can ask whether they clicked
+                    plain, tracked = journeys.with_tracked_links(job)
+                    db.add_all(tracked)
+                text = f"{plain}\n\n--\n{sender.name}\nUnsubscribe: {link}"
+                html_body = html_email(plain, sender.name, link)
             job.attempts = (job.attempts or 0) + 1
             result: dict = {}
 

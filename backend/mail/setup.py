@@ -23,11 +23,13 @@ SETTINGS: dict[str, dict] = {
     # Leads from other places (mail/intake.py): the email at once, and a call within minutes.
     "lead_email": {"enabled": True},
     "lead_call": {"enabled": False, "minutes": 5},
+    "journeys": {"per_day": 1, "per_week": 3},  # the most journey emails one person gets, across all journeys
     "during_call": {"enabled": False},  # the phone agent can email a file or a note while they talk (mail/during_call.py)
     "callback_booked": {"enabled": False},
     "voicemail": {"enabled": False},
     "missed_chat": {"enabled": False, "minutes": 10},
     "chat_copy": {"enabled": False},
+    "question_answer": {"enabled": True},  # goes only when the team sends it from Questions
     "meeting": {"thanks": True, "missed": True},
 }
 

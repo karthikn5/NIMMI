@@ -14,7 +14,7 @@ from sqlalchemy import func
 from sqlalchemy.future import select
 
 from auth import client_ip, decode_scoped_token, rate_limit
-from backend.models import Contact, Meeting
+from backend.models import Contact, Meeting, User
 from database import async_session
 from mail import senders
 from phone import to_e164
@@ -224,3 +224,57 @@ async def call_action(request: Request, token: str = ""):
     await schedule.book_callback(owner_id=owner, bot_id=bot, e164=e164, at=at, about="They asked for a call from an email", name=name, source_call_id=None,
                                  number_id=None, tz=schedule.zone(settings), consent=f"Asked from an email link on {datetime.utcnow():%d %b %Y} to be called back")
     return _html(_page("We'll call you", f"{_text_of(at, schedule.zone(settings))}."))
+
+
+FEEDBACK_BUTTON = "flex:1;padding:11px 16px;border-radius:8px;font:inherit;font-size:15px;cursor:pointer;border:1px solid #d6d3d1;background:#fff;color:#1c1917"
+
+
+def _feedback_form() -> str:
+    return (f'<form method="post"><label style="display:block;font-size:14px;color:#57534e;margin:0 0 4px" for="comment">Anything you\'d like to add? (optional)</label>'
+            f'<textarea id="comment" name="comment" rows="3" maxlength="1000" style="{FIELD}"></textarea><div style="display:flex;gap:8px">'
+            f'<button type="submit" name="action" value="good" style="{FEEDBACK_BUTTON}">Good</button>'
+            f'<button type="submit" name="action" value="bad" style="{FEEDBACK_BUTTON}">Not good</button></div></form>')
+
+
+async def _feedback_contact(token: str) -> Optional[Contact]:
+    contact_id = decode_scoped_token(token, "email_feedback")
+    if not contact_id:
+        return None
+    async with async_session() as db:
+        return await db.get(Contact, contact_id)
+
+
+@router.get("/feedback")
+async def feedback_page(token: str = ""):
+    contact = await _feedback_contact(token)
+    if contact is None:
+        return _html(_page("This link has expired", GONE))
+    async with async_session() as db:
+        business = (await senders.sender_for(db, contact.user_id, contact.bot_id)).name
+    return _with_form(f"How was it with {business}?", "Your answer goes to the team.", _feedback_form())
+
+
+@router.post("/feedback")
+async def feedback_action(request: Request, token: str = ""):
+    """Kept with their details. "Not good" tells the team at once, so someone can put it right."""
+    from notify import events
+    rate_limit(f"email-page:{client_ip(request)}", 30, 3600)
+    contact = await _feedback_contact(token)
+    if contact is None:
+        return _html(_page("This link has expired", GONE))
+    form = await request.form()
+    action, comment = str(form.get("action") or ""), str(form.get("comment") or "").strip()[:1000]
+    if action not in ("good", "bad"):
+        return await feedback_page(token)
+    async with async_session() as db:
+        row = await db.get(Contact, contact.id)
+        if row is None:
+            return _html(_page("This link has expired", GONE))
+        row.details = {**(row.details or {}), "Feedback": "Good" if action == "good" else "Not good", **({"Feedback comment": comment} if comment else {})}
+        await db.commit()
+        team = await events._settings(db, row.user_id)
+        owner = (await db.execute(select(User.email).where(User.id == row.user_id))).scalar_one_or_none()
+        who = row.name or row.email or row.e164 or "A customer"
+    if action == "bad":
+        await events._email_team(events.recipients(team, owner), f"Feedback from {who}: not good", comment or "They didn't add a comment.", row.user_id)
+    return _html(_page("Thank you", "Your answer has gone to the team."))

@@ -378,6 +378,8 @@ def rate(contact: Contact, status: str, reason: Optional[str], by: Optional[str]
     contact.lead_reason = (reason or "").strip()[:300] or None
     contact.lead_set_by = by
     contact.lead_at = datetime.utcnow()
+    from mail import journeys
+    journeys.move_stage(contact, journeys.STAGE_OF[status])
 
 
 # ─── call-backs ───────────────────────────────────────────────────
@@ -469,6 +471,12 @@ async def after_call(call_id: str) -> None:
             await _after_call(db, call_id)
             await db.commit()
             requests = db.info.pop("tell_team", [])
+            started = db.info.pop("journeys", [])
+            call = await db.get(CallLog, call_id)
+            owner, bot_id = (call.user_id, call.bot_id) if call else (None, None)
+        from mail import journeys
+        for trigger, contact_id, value in started:
+            await journeys.fire(owner, bot_id, trigger, contact_id, value)
         from voice import meetings
         for meeting_id in requests:  # once it's saved
             await meetings.notify_team(meeting_id, "requested")
@@ -495,8 +503,17 @@ async def _after_call(db: AsyncSession, call_id: str) -> None:
     step = call.next_step or {}
     await _mark_handled(db, call, settings, step.get("handled") or [])
     contact = await contact_of(db, call.bot_id, call.caller_e164)
+    test = (call.consent_source or "").startswith(TEST_CALL)  # the business trying its agent starts no journeys
+    if contact is not None and not test:
+        from mail import journeys
+        journeys.move_stage(contact, "contacted")
     if contact is not None and call.lead in FOLLOWED_UP + ("not_interested",):
+        changed = contact.lead_status != call.lead
         rate(contact, call.lead, step.get("reason"))
+        if changed and not test:
+            db.info.setdefault("journeys", []).append(("status", contact.id, call.lead))
+    if contact is not None and (contact.calls or 0) <= 1 and not test:
+        db.info.setdefault("journeys", []).append(("new_lead", contact.id, "call"))
     import plans
     if not (await plans.includes(db, call.bot_id)).schedule:
         return  # call-backs, meetings and follow-ups come with Pro
@@ -647,6 +664,8 @@ async def plan_follow_up(db: AsyncSession, call: CallLog, contact: Optional[Cont
 
 async def next_follow_up(db: AsyncSession, job: CallbackJob, settings: Optional[dict] = None) -> None:
     """A follow-up nobody answered (every attempt): the next one in the rules, if any is left."""
+    if (job.variables or {}).get("journey"):
+        return  # the journey decides what comes next
     settings = settings or await settings_for(job.bot_id, db)
     contact = await contact_of(db, job.bot_id, job.e164)
     if not await _follow_up_allowed(db, job.bot_id, job.user_id, job.e164, contact, settings):
@@ -736,9 +755,10 @@ async def _follow_up_stale(db: AsyncSession, job: CallbackJob, settings: dict, n
         return "They're no longer in Contacts"
     if contact.follow_ups_off:
         return "Follow-ups were stopped for them"
-    if contact.lead_status not in FOLLOWED_UP:
+    journey = (job.variables or {}).get("journey")  # a journey picked this person, rated or not
+    if contact.lead_status == "not_interested" or (contact.lead_status not in FOLLOWED_UP and not journey):
         return f"They're now marked {LEAD_LABELS.get(contact.lead_status, 'not rated').lower()}"
-    last = max([t for t in (utc(contact.last_call_at), utc(contact.last_chat_at)) if t], default=None)
+    last = max([t for t in (utc(contact.last_call_at), utc(contact.last_chat_at)) if t], default=utc(contact.created_at) if journey else None)
     created = utc(job.created_at)
     if last and created and last > created:
         return "They spoke with you after this was planned"

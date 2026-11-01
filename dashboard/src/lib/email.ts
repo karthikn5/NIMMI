@@ -228,3 +228,84 @@ export const KIND_LABEL: Record<ReplyKind, string> = {
 export const REPLY_MODES: { value: ReplyMode; label: string }[] = [
     { value: "draft", label: "AI writes, your team sends" }, { value: "ai", label: "AI answers" }, { value: "team", label: "Your team only" },
 ];
+
+/* Journeys and lead stages (backend mail/journeys.py, mail/journeys_api.py). */
+export type JourneyStep =
+    | { type: "email"; subject: string; body: string; ai?: boolean }
+    | { type: "wait"; days?: number; hours?: number; weekday?: string; at?: string; until?: string }
+    | { type: "whatsapp"; text: string; subject?: string; template?: string }
+    | { type: "call"; about: string }
+    | { type: "branch"; if: string; not?: boolean; then: "end" | "skip"; skip?: number }
+    | { type: "update"; stage?: string; status?: string; tag?: string; owner?: string }
+    | { type: "notify"; text: string; todo?: boolean };
+export type JourneyStepKind = JourneyStep["type"];
+
+export interface Journey {
+    id: string;
+    bot_id: string;
+    name: string;
+    trigger: string;
+    trigger_value: string | null;
+    goal: string | null;
+    steps: JourneyStep[];
+    options: { days_before?: number; yearly?: boolean };
+    enabled: boolean;
+    counts: { active?: number; done?: number; stopped?: number };
+    updated_at: string | null;
+}
+
+export interface TeamPerson { id: string; name: string }
+
+export interface Journeys {
+    items: Journey[];
+    ready: { key: string; name: string; about: string }[];
+    triggers: Record<string, string>;
+    sources: Record<string, string>;
+    goals: Record<string, string>;
+    tests: Record<string, string>;
+    statuses: Record<string, string>;
+    stages: string[];
+    days: string[];
+    details: string[];
+    team: TeamPerson[];
+    cap: { per_day: number; per_week: number };
+    already_running: { name: string; on: boolean; where: string }[];
+}
+
+export interface JourneyRunRow {
+    id: string;
+    name: string | null;
+    email: string | null;
+    status: "active" | "done" | "stopped";
+    step: number;
+    next_at: string | null;
+    reason: string | null;
+    history: { step: number; at: string; what: string }[];
+    started_at: string | null;
+}
+
+export interface Lead {
+    id: string;
+    name: string | null;
+    email: string | null;
+    phone: string | null;
+    stage: string;
+    status: string | null;
+    assigned_to: string | null;
+    tags: string[];
+    source: string | null;
+    last_at: string | null;
+}
+
+export interface Board { stages: string[]; team: TeamPerson[]; total: number; leads: Lead[] }
+
+export const STAGE_LABEL: Record<string, string> = {
+    new: "New", contacted: "Contacted", interested: "Interested", meeting: "Meeting", customer: "Customer", lost: "Lost",
+};
+
+/* Who asked a question, for the team to tick (backend mail/answers.py). */
+export interface AskedBy {
+    people: { id: string; email: string; name: string | null; channel: string | null; asked_at: string | null; sent: boolean }[];
+    without_email: number;
+}
+

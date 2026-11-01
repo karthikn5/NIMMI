@@ -7,7 +7,8 @@ import AppHeader from "@/components/AppHeader";
 import {
     Button, Card, Dialog, EmptyState, Input, Segmented, Select, Skeleton, Textarea, ToastProvider, useToast,
 } from "@/components/ui";
-import { currentUserId } from "@/lib/api";
+import { apiJson, currentUserId } from "@/lib/api";
+import type { AskedBy } from "@/lib/email";
 import { apiSave, useApi } from "@/lib/useApi";
 import { formatWhen } from "@/lib/voice/api";
 
@@ -38,6 +39,7 @@ function Questions() {
     const [status, setStatus] = useState<Status>("open");
     const [botId, setBotId] = useState("");
     const [editing, setEditing] = useState<string | null>(null);
+    const [sending, setSending] = useState<Question | null>(null);
     const [adding, setAdding] = useState(false);
     const bots = useApi<{ id: string; name: string }[]>("/api/bots");
     const data = useApi<Data>(`/api/questions?status=${status}${botId ? `&bot_id=${botId}` : ""}`);
@@ -114,6 +116,7 @@ function Questions() {
                                                     <Button size="sm" variant="ghost" onClick={() => act(q, "dismiss")}>Dismiss</Button>
                                                 </>}
                                                 {q.status === "answered" && <>
+                                                    <Button size="sm" onClick={() => setSending(q)}>Send to people who asked</Button>
                                                     <Button size="sm" onClick={() => setEditing(q.id)}>Edit</Button>
                                                     <Button size="sm" variant="ghost" onClick={() => act(q, "delete")}>Delete</Button>
                                                 </>}
@@ -122,7 +125,7 @@ function Questions() {
                                         )}
                                     </div>
                                     {editing === q.id && (
-                                        <AnswerForm question={q} onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); data.reload(); }} />
+                                        <AnswerForm question={q} onCancel={() => setEditing(null)} onSaved={(someone) => { setEditing(null); data.reload(); if (someone) setSending(q); }} />
                                     )}
                                 </li>
                             );
@@ -131,13 +134,61 @@ function Questions() {
                 )}
             </Card>
 
+            {sending && <SendAnswer question={sending} onClose={() => setSending(null)} />}
             <AddAnswer open={adding} bots={bots.data ?? []} defaultBot={botId} onClose={() => setAdding(false)}
                        onSaved={() => { setAdding(false); setStatus("answered"); data.reload(); }} />
         </main>
     );
 }
 
-function AnswerForm({ question, onCancel, onSaved }: { question: Question; onCancel: () => void; onSaved: () => void }) {
+/** The answer can go to everyone who asked and left an email: the team ticks who. Each person gets it once. */
+function SendAnswer({ question, onClose }: { question: Question; onClose: () => void }) {
+    const toast = useToast();
+    const asked = useApi<AskedBy>(`/api/email/questions/${question.id}/people`);
+    const [left, setLeft] = useState<string[]>([]);
+    const [busy, setBusy] = useState(false);
+    const open = (asked.data?.people ?? []).filter((p) => !p.sent);
+    const ticked = open.filter((p) => !left.includes(p.id));
+
+    const send = async () => {
+        setBusy(true);
+        try {
+            const done = await apiJson<{ sent: number; not_sent: number }>(`/api/email/questions/${question.id}/send`, { method: "POST", json: { ids: ticked.map((p) => p.id) } });
+            toast(done.not_sent ? `Sent to ${done.sent}. ${done.not_sent} can't be emailed.` : `Sent to ${done.sent}`);
+            onClose();
+        } catch (e) {
+            toast((e as Error).message);
+            setBusy(false);
+        }
+    };
+
+    return (
+        <Dialog open onClose={onClose} title="Send this answer to the people who asked" description={question.question}
+                footer={<>
+                    <Button variant="ghost" onClick={onClose}>Cancel</Button>
+                    <Button variant="primary" onClick={send} disabled={busy || ticked.length === 0}>{busy ? "Sending…" : `Send to ${ticked.length}`}</Button>
+                </>}>
+            {asked.error ? <p className="text-sm text-signal">{asked.error}</p> : !asked.data ? <Skeleton className="h-16" /> : (
+                <div className="space-y-2">
+                    {asked.data.people.length === 0 && <p className="text-[13px] text-stone-500">Nobody who asked this left an email.</p>}
+                    {asked.data.people.map((p) => (
+                        <label key={p.id} className="flex items-center gap-2.5 text-sm">
+                            <input type="checkbox" disabled={p.sent} checked={!p.sent && !left.includes(p.id)}
+                                   onChange={(e) => setLeft(e.target.checked ? left.filter((x) => x !== p.id) : [...left, p.id])} />
+                            <span className="min-w-0 truncate">{p.name ? `${p.name} · ` : ""}{p.email}</span>
+                            {p.sent && <span className="text-xs text-stone-500 shrink-0">Sent</span>}
+                        </label>
+                    ))}
+                    {asked.data.without_email > 0 && (
+                        <p className="text-[13px] text-stone-500">{asked.data.without_email} more {asked.data.without_email === 1 ? "person" : "people"} asked without leaving an email.</p>
+                    )}
+                </div>
+            )}
+        </Dialog>
+    );
+}
+
+function AnswerForm({ question, onCancel, onSaved }: { question: Question; onCancel: () => void; onSaved: (someone: boolean) => void }) {
     const toast = useToast();
     const [wording, setWording] = useState(question.question);
     const [answer, setAnswer] = useState(question.answer);
@@ -149,7 +200,8 @@ function AnswerForm({ question, onCancel, onSaved }: { question: Question; onCan
         setBusy(false);
         if (!res.ok) return toast(res.message);
         toast("Saved. The assistant uses this answer from now on.");
-        onSaved();
+        const asked = await apiJson<AskedBy>(`/api/email/questions/${question.id}/people`).catch(() => null);
+        onSaved(!!asked?.people.some((p) => !p.sent));
     };
 
     return (

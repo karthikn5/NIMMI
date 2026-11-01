@@ -322,4 +322,6 @@ async def act(bot: Bot, found: dict) -> tuple[str, Optional[str]]:
         await schedule.book_callback(owner_id=bot.user_id, bot_id=bot.bot_id, e164=e164, at=at, about=f"Enquiry from {portal}: {found.get('wants') or ''}".strip()[:200], name=name,
                                      source_call_id=None, number_id=None, tz=tz, consent=f"Enquired on {portal} on {datetime.utcnow():%d %b %Y}", tell_them=False)
         done.append(f"call at {schedule.when_text(at, tz)}")
+    from mail import journeys
+    await journeys.fire(bot.user_id, bot.bot_id, "new_lead", contact_id, "form" if portal == "Website form" else "portal")
     return ("Contact saved; " + ", ".join(done)) if done else "Contact saved", contact_id

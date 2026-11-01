@@ -1051,6 +1051,29 @@ Phase 3, as of 1 Nov 2026 (built locally):
   journey (phase 4).
 - Checks: `test_lead_intake.py`; browser `email_leads_ui.mjs`.
 
+Phase 4, as of 1 Nov 2026 (built locally):
+- Built: journeys (seven triggers, seven kinds of step, goals, the cap, quiet hours, each person's usual hour), eight ready-made journeys written from
+  the knowledge, "Write with AI", the email fallback when the WhatsApp window has closed, a feedback page (good or not, with a comment; "not good" tells the
+  team), dates in a person's details, stages, owners, tags and the board, answers sent to the people who asked (the team ticks who), Nimmi's tools.
+- Changed from the plan:
+  - **Not moved in:** the existing automations and Schedule's follow-up rules keep running where they are, and Email > Journeys lists them. Moving a working
+    system's settings needs its own care, and a mistake there changes what real customers already get. The cap counts their emails, so a journey never lands
+    on top of them; a business that wants a journey to take over turns the old one off.
+  - A reply ends every journey with that assistant, whatever its goal: mail that ignores a reply looks like a machine. "They reply" also counts a call or a
+    WhatsApp chat.
+  - The cap counts everything sent to the person, not only journeys.
+  - A journey's call stops at Schedule's 7-day rule, counted from when they came in if they never spoke. It needs follow-ups on in Schedule.
+- Left for later:
+  - "Left halfway" (gave an email, didn't finish booking), which needs the flow to report where it stopped;
+  - round-robin owners;
+  - a design for journey emails (they go as plain, personal emails);
+  - the cold-lead journey's marketing consent (phase 5 brings consent; today the page says who it's for);
+  - "They reply" by email needs receiving on and `REPLY_DOMAIN`; until then only calls and WhatsApp count.
+- Known limits: journeys need a contact, so with Remember callers off a chat lead starts none. Stages show on the board, not yet on Contacts.
+- Checks: `test_journeys.py` (the whole journey on a fake clock, a reply at every step, each trigger from the real code), `test_question_answers.py`;
+  26 safeguards each switched off once to confirm a test fails; real models through `dev-scripts/email/journey_probe.py`; browser `email_journeys_ui.mjs`.
+- Not tried yet: a journey on a real phone with real WhatsApp and a real call.
+
 ## Words used
 
 - **SPF, DKIM, DMARC:** DNS records that prove an email really comes from the domain it says. DMARC tells mail

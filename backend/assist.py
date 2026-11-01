@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 
 from database import async_session
-from backend.models import KnowledgeGap, WorkspaceSettings
+from backend.models import KnowledgeGap, QuestionAsker, WorkspaceSettings
 
 logger = logging.getLogger(__name__)
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -40,11 +40,25 @@ def normalize(question: str) -> str:
     return " ".join(q.split())[:300]
 
 
-async def record_gap(bot_id: str, question: str, channel: str, conversation_id: Optional[str] = None) -> None:
-    """Count a question the assistant couldn't answer, grouped with identical wording."""
+async def _keep_asker(bot_id: str, norm: str, who: str, channel: str) -> None:
+    async with async_session() as db:
+        gap_id = (await db.execute(select(KnowledgeGap.id).where(KnowledgeGap.bot_id == bot_id, KnowledgeGap.normalized == norm))).scalar_one_or_none()
+        if gap_id is None:
+            return
+        db.add(QuestionAsker(gap_id=gap_id, bot_id=bot_id, who=who[:200], channel=channel))
+        try:
+            await db.commit()
+        except IntegrityError:
+            pass  # they asked before
+
+
+async def record_gap(bot_id: str, question: str, channel: str, conversation_id: Optional[str] = None, who: Optional[str] = None) -> None:
+    """Count a question the assistant couldn't answer, grouped with identical wording, and who asked: their chat, or `who`
+    ("phone:<e164>", "email:<address>"), so the team's answer can reach them."""
     norm = normalize(question)
     if len(norm) < 3:
         return
+    who = f"chat:{conversation_id}" if conversation_id else who
     async with async_session() as db:
         row = (await db.execute(select(KnowledgeGap).where(KnowledgeGap.bot_id == bot_id, KnowledgeGap.normalized == norm))).scalars().first()
         if row:
@@ -62,6 +76,8 @@ async def record_gap(bot_id: str, question: str, channel: str, conversation_id: 
             await db.commit()
         except IntegrityError:
             pass  # recorded by a parallel request
+    if who:
+        await _keep_asker(bot_id, norm, who, channel)
     _answers_cache.pop(bot_id, None)
 
 

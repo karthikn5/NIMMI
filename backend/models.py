@@ -212,6 +212,9 @@ class Contact(Base):
     remember_from = Column(DateTime(timezone=True), nullable=True)  # "forget" sets it: earlier calls aren't recalled
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     # As a lead (Voice > Schedule, voice/schedule.py): rated by the assistant after each call, or set by the team.
+    stage = Column(String(20), nullable=True)          # where they stand: new, contacted, interested, meeting, customer, lost (mail/journeys.py)
+    assigned_to = Column(String(36), nullable=True)    # the team member looking after them
+    tags = Column(JSON, nullable=True)
     lead_status = Column(String, nullable=True)        # hot, warm, cold, new, not_interested, customer; None = not rated
     lead_reason = Column(String(300), nullable=True)
     lead_set_by = Column(String(36), nullable=True)    # the team member who set it; None = the assistant
@@ -717,6 +720,59 @@ class ThreadMessage(Base):
     attempts = Column(Integer, default=0)
     claimed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class QuestionAsker(Base):
+    """Who asked a question the assistant couldn't answer, so the team's answer can reach them (mail/answers.py). `who` is "chat:<conversation>",
+    "phone:<e164>" or "email:<address>": a chat's email can come after the question, so the address is looked up when it's needed."""
+    __tablename__ = "question_askers"
+    __table_args__ = (UniqueConstraint("gap_id", "who", name="uq_question_asker"),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    gap_id = Column(String(36), ForeignKey("knowledge_gaps.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
+    who = Column(String(200), nullable=False)
+    channel = Column(String, nullable=True)
+    asked_at = Column(DateTime(timezone=True), server_default=func.now())
+    sent_at = Column(DateTime(timezone=True), nullable=True)  # the answer went to them
+
+
+class Journey(Base):
+    """What a lead goes through, as a list of steps (mail/journeys.py). One assistant's own."""
+    __tablename__ = "journeys"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
+    name = Column(String(120), nullable=False)
+    trigger = Column(String(30), nullable=False)   # new_lead, status, meeting_booked, meeting_attended, meeting_missed, customer, date
+    trigger_value = Column(String(60), nullable=True)  # a source (chat, call, whatsapp, form, portal), a status, or a detail holding a date
+    goal = Column(String(20), nullable=True)       # replied, booked, customer
+    steps = Column(JSON, nullable=False)
+    options = Column(JSON, nullable=True)          # a date's: days_before, yearly
+    enabled = Column(Boolean, default=False)
+    scanned_on = Column(String(10), nullable=True) # the day its date was last looked for (India time)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class JourneyRun(Base):
+    """One person going through one journey. `slot` is "active" while it runs, so a person is on a journey once at a time."""
+    __tablename__ = "journey_runs"
+    __table_args__ = (UniqueConstraint("journey_id", "contact_id", "slot", name="uq_journey_run"),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    journey_id = Column(String(36), ForeignKey("journeys.id", ondelete="CASCADE"), index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"))
+    contact_id = Column(String(36), ForeignKey("contacts.id", ondelete="CASCADE"), index=True)
+    slot = Column(String(36), default="active")
+    status = Column(String(12), default="active", index=True)  # active, done, stopped
+    step = Column(Integer, default=0)
+    next_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    wait_ends = Column(DateTime(timezone=True), nullable=True)  # a wait for something: when it gives up
+    reason = Column(String(200), nullable=True)
+    history = Column(JSON, nullable=True)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    started_at = Column(DateTime(timezone=True), server_default=func.now())
+    ended_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class LeadSource(Base):

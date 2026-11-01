@@ -7,6 +7,7 @@ the usual queue, so what stops other emails stops these:
   missed_chat      they asked for a person in the chat and nobody came in time
   chat_copy        they asked for a copy of their chat (a button in the widget)
   lead_email       a lead came in from a portal or a form (mail/intake.py): on when lead sources are
+  question_answer  the team's answer to a question the assistant couldn't answer (mail/answers.py): only when the team sends it
 """
 import logging
 from datetime import datetime, timedelta
@@ -22,7 +23,7 @@ from phone import display, extract_contact
 
 logger = logging.getLogger(__name__)
 
-KINDS = ("callback_booked", "voicemail", "missed_chat", "chat_copy", "lead_email")
+KINDS = ("callback_booked", "voicemail", "missed_chat", "chat_copy", "lead_email", "question_answer")
 WHO = {"user": "You", "assistant": "Assistant"}
 
 

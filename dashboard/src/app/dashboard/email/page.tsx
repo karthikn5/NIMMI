@@ -62,7 +62,7 @@ export default function EmailOverviewPage() {
                             <h2 className="text-sm font-medium">Hot now</h2>
                             <p className="text-[13px] text-stone-500 mt-0.5">People who acted on your emails in the last two days. A good moment to call.</p>
                         </div>
-                        <Link href="/dashboard/email/board" className="text-[13px] text-plum hover:underline shrink-0">Lead board</Link>
+                        <Link href="/dashboard/leads/board" className="text-[13px] text-plum hover:underline shrink-0">Lead board</Link>
                     </div>
                     <ul>
                         {d.hot.map((h) => (

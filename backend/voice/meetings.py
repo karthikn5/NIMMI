@@ -225,6 +225,9 @@ async def book(settings: dict, *, owner_id: str, bot_id: str, e164: Optional[str
         await db.flush()
         await _cancel_calls(db, meeting.id)
         await cancel_waiting(db, bot_id, e164, "They booked a meeting", kinds=("follow_up",))
+        if contact is not None:  # one chase at a time: journeys and the email agent stop too (leads/contact.py)
+            from leads import contact as reach
+            await reach.stop_chase(db, contact, "They asked for a meeting" if meeting.status != "confirmed" else "They booked a meeting")
         await db.commit()
         meeting_id, confirmed = meeting.id, meeting.status == "confirmed"
         join = how_they_join(meeting, settings, await channels_for(db, meeting, settings)) if confirmed else ""

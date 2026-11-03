@@ -30,11 +30,13 @@ GROUPS: dict[str, tuple[str, str]] = {  # name -> (what it's for, its tools)
     "whatsapp": ("WhatsApp numbers and chats", "whatsapp_status whatsapp_chats update_whatsapp_number"),
     "email": ("customer emails: how sending is going, history, bulk emails and who they'd reach, sending domains, "
               "who emails come from, addresses not emailed, each assistant's emails and their designs, the AI's after-call "
-              "emails waiting in Drafts, conversations with people who replied (Inbox), leads from IndiaMART, portals and forms (Lead sources), journeys and the lead board",
+              "emails waiting in Drafts, conversations with people who replied (Inbox), journeys",
               "email_overview email_history email_bulk_sends email_audience email_domains email_senders set_email_sender "
               "email_stopped_addresses assistant_emails set_assistant_emails email_design set_email_design email_drafts "
               "edit_email_draft send_email_draft discard_email_draft email_inbox update_email_conversation answer_email drop_email_draft "
-              "email_lead_sources set_lead_sources email_journeys set_journey lead_board update_lead email_reports set_email_agent email_agent_activity email_mailboxes draft_bulk_email send_bulk_email"),
+              "email_journeys set_journey email_reports set_email_agent email_agent_activity email_mailboxes draft_bulk_email send_bulk_email"),
+    "leads": ("the Leads section: what needs attention, finding a lead, one lead's story with tasks and outcomes, the board, where leads come from (IndiaMART, portals, forms), the leads report",
+              "leads_attention find_leads lead_details leads_report lead_board update_lead email_lead_sources set_lead_sources"),
     "connect": ("connecting WhatsApp, a phone number (Twilio or Exotel) or Cal.com, and what's connected now",
                 "connection_guide connection_status"),
     "account": ("the plan and its limits, the team, business hours",

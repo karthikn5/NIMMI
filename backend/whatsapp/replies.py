@@ -224,7 +224,8 @@ async def _write(number: WhatsAppNumber, chat: WhatsAppChat, conv: Conversation,
         recent = (await db.execute(select(WhatsAppMessage.media).where(
             WhatsAppMessage.chat_id == chat.id, WhatsAppMessage.direction == "out",
             WhatsAppMessage.created_at > chats.now() - timedelta(hours=24)))).scalars().all()
-        captured = ((await db.get(Conversation, conv.conversation_id)).captured_data or {})
+        talk = await db.get(Conversation, conv.conversation_id)
+        captured, came = talk.captured_data or {}, talk.origin or {}
     history = [{"role": m.role, "content": _as_seen(m, files)} for m in reversed(history_rows[:HISTORY])]
     sent = {(m or {}).get("file_id") for m in recent}
     numbered = len(turn) > 1
@@ -238,6 +239,9 @@ async def _write(number: WhatsAppNumber, chat: WhatsAppChat, conv: Conversation,
     extra = rules(cfg, files, [f.name for f in files if f.id in sent], numbered, about, ongoing=not first,
                   match_language=behaviour.clean(bot.behaviour).get("language", "match") == "match",
                   script=next((s for s in map(script_of, reversed(turn)) if s), None))
+    ad = [came[k] for k in ("headline", "ad_text") if came.get("channel") == "whatsapp_ad" and came.get(k)]
+    if ad:  # the business's own ad, from Meta's referral (leads/origin.py): they shouldn't be asked what they saw
+        extra += "\n- They came from your WhatsApp ad: " + " / ".join(f'"{x}"' for x in ad) + ". Answer about what it offers; don't ask which ad they mean."
     system = base.replace("\n\n# Business knowledge", extra + "\n\n# Business knowledge", 1) if "\n\n# Business knowledge" in base else base + extra
     messages = brain.turns(history, said)
     raw = await asyncio.to_thread(generate_ai_response, system, "", said, history=messages[:-1],

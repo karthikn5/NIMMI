@@ -40,7 +40,7 @@ async def pending_handoffs(ctx: AuthContext = Depends(get_ctx), db: AsyncSession
             "agent_id": conv.agent_id,
             "created_at": conv.created_at,
             "captured_data": conv.captured_data,
-            "channel": "whatsapp" if (conv.visitor_session_id or "").startswith("wa:") else "web",
+            "channel": "whatsapp" if (conv.visitor_session_id or "").startswith("wa:") else "instagram" if (conv.visitor_session_id or "").startswith("ig:") else "web",
             "lead": assist.lead_score(conv.captured_data, asked_for_person=True),
         }
         for conv, bot_name in rows
@@ -54,6 +54,9 @@ async def accept_handoff(conversation_id: str, ctx: AuthContext = Depends(get_ct
         raise HTTPException(status_code=409, detail="A teammate is already handling this chat")
     conv.handoff_status, conv.agent_id = "human", ctx.user_id
     await db.commit()
+    from leads.contact import stop_for_chat
+    from notify.events import fire_and_forget
+    fire_and_forget(stop_for_chat(conv.conversation_id))  # one chase at a time: a person has them now
     await emit("agent_joined", {"conversation_id": conversation_id, "agent_id": ctx.user_id}, room=conv.visitor_session_id)
     return {"status": "success", "message": "Handoff accepted"}
 
@@ -105,10 +108,16 @@ async def reply(conversation_id: str, data: ReplyIn, ctx: AuthContext = Depends(
     message = Message(conversation_id=conv.conversation_id, role="assistant", content=text, author_id=ctx.user_id)
     db.add(message)
     await db.commit()
+    from leads.contact import stop_for_chat
+    from notify.events import fire_and_forget
+    fire_and_forget(stop_for_chat(conv.conversation_id))
     room = conv.visitor_session_id
     payload = {"room": room, "message": text, "sender": "agent", "id": message.id, "conversation_id": conversation_id}
     if room.startswith("wa:"):
         await relay_to_whatsapp(db, conv, text, message_id=message.id, author_id=ctx.user_id)
+    elif room.startswith("ig:"):
+        from realtime import relay_to_instagram
+        await relay_to_instagram(db, conv, text, message_id=message.id, author_id=ctx.user_id)
     await emit("message", payload, room=socket_room(room, conv.bot_id))
     return payload
 

@@ -10,11 +10,12 @@ import logging
 import re
 from typing import Awaitable, Callable, Optional
 
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 
 from database import async_session
-from backend.models import Bot, CallLog, Conversation, DncEntry, IntegrationSettings, NotificationLog, User
+from backend.models import Bot, CallLog, Contact, Conversation, DncEntry, IntegrationSettings, NotificationLog, User
 from notify import automations, channels, crm, email
 from phone import display, extract_contact
 
@@ -99,22 +100,44 @@ async def lead_captured(conversation_id: str) -> None:
         return  # not a lead until there's a way to reach them
 
     fields = dict(conv.captured_data)
-    lead = {**contact, "bot": bot.bot_name, "fields": fields, "conversation_id": conversation_id, "source": "chat"}
+    from leads import core as leads, quality
+    on_whatsapp = (conv.visitor_session_id or "").startswith("wa:")
+    on_instagram = (conv.visitor_session_id or "").startswith("ig:")
+    lead = {**contact, "bot": bot.bot_name, "fields": fields, "conversation_id": conversation_id, "source": "instagram" if on_instagram else "chat"}
+    # WhatsApp's own numbers are real, and so is someone writing from their Instagram account (an impossible number they type is dropped there).
+    junk = None if on_whatsapp or on_instagram else quality.why_junk(contact.get("phone"), contact.get("email"))
 
-    if settings.email_alerts and owner and included.team_alerts:
-        channel = "WhatsApp" if (conv.visitor_session_id or "").startswith("wa:") else "chat"
+    if settings.email_alerts and owner and included.team_alerts and not junk:
+        channel = "WhatsApp" if on_whatsapp else "Instagram" if on_instagram else "chat"
         await _once(bot.user_id, "lead_email", conversation_id, lambda: _email_team(
             recipients(settings, owner.email), f"New lead from {bot.bot_name}",
             f"{bot.bot_name} captured a new lead in {channel}.\n\n{_lines(fields)}\n\n"
             f"See all leads: {email.dashboard_url()}/dashboard/builder/{bot.bot_id}", bot.user_id))
 
     from mail import contacts, journeys  # the lead as a contact of the assistant, with the details they gave
-    await contacts.remember_lead(conversation_id)
-    await journeys.fire_for(bot.user_id, bot.bot_id, "new_lead", contact.get("phone"), contact.get("email"),
-                            "whatsapp" if (conv.visitor_session_id or "").startswith("wa:") else "chat")
+    person = None
+    if on_instagram:  # their Instagram contact takes the number or email, or joins the contact that has it (instagram/contacts.py)
+        from instagram import contacts as instagram_contacts
+        person = await instagram_contacts.link_details(conversation_id, contact.get("phone"), (contact.get("email") or "").strip() or None, contact.get("name"))
+    if person is None:
+        await contacts.remember_lead(conversation_id)
+        person = await leads.find_or_make(bot, contact.get("phone"), (contact.get("email") or "").strip() or None, contact.get("name"),
+                                          "whatsapp" if on_whatsapp else "instagram" if on_instagram else "chat")
+    if person:
+        async with async_session() as db:
+            await db.execute(update(Conversation).where(Conversation.conversation_id == conversation_id).values(contact_id=person).execution_options(synchronize_session=False))
+            if junk:
+                found = await db.get(Contact, person)
+                junk = junk if leads.mark_junk(db, found, junk) else None  # someone real typing a wrong number is still someone real
+            await db.commit()
+        await leads.came_in(bot.user_id, person, "WhatsApp" if on_whatsapp else "Instagram" if on_instagram else "Website chat", conversation_id, origin=conv.origin)
+    if not junk:  # junk starts no journey and gets no email; the business's own integrations below still hear of it
+        from leads import origin as lead_origin
+        await journeys.fire_for(bot.user_id, bot.bot_id, "new_lead", contact.get("phone"), contact.get("email"),
+                                ("whatsapp" if on_whatsapp else "instagram" if on_instagram else "chat", *(("any_ad",) if lead_origin.from_ad(conv.origin) else ())))
 
     # Automatic email to the customer (if they gave an email and the automation is on, on a plan with follow-ups).
-    await (automations.schedule if included.welcome_email else _skip)(bot.user_id, "chat_lead", conversation_id, contact.get("email"), {
+    await (automations.schedule if included.welcome_email and not junk else _skip)(bot.user_id, "chat_lead", conversation_id, contact.get("email"), {
         **{automations.field_key(k): v for k, v in fields.items()}, "details": automations.details_text(fields),
         "name": contact.get("name"), "email": contact.get("email"), "phone": display(contact.get("phone")) if contact.get("phone") else "",
         "business": _business(settings, bot), "assistant": bot.bot_name, "summary": "",

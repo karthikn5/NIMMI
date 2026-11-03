@@ -29,6 +29,8 @@ from sqlalchemy.future import select
 from database import async_session
 from backend.models import Bot, CallbackJob, CallHandoff, CallLog, DncEntry, VoiceAgent
 import assist
+from leads import core as leads
+from leads import promises
 from mail import after_call
 from notify.events import call_completed, fire_and_forget
 from phone import extract_contact
@@ -1548,7 +1550,8 @@ class CallSession:
                                            ("call_back_at", result.get("call_back_at")), ("reason", result.get("lead_reason")),
                                            ("person", result.get("wants_callback")), ("meeting_at", result.get("meeting_at")),
                                            ("meeting_kind", result.get("meeting_kind")),
-                                           ("meeting_about", result.get("meeting_about")), ("handled", handled)) if v} or None
+                                           ("meeting_about", result.get("meeting_about")), ("handled", handled),
+                                           ("promises", result.get("promises"))) if v} or None
             contact = extract_contact(fields)
             if self.transferred:
                 outcome = "transferred"
@@ -1610,4 +1613,6 @@ class CallSession:
         if self.s.agent.remember_callers is not False:
             await memory.remember_call(self.call_id)
         await schedule.after_call(self.call_id)
+        await leads.after_call(self.call_id)
+        await promises.from_call(self.call_id)  # what the assistant promised them, open until a record shows it was done
         await after_call.queue(self.call_id)

@@ -59,6 +59,7 @@ class ProfileUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=80)
     email: Optional[str] = Field(None, max_length=254)
     current_password: Optional[str] = Field(None, max_length=200)  # required to change the email
+    whatsapp: Optional[str] = Field(None, max_length=30)  # their own WhatsApp number, for lead alerts; "" removes it
 
 
 def _check_password(password: str) -> None:
@@ -218,6 +219,7 @@ async def get_profile(ctx: AuthContext = Depends(get_ctx), db: AsyncSession = De
         "subscription_tier": user.subscription_tier,
         "has_password": bool(user.password_hash),
         "created_at": user.created_at.isoformat() if user.created_at else None,
+        "whatsapp": user.whatsapp,
     }
 
 
@@ -228,6 +230,12 @@ async def update_profile(data: ProfileUpdate, ctx: AuthContext = Depends(get_ctx
         raise HTTPException(status_code=404, detail="User not found")
     if data.name is not None:
         user.name = data.name.strip()
+    if data.whatsapp is not None:
+        from phone import to_e164
+        number = to_e164(data.whatsapp) if data.whatsapp.strip() else None
+        if data.whatsapp.strip() and not number:
+            raise HTTPException(status_code=400, detail="Enter a mobile number with its country code, e.g. +91 98765 43210")
+        user.whatsapp = number
     if data.email is not None and data.email.strip().lower() != (user.email or "").lower():
         email = _check_email(data.email)
         # The email is how an account is recovered, so changing it needs the password, not just a session.
@@ -241,7 +249,7 @@ async def update_profile(data: ProfileUpdate, ctx: AuthContext = Depends(get_ctx
             raise HTTPException(status_code=400, detail="Email already in use")
         user.email = email
     await db.commit()
-    return {"message": "Profile updated successfully", "name": user.name, "email": user.email}
+    return {"message": "Profile updated successfully", "name": user.name, "email": user.email, "whatsapp": user.whatsapp}
 
 
 class PasswordChange(BaseModel):

@@ -117,6 +117,7 @@ class Includes:
     seats: int                     # people in the workspace, the owner included
     call_credits: int = 0          # call credits included each month
     whatsapp: bool = False
+    instagram: bool = False        # the assistant answering Instagram DMs (instagram_plan.md phase 5), with WhatsApp: Growth up
     live_chat: bool = False        # "Talk to a person", and chats handed to the team
     email_alerts: bool = False     # emails to customers beyond the welcome: after calls, follow-ups, files, own domain
     team_alerts: bool = False      # email alerts to the team: new leads, call summaries (Starter up, since Nov 2026)
@@ -128,17 +129,17 @@ class Includes:
     transfers: bool = False        # warm transfers, and picking up calls in the dashboard
 
 
-_ALL = dict(whatsapp=True, live_chat=True, email_alerts=True, team_alerts=True, welcome_email=True, schedule=True,
+_ALL = dict(whatsapp=True, instagram=True, live_chat=True, email_alerts=True, team_alerts=True, welcome_email=True, schedule=True,
             campaigns=True, integrations=True, business_hours=True, transfers=True)
 NO_PLAN = Includes(None, None, 1)  # build and test: the assistant answers customers only on a plan
 STARTER = Includes("starter", 2000, 1, team_alerts=True, welcome_email=True)
-GROWTH = Includes("growth", 10000, 3, whatsapp=True, live_chat=True, email_alerts=True, team_alerts=True, welcome_email=True)
+GROWTH = Includes("growth", 10000, 3, whatsapp=True, instagram=True, live_chat=True, email_alerts=True, team_alerts=True, welcome_email=True)
 PRO = Includes("pro", 25000, 5, 300, **_ALL)
 EARLIER = Includes("earlier", None, 5, **_ALL)
 BY_TIER = {"starter": STARTER, "growth": GROWTH, "pro": PRO}
 _RANK = {None: 0, "starter": 1, "growth": 2, "pro": 3, "earlier": 3}
 # What each feature is called, and the plan it starts on.
-NEEDS = {"whatsapp": ("WhatsApp comes", "Growth"), "live_chat": ("Live chat comes", "Growth"),
+NEEDS = {"whatsapp": ("WhatsApp comes", "Growth"), "instagram": ("Instagram messages come", "Growth"), "live_chat": ("Live chat comes", "Growth"),
          "email_alerts": ("Emails after calls, follow-ups, your files and your own domain come", "Growth"),
          "team_alerts": ("Email alerts to your team come", "Starter"), "welcome_email": ("The welcome email comes", "Starter"), "schedule": ("Call-backs and follow-up calls come", "Pro"),
          "campaigns": ("Campaigns come", "Pro"), "integrations": ("Webhooks, LeadSquared and Google Sheets come", "Pro"),

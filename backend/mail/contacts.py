@@ -38,7 +38,7 @@ async def remember_lead(conversation_id: str) -> None:
 async def _remember(conversation_id: str) -> None:
     async with async_session() as db:
         conv = await db.get(Conversation, conversation_id)
-        if conv is None or (conv.visitor_session_id or "").startswith("wa:"):
+        if conv is None or (conv.visitor_session_id or "").startswith(("wa:", "ig:")):  # their own channels keep their contacts
             return
         bot = await db.get(Bot, conv.bot_id)
         if bot is None:

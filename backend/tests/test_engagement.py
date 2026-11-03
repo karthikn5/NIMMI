@@ -226,7 +226,7 @@ def test_opening_the_booking_times_without_booking_gets_a_call_ten_minutes_later
             return first, await schedule.dial_check(db, job)
     first, after_booking = run(check)
     assert first.stop is None or first.stop[1] == "No active number to call from", first.stop
-    assert after_booking.stop[1] == "They have a meeting booked", "booked meanwhile: no call"
+    assert after_booking.stop[1].startswith("They have a meeting request waiting for your answer"), "asked for a meeting meanwhile: no call"  # a request isn't called booked
     async def finished():
         async with async_session() as db:
             (await db.get(CallbackJob, calls[0].id)).status = "done"

@@ -57,6 +57,7 @@ CALLBACK_SOONEST = timedelta(minutes=2)
 NAMED_DAY_AHEAD = 60                  # a follow-up on the day they named, up to this many days out
 FOLLOW_UP_RETRY = timedelta(hours=2)  # an unanswered follow-up is tried again this much later (same day if it can)
 TEST_CALL = "Test call requested from the dashboard"  # voice/router.py: "Call me" from the dashboard
+LEAD_CALL = "Enquired on"  # mail/intake.py: the first call to someone who enquired (its consent line starts so)
 
 DEFAULTS = {
     "timezone": DEFAULT_TZ,
@@ -607,7 +608,7 @@ def _their_hour(day: date, last: Optional[datetime], hours: list, tz: ZoneInfo, 
     they open. A few minutes' spread per person, so follow-ups don't all start at once."""
     spread = int(hashlib.sha256(e164.encode()).hexdigest(), 16) % 15
     start, end = _clock_of(hours[0]), _clock_of(hours[1])
-    picked = last.astimezone(tz).time().replace(second=0, microsecond=0) if last else None
+    picked = utc(last).astimezone(tz).time().replace(second=0, microsecond=0) if last else None  # a stored time without a zone is UTC, not this computer's clock
     if picked is None or not (start <= picked < end):
         picked = (datetime.combine(day, start) + timedelta(hours=1)).time()
     at = datetime.combine(day, picked, tzinfo=tz) + timedelta(minutes=spread)
@@ -768,8 +769,9 @@ async def _follow_up_stale(db: AsyncSession, job: CallbackJob, settings: dict, n
         return f"More than {fu['stop_after_days']} days since they last spoke with you"
     if (contact.follow_ups or 0) >= fu["max_total"]:
         return "They've had the most follow-ups allowed"
-    if await upcoming_meeting(db, job.bot_id, job.e164):
-        return "They have a meeting booked"
+    meeting = await upcoming_meeting(db, job.bot_id, job.e164)
+    if meeting is not None:
+        return "They have a meeting booked" if meeting.status == "confirmed" else "They have a meeting request waiting"
     return None
 
 
@@ -802,6 +804,9 @@ async def dial_check(db: AsyncSession, job: CallbackJob, now: Optional[datetime]
     hours, days = settings["callbacks"]["hours"], DAYS
     # Call-backs and meeting calls already promised are made even if the switch that lets the agent book them is turned
     # off later; follow-ups are the business's own idea, so they stop with theirs.
+    stop = await _reach_check(db, job, now)
+    if stop:
+        return DialCheck(stop=("cancelled", stop))
     if job.kind == "follow_up":
         fu = settings["follow_ups"]
         if not fu["enabled"]:
@@ -826,7 +831,35 @@ async def dial_check(db: AsyncSession, job: CallbackJob, now: Optional[datetime]
     from_id = await _from_number(db, job, settings)
     if not from_id:
         return DialCheck(stop=("failed", "No active number to call from"))
+    from leads import contact as reach
+    undeclared = reach.a2p_blocked(await db.get(PhoneNumber, from_id))
+    if undeclared:
+        return DialCheck(stop=("failed", undeclared))
     return DialCheck(from_number_id=from_id, attempts=attempts_for(job, settings))
+
+
+def lead_call(job: CallbackJob) -> bool:
+    """The assistant's first call to someone who enquired (mail/intake.py), as against a call-back they asked for."""
+    return job.kind == "callback" and (job.consent_source or "").startswith(LEAD_CALL)
+
+
+async def _reach_check(db: AsyncSession, job: CallbackJob, now: datetime) -> Optional[str]:
+    """leads/contact.py's answer for this person, just before the dial: why not, or None. What they asked for (a call-back, their meeting's calls) stops only
+    for a refusal after they asked, a wrong number or junk; the business's own calls (follow-ups, the first call to an enquiry) also for a closed lead or a
+    person on the team working them, and the first call only inside the 7 days their enquiry allows."""
+    from leads import contact as reach
+    person = await contact_of(db, job.bot_id, job.e164)
+    if person is None:
+        return None  # no contact kept (Remember callers off): the do-not-call list above still holds
+    if job.kind == "follow_up" or lead_call(job):
+        stop = await reach.blockers(db, person, "call", now=now)
+        if stop is None and lead_call(job):
+            asked = utc(person.last_enquiry_at) or utc(job.consent_at) or utc(job.created_at)
+            if asked and now - asked > reach.ENQUIRY:
+                return "Their enquiry is more than 7 days old"
+        return stop.reason if stop else None
+    stop = await reach.blockers(db, person, "call", now=now, cause="They asked for it", since=utc(job.created_at))
+    return stop.reason if stop else None
 
 
 # ─── what a Schedule call says ────────────────────────────────────

@@ -93,6 +93,10 @@ async def _why_not(db, contact: Contact, now: datetime) -> Optional[str]:
         return "Customer, lost or not interested"
     if await suppress.why_blocked(db, contact.user_id, address):
         return "Can't be emailed"
+    from leads import contact as reach
+    stop = await reach.blockers(db, contact, "email")  # their refusal, junk, a meeting waiting, a person on the team working them
+    if stop is not None:
+        return stop.reason
     if (await db.execute(select(JourneyRun.id).where(JourneyRun.contact_id == contact.id, JourneyRun.status == "active").limit(1))).first():
         return "On a journey"
     waiting = (await db.execute(select(EmailThread.id).where(EmailThread.bot_id == contact.bot_id, EmailThread.email == address, EmailThread.status == "open").limit(1))).first()

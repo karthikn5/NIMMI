@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, JSON, Index, Integer, Float, UniqueConstraint
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, JSON, Index, Integer, Float, UniqueConstraint, event
 from sqlalchemy.sql import func
 import uuid
 from datetime import datetime, timezone
@@ -17,6 +17,7 @@ class User(Base):
     stripe_customer_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     tokens_valid_after = Column(DateTime(timezone=True), nullable=True)  # sessions issued earlier are signed out
+    whatsapp = Column(String(20), nullable=True)  # their own WhatsApp number (E.164), for lead alerts (instagram_plan.md phase 4)
 
 class Bot(Base):
     __tablename__ = "bots"
@@ -48,16 +49,31 @@ class Conversation(Base):
     handoff_at = Column(DateTime(timezone=True), nullable=True)  # when they asked for a person
     agent_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     current_node_id = Column(String, nullable=True)
+    contact_id = Column(String(36), nullable=True, index=True)  # the lead this chat belongs to, once known
+    origin = Column(JSON, nullable=True)                        # what brought them to the website: UTM tags, click ids, landing page
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_message_at = Column(DateTime(timezone=True), nullable=True, index=True)  # set by every new message (below): which chats have gone quiet
+    promises_at = Column(DateTime(timezone=True), nullable=True)  # leads/promises.py read the business's words up to here
 
 class Message(Base):
     __tablename__ = "messages"
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    conversation_id = Column(String(36), ForeignKey("conversations.conversation_id", ondelete="CASCADE"))
+    conversation_id = Column(String(36), ForeignKey("conversations.conversation_id", ondelete="CASCADE"), index=True)
     role = Column(String, nullable=False) # 'user', 'assistant', or 'note' (internal, team only)
     content = Column(Text, nullable=False)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     author_id = Column(String(36), nullable=True)  # who wrote a note or an agent reply
+
+
+@event.listens_for(Message, "after_insert")
+def _conversation_moved(mapper, connection, target) -> None:
+    """Every new message, from any channel or code path, marks its conversation's last message: one place, so none is missed (leads/promises.py
+    reads chats that have gone quiet)."""
+    if target.conversation_id:
+        table = Conversation.__table__
+        given = target.__dict__.get("timestamp")  # only a time the code gave: reading the database's default here would load it mid-save
+        connection.execute(table.update().where(table.c.conversation_id == target.conversation_id)
+                           .values(last_message_at=given if isinstance(given, datetime) else datetime.now(timezone.utc)))
 
 class UserUsage(Base):
     __tablename__ = "user_usage"
@@ -227,6 +243,191 @@ class Contact(Base):
     engaged_at = Column(DateTime(timezone=True), nullable=True, index=True)
     engaged_by = Column(JSON, nullable=True)           # the latest things they did: [{"what", "at"}]
     brief = Column(JSON, nullable=True)                # the email agent's hand-over: {"wants", "told", "next", "at"} (mail/agent.py)
+    # As the team works them (backend/leads).
+    last_enquiry_at = Column(DateTime(timezone=True), nullable=True, index=True)  # the latest time they asked: TRAI's 7 days run from it
+    first_response_at = Column(DateTime(timezone=True), nullable=True)            # the first try at reaching them
+    origin = Column(JSON, nullable=True)               # what first brought them, in leads/origin.py's shape: channel, UTM tags, click ids, campaign, ad, form
+    quality = Column(String(16), nullable=True)        # None = fine; ok (a manager said it isn't junk), junk, wrong_number, old (from an imported list, no new enquiry)
+    # On Instagram (instagram_plan.md phase 5): Meta's id for them with the business's account (IGSID), and their @name. Someone who only wrote a DM is a lead too.
+    instagram_id = Column(String(64), nullable=True, index=True)
+    instagram_username = Column(String(64), nullable=True)
+
+
+class LeadTask(Base):
+    """The next thing to do for a lead (backend/leads): someone's job with a time on it. An open lead has one, or says why it's waiting."""
+    __tablename__ = "lead_tasks"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
+    contact_id = Column(String(36), ForeignKey("contacts.id", ondelete="CASCADE"), index=True)
+    title = Column(String(200), nullable=False)
+    kind = Column(String(12), default="call")          # call, whatsapp, email, visit, other
+    due_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    assigned_to = Column(String(36), nullable=True, index=True)
+    status = Column(String(10), default="open", index=True)  # open, done, cancelled
+    result = Column(String(300), nullable=True)
+    origin = Column(String(10), default="team")        # team, rule (a new lead), ai
+    reminded_at = Column(DateTime(timezone=True), nullable=True)
+    escalated_at = Column(DateTime(timezone=True), nullable=True)
+    created_by = Column(String(36), nullable=True)
+    done_by = Column(String(36), nullable=True)
+    done_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LeadEvent(Base):
+    """What the team did with a lead, in order, never changed: who it went to, stages, notes, call results, outcomes. Calls, chats and emails are read from their own tables."""
+    __tablename__ = "lead_events"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
+    contact_id = Column(String(36), ForeignKey("contacts.id", ondelete="CASCADE"), index=True)
+    kind = Column(String(16), nullable=False)          # came_in, asked_again, assigned, stage, note, result, won, lost, reopened
+    text = Column(String(1000), nullable=True)
+    by = Column(String(36), nullable=True)             # the person; None = Nimmi
+    at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class LeadDeal(Base):
+    """How a lead ended: won with its amount, or lost with a reason. One row each time, so someone who comes back keeps their old sale."""
+    __tablename__ = "lead_deals"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
+    contact_id = Column(String(36), ForeignKey("contacts.id", ondelete="CASCADE"), index=True)
+    outcome = Column(String(6), nullable=False)        # won, lost
+    amount = Column(Float, nullable=True)
+    currency = Column(String(3), default="INR")
+    reason = Column(String(200), nullable=True)
+    source = Column(String(60), nullable=True)         # where the lead came from, as it stood then
+    by = Column(String(36), nullable=True)
+    closed_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    reopened_at = Column(DateTime(timezone=True), nullable=True)  # the team reopened the lead: kept as a record, no longer counted as won or lost
+
+
+class LeadPromise(Base):
+    """What the business promised a person (leads/promises.py): a brochure, a price, a call back, a visit. Open until a record shows it was done (a file
+    sent, a call they talked on, a confirmed meeting, a team member writing down what they did), never because the AI said so."""
+    __tablename__ = "lead_promises"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
+    contact_id = Column(String(36), ForeignKey("contacts.id", ondelete="CASCADE"), index=True)
+    kind = Column(String(10), nullable=False)        # send, price, callback, visit, other
+    what = Column(String(200), nullable=False)
+    words = Column(Text, nullable=True)              # the business's own words that promised it (found by the AI, checked to be really there)
+    made_at = Column(DateTime(timezone=True), nullable=False)
+    made_on = Column(String(10), nullable=False)     # call, chat, whatsapp, instagram, email, team
+    made_by = Column(String(36), nullable=True)      # a team member; None: the assistant
+    ref = Column(String(64), nullable=True)          # the call, conversation or email thread it was found in
+    due_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    due_said = Column(Boolean, default=False)        # a time was said; else it's expected a day after the promise
+    status = Column(String(10), default="open", index=True)  # open, done, cancelled
+    done_at = Column(DateTime(timezone=True), nullable=True)
+    done_by = Column(String(36), nullable=True)      # who chose the evidence or cancelled it; None: found in the records
+    evidence = Column(JSON, nullable=True)           # what showed it was done: {"kind", "id", "at", "text"}
+    cancelled_why = Column(String(200), nullable=True)
+    checked_at = Column(DateTime(timezone=True), nullable=True)   # the records were last looked through
+    reminded_at = Column(DateTime(timezone=True), nullable=True)  # its person was told it's due
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LeadSettings(Base):
+    """How an assistant's new leads are handled (backend/leads/core.py SETTINGS)."""
+    __tablename__ = "lead_settings"
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    settings = Column(JSON, nullable=True)
+    turn = Column(Integer, default=0)                  # whose turn it is, when leads go by turns
+
+
+class ChannelPermission(Base):
+    """What someone allowed or refused, per assistant, channel and purpose, with the evidence (instagram_plan.md 4.4, phase 4): a form's tick, their own message,
+    a call they asked for, or what the team recorded. Email offers keep their own record (`Consent`)."""
+    __tablename__ = "channel_permissions"
+    __table_args__ = (UniqueConstraint("contact_id", "channel", "purpose", name="uq_channel_permission"),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="CASCADE"), index=True)
+    contact_id = Column(String(36), ForeignKey("contacts.id", ondelete="CASCADE"), index=True)
+    channel = Column(String(10), nullable=False)       # call, whatsapp, email
+    purpose = Column(String(10), default="service")    # service (about what they asked), marketing
+    state = Column(String(10), nullable=False)         # granted, refused
+    source = Column(String(12), nullable=False)        # form, meta, chat, whatsapp, call, team
+    words = Column(String(500), nullable=True)         # what they ticked or said, as they saw it
+    evidence = Column(String(80), nullable=True)       # the form submission, chat or call it came from
+    by = Column(String(36), nullable=True)             # the team member who recorded it
+    given_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)  # explicit consent for a service call lasts seven days (TRAI), unless renewed
+
+
+class MetaConnection(Base):
+    """Someone's Facebook sign-in for lead ads (backend/meta_leads, instagram_plan.md phase 3): the long-lived token their Pages' own tokens come from, sealed."""
+    __tablename__ = "meta_connections"
+    __table_args__ = (UniqueConstraint("user_id", "meta_user", name="uq_meta_connection"),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)  # the workspace
+    person_id = Column(String(36), nullable=True)                                          # who connected it
+    meta_user = Column(String(40), nullable=False, index=True)                             # their app-scoped Facebook id
+    name = Column(String(120), nullable=True)
+    token = Column(EncryptedText, nullable=True)
+    scopes = Column(JSON, nullable=True)                                                   # what they gave
+    status = Column(String(20), default="active")                                          # active, missing_permission
+    error = Column(String(300), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class MetaPage(Base):
+    """A Facebook Page whose lead forms reach Nimmi. A Page belongs to one workspace."""
+    __tablename__ = "meta_pages"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    connection_id = Column(String(36), ForeignKey("meta_connections.id", ondelete="CASCADE"), index=True)
+    page_id = Column(String(40), unique=True, nullable=False)                              # Meta's id
+    name = Column(String(200), nullable=True)
+    token = Column(EncryptedText, nullable=True)                                           # the Page's own token: made from a long-lived sign-in, it doesn't expire
+    tasks = Column(JSON, nullable=True)                                                    # what the person may do on it: ADVERTISE is needed for leads
+    subscribed = Column(Boolean, default=False)                                            # the Page sends Nimmi's app its new leads
+    status = Column(String(20), default="active")                                          # active, token, permission, gone: the repair is in `error`
+    error = Column(String(300), nullable=True)
+    last_lead_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class MetaForm(Base):
+    """A lead form on a connected Page, and where its leads go: an assistant, or nowhere yet (they wait, shown on Leads > Sources)."""
+    __tablename__ = "meta_forms"
+    __table_args__ = (UniqueConstraint("page_id", "form_id", name="uq_meta_form"),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    page_id = Column(String(40), ForeignKey("meta_pages.page_id", ondelete="CASCADE"), index=True)
+    form_id = Column(String(40), nullable=False, index=True)
+    name = Column(String(200), nullable=True)
+    status = Column(String(20), nullable=True)                                             # Meta's: ACTIVE, ARCHIVED...
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="SET NULL"), nullable=True)
+    settings = Column(JSON, nullable=True)                                                 # {"email": False, "call": False}: off until turned on
+    checked_through = Column(DateTime(timezone=True), nullable=True)                       # leads up to here are in: the catch-up starts here, less an overlap
+    last_lead_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class MetaEvent(Base):
+    """A new lead Meta named (webhook, catch-up or import), kept before Meta hears "received": ids only; the answers are fetched with the Page's token."""
+    __tablename__ = "meta_events"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    leadgen_id = Column(String(40), unique=True, nullable=False)
+    page_id = Column(String(40), index=True)
+    form_id = Column(String(40), nullable=True, index=True)
+    via = Column(String(10), default="webhook")                                            # webhook, catch_up, import
+    status = Column(String(12), default="new", index=True)                                 # new, working, done, waiting (its form has no assistant), failed
+    attempts = Column(Integer, default=0)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    retry_at = Column(DateTime(timezone=True), nullable=True)
+    intake_id = Column(String(36), nullable=True)
+    error = Column(String(300), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 class PhoneNumber(Base):
@@ -252,6 +453,10 @@ class PhoneNumber(Base):
     account_id = Column(String(36), ForeignKey("telephony_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     previous_voice_url = Column(String, nullable=True)  # their webhook before we pointed it here; restored on removal
     replaced_at = Column(DateTime(timezone=True), nullable=True)  # last swap for a new number (once per billing period)
+    # TRAI (Regulation 05 of 2026): automated calls only from numbers the business declared to its provider. An Indian number without this never dials by itself.
+    a2p_declared_at = Column(DateTime(timezone=True), nullable=True)
+    a2p_proof = Column(String(300), nullable=True)   # what the provider gave them: a ticket, an email, a DLT reference
+    a2p_by = Column(String(36), nullable=True)
 
 
 class TelephonyAccount(Base):
@@ -769,6 +974,8 @@ class EmailThread(Base):
     reference_ids = Column(JSON, nullable=True)      # the Message-IDs so far, oldest first
     last_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    promises_at = Column(DateTime(timezone=True), nullable=True)  # leads/promises.py looked at it then
+    promises_seen = Column(JSON, nullable=True)                   # the ids of the business's emails it has read (a draft can be sent long after it was written)
 
 
 class ThreadMessage(Base):
@@ -861,6 +1068,7 @@ class LeadSource(Base):
     code = Column(String(24), unique=True, nullable=False)
     enabled = Column(Boolean, default=False)
     forwarding = Column(JSON, nullable=True)  # Gmail's confirmation for the forwarding address: {code, link, at}
+    google_key = Column(String(64), nullable=True)  # the key Google sends with each lead from a lead form (instagram_plan.md, phase 2)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -879,10 +1087,13 @@ class LeadIntake(Base):
     subject = Column(String(300), nullable=True)
     raw = Column(Text, nullable=True)             # what came, as text
     found = Column(JSON, nullable=True)           # name, phone, email, wants, budget, place
-    contact_id = Column(String(36), nullable=True)
+    contact_id = Column(String(36), nullable=True, index=True)
     note = Column(String(300), nullable=True)
     attempts = Column(Integer, default=0)
     claimed_at = Column(DateTime(timezone=True), nullable=True)
+    origin = Column(JSON, nullable=True)          # the ad, form or page it came from
+    consents = Column(JSON, nullable=True)        # what they ticked, in the form's own words: [{"id", "text", "agreed"}]
+    test = Column(Boolean, nullable=True)         # a test or a historical import: nobody is contacted
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
@@ -1202,6 +1413,132 @@ class WhatsAppFile(Base):
     sends = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class InstagramAccount(Base):
+    """An Instagram professional account connected to a workspace with Business Login for Instagram (instagram_plan.md, phase 5), and the assistant
+    that answers its DMs. One account belongs to one workspace. The long-lived token lasts 60 days and is refreshed well before (instagram/accounts.py)."""
+    __tablename__ = "instagram_accounts"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)    # the workspace
+    person_id = Column(String(36), nullable=True)                                           # who connected it
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="SET NULL"), nullable=True)
+    ig_id = Column(String(64), nullable=False, unique=True)   # the professional account's id: the id in Meta's webhooks
+    login_id = Column(String(64), nullable=True)              # the id Instagram's sign-in gave (Meta's documents name it two ways)
+    username = Column(String(120), nullable=True)
+    name = Column(String(200), nullable=True)
+    access_token = Column(EncryptedText, nullable=True)
+    token_expires_at = Column(DateTime(timezone=True), nullable=True)
+    token_refreshed_at = Column(DateTime(timezone=True), nullable=True)
+    scopes = Column(JSON, nullable=True)
+    ai_enabled = Column(Boolean, default=True)
+    settings = Column(JSON, nullable=True)                    # how the assistant behaves on Instagram (instagram/settings.py)
+    status = Column(String(20), default="connected")          # connected, token (connect again), permission, disconnected
+    status_detail = Column(String(500), nullable=True)
+    subscribed = Column(Boolean, default=False)               # Meta sends its DMs to Nimmi
+    profile = Column(JSON, nullable=True)                     # ice breakers and menu as last saved to Instagram (phase 6): {"ice_breakers", "menu", "error"}
+    last_inbound_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class InstagramChat(Base):
+    """One person's DMs with one connected account. What's said is in the usual Conversation and Message rows (session "ig:<id>"), so Live chat,
+    leads, questions and analytics work as for website chat; this keeps the Instagram side: who they are, the windows, the team's handling, when the
+    assistant answers."""
+    __tablename__ = "instagram_chats"
+    __table_args__ = (UniqueConstraint("account_id", "igsid", name="uq_instagram_chat_user"),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    account_id = Column(String(36), ForeignKey("instagram_accounts.id", ondelete="CASCADE"), index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    bot_id = Column(String(36), ForeignKey("bots.bot_id", ondelete="SET NULL"), nullable=True)
+    conversation_id = Column(String(36), ForeignKey("conversations.conversation_id", ondelete="SET NULL"), nullable=True, index=True)
+    contact_id = Column(String(36), ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True, index=True)
+    igsid = Column(String(64), nullable=False)               # Meta's id for them with this account
+    username = Column(String(120), nullable=True)
+    name = Column(String(200), nullable=True)
+    profile_at = Column(DateTime(timezone=True), nullable=True)   # when their profile was read (only after they wrote, as Meta requires)
+    last_inbound_at = Column(DateTime(timezone=True), nullable=True)   # their last message: 24 hours for anything, 7 for a person's reply
+    ad_window_until = Column(DateTime(timezone=True), nullable=True)   # a first message after a Click-to-Direct ad: up to 7 days
+    last_message_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    unread = Column(Integer, default=0)
+    status = Column(String(10), default="open")              # open, closed
+    assigned_to = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    ai_paused_until = Column(DateTime(timezone=True), nullable=True)
+    reply_due_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    reply_claimed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class InstagramMessage(Base):
+    """A DM: Meta's id for it (one row per id, so a message Meta delivers twice is handled once, and an echo of what Nimmi sent is recognised), its
+    kind, who sent it and how it went. Its text is the Message row's content."""
+    __tablename__ = "instagram_messages"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    chat_id = Column(String(36), ForeignKey("instagram_chats.id", ondelete="CASCADE"), index=True)
+    message_id = Column(String(36), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True, index=True)
+    mid = Column(String(255), nullable=True, unique=True)
+    direction = Column(String(4), nullable=False)            # in, out
+    kind = Column(String(20), default="text")                # text, image, audio, video, file, share, story_mention, story_reply, reel, choice, reaction, unsupported
+    sent_by = Column(String(10), nullable=True)              # customer, ai, team, app (the business, from the Instagram app)
+    author_id = Column(String(36), nullable=True)
+    media = Column(JSON, nullable=True)                      # {"url", "type", "stored", "mime", "understood"}
+    reply_to = Column(String(255), nullable=True)            # the message or story it answers
+    status = Column(String(10), nullable=True)               # received, sending, sent, read, failed, deleted
+    error = Column(String(500), nullable=True)
+    tag = Column(String(20), nullable=True)                  # human_agent: a person's reply after 24 hours (never the assistant's)
+    handled = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class InstagramRule(Base):
+    """A comment rule on an Instagram account (instagram_plan.md, phase 6): which posts and reels (all, or a few), which words in any language or script
+    (none: every comment), the one private reply, and optionally a public reply from a few variations. Off until turned on."""
+    __tablename__ = "instagram_rules"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    account_id = Column(String(36), ForeignKey("instagram_accounts.id", ondelete="CASCADE"), index=True)
+    name = Column(String(120), nullable=False)
+    media_ids = Column(JSON, nullable=True)        # None or []: every post and reel
+    keywords = Column(JSON, nullable=True)         # None or []: every comment
+    private_reply = Column(Text, nullable=False)
+    public_replies = Column(JSON, nullable=True)   # up to 5 variations; empty: no public reply
+    enabled = Column(Boolean, default=False)
+    last_error = Column(String(500), nullable=True)
+    last_error_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class InstagramComment(Base):
+    """A comment on the account's posts or reels, once (Meta's comment id is unique): who wrote it, the rule it matched, and what was replied. The
+    private reply's time counts against Instagram's 750 an hour."""
+    __tablename__ = "instagram_comments"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    account_id = Column(String(36), ForeignKey("instagram_accounts.id", ondelete="CASCADE"), index=True)
+    rule_id = Column(String(36), ForeignKey("instagram_rules.id", ondelete="SET NULL"), nullable=True, index=True)
+    comment_id = Column(String(64), nullable=False, unique=True)
+    parent_id = Column(String(64), nullable=True)    # a reply to another comment
+    media_id = Column(String(64), nullable=True, index=True)
+    media_type = Column(String(20), nullable=True)   # FEED, REELS, STORY, AD
+    ad_id = Column(String(64), nullable=True)
+    ad_title = Column(String(300), nullable=True)
+    from_id = Column(String(64), nullable=True)
+    from_username = Column(String(120), nullable=True)
+    text = Column(Text, nullable=True)
+    commented_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(12), default="new", index=True)   # new, working, replied, skipped, failed
+    why = Column(String(300), nullable=True)                  # skipped or failed: why, in words
+    private_at = Column(DateTime(timezone=True), nullable=True, index=True)  # the private reply's slot in the hour
+    private_mid = Column(String(255), nullable=True)
+    private_text = Column(Text, nullable=True)
+    igsid = Column(String(64), nullable=True, index=True)     # Meta's id for them in DMs, from the private reply's answer
+    public_reply_id = Column(String(64), nullable=True, index=True)
+    retry_at = Column(DateTime(timezone=True), nullable=True)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    attempts = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class AgentThread(Base):

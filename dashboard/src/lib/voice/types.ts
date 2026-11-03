@@ -217,6 +217,8 @@ export interface PhoneNumber {
     source: "nimmi" | "own";       // bought from Nimmi, or on the customer's own Twilio/Exotel account
     account_id: string | null;
     can_replace: boolean;          // Nimmi-bought number that can be swapped for a new one now
+    // TRAI (2026): an Indian number must be declared for automated calls before Nimmi dials from it by itself. Missing while the backend deploys.
+    a2p?: { needed: boolean; declared_at: string | null; proof: string | null };
 }
 
 /** A customer's own Twilio or Exotel account connected to Nimmi. */

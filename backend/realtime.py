@@ -133,6 +133,29 @@ async def relay_to_whatsapp(db, conv: Conversation, text: str, message_id: Optio
                        room=f"admin_{bot.user_id}")
 
 
+async def relay_to_instagram(db, conv: Conversation, text: str, message_id: Optional[str] = None, author_id: Optional[str] = None) -> None:
+    """Send a Live chat reply (already saved as `message_id`) to them on Instagram, inside Instagram's windows: as usual within 24 hours, with the
+    human agent tag up to 7 days (instagram/api.py). One Instagram refuses, or one past its windows, is reported to the team's dashboards."""
+    from fastapi import HTTPException
+    from backend.models import InstagramAccount
+    from instagram import api as instagram_api, chats
+    chat = await chats.for_conversation(db, conv.conversation_id)
+    account = await db.get(InstagramAccount, chat.account_id) if chat and chat.account_id else None
+    bot = (await db.execute(select(Bot).where(Bot.bot_id == conv.bot_id))).scalars().first()
+    error = None
+    if chat is None:
+        error = "This Instagram chat isn't connected any more."
+    else:
+        try:
+            sent = await instagram_api.team_reply(db, chat, account, text, author_id or "", message_id=message_id)
+            error = sent.error
+        except HTTPException as e:
+            error = str(e.detail)
+    if error and sio and bot:
+        logger.warning(f"Instagram reply from Live chat not sent: {error}")
+        await sio.emit("delivery_error", {"conversation_id": str(conv.conversation_id), "error": error[:300]}, room=f"admin_{bot.user_id}")
+
+
 def register(socket_manager) -> None:
     global sio
     sio = socket_manager

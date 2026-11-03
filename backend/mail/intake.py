@@ -9,7 +9,12 @@ new-lead email at once and, on Pro, a call within minutes inside calling hours.
 
 Gmail's message confirming a forwarding address comes to the same address: its code shows in the dashboard, so the business can
 finish setting up the forward. Nothing in a forwarded email can do more than that: it's data, and the AI has no tools.
+
+Ad leads need no Meta or Google review (instagram_plan.md, phase 2): Google's lead form webhook, checked by the key only Google and the business
+know, and Facebook and Instagram lead ads through the business's own Zapier, Make or Pabbly to the connect link. Each lead keeps where it came from
+(leads/origin.py); a test lead is kept apart and reaches nobody; one nobody could ever reach is marked junk (leads/quality.py) and reaches nobody.
 """
+import hmac
 import json
 import logging
 import re
@@ -21,10 +26,12 @@ from sqlalchemy import func, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 
-from backend.models import Bot, Contact, LeadIntake, LeadSource, User
+from backend.models import Bot, CallbackJob, Contact, LeadIntake, LeadSource, PhoneNumber, User
 from database import async_session
+from leads import origin as lead_origin, quality
 from mail import compose, inbound, setup, threads
 from phone import display, to_e164
+from voice.schedule import utc
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +55,13 @@ Never guess: a value that isn't in the email is ""."""
 
 FORM_NAMES = {"name": ("name", "full_name", "fullname", "your-name", "your_name", "customer_name"), "phone": ("phone", "mobile", "phone_number", "mobile_number", "contact", "whatsapp", "your-phone", "tel"),
               "email": ("email", "email_address", "your-email", "mail"), "wants": ("message", "enquiry", "inquiry", "requirement", "details", "your-message", "comments", "subject"),
-              "budget": ("budget",), "place": ("city", "location", "place", "area")}
+              "budget": ("budget",), "place": ("city", "location", "place", "area"), "company": ("company", "company_name", "business", "business_name", "organisation", "organization")}
+# Google's standard columns (developers.google.com/google-ads/webhook/docs/implementation); anything else they answered is kept as "Question: answer".
+GOOGLE_COLUMNS = {"FULL_NAME": "name", "EMAIL": "email", "WORK_EMAIL": "email", "PHONE_NUMBER": "phone", "WORK_PHONE": "phone", "CITY": "place", "COMPANY_NAME": "company",
+                  "PRICE_RANGE": "budget", "TRAVEL_BUDGET": "budget"}
+TEST_NOTE = "A test lead: nobody was told or contacted"
+YES = ("yes", "y", "true", "on", "1", "agreed", "checked")
+WHATSAPP_NAMES = ("whatsapp_ok", "whatsapp_consent", "whatsapp_opt_in", "whatsapp_optin", "agree_whatsapp", "whatsapp_updates")
 
 
 # ─── an assistant's addresses ────────────────────────────────────
@@ -58,7 +71,9 @@ async def source_for(db, owner_id: str, bot_id: str) -> LeadSource:
     if row is None:
         row = LeadSource(bot_id=bot_id, user_id=owner_id, code=secrets.token_hex(8), enabled=False)
         db.add(row)
-        await db.flush()
+    if not row.google_key:  # the key Google sends with each lead: only Nimmi and the business's Google Ads know it
+        row.google_key = secrets.token_urlsafe(18)
+    await db.flush()
     return row
 
 
@@ -138,29 +153,103 @@ async def from_indiamart(code: str, payload: dict) -> bool:
 CONSENT_NAMES = ("marketing_consent", "consent", "newsletter", "subscribe", "offers")
 
 
-def form_lead(fields: dict) -> dict:
-    """Whatever a form calls its fields."""
-    clean = {str(k).strip().lower().replace(" ", "_"): str(v).strip() for k, v in fields.items() if v not in (None, "") and not isinstance(v, (dict, list))}
+def _fields(fields: dict) -> dict:
+    """A form's fields by plain names: "Full Name" is full_name."""
+    return {str(k).strip().lower().replace(" ", "_"): str(v).strip() for k, v in fields.items() if v not in (None, "") and not isinstance(v, (dict, list))}
+
+
+def _meta(clean: dict, ads: bool) -> Optional[str]:
+    """Which of Meta's apps a lead came from, when it did: Zapier and Make pass the lead's platform on (fb, ig)."""
+    platform = clean.get("platform", "").lower()
+    if platform in ("ig", "instagram"):
+        return "Instagram lead ads"
+    return "Facebook lead ads" if ads or platform in ("fb", "facebook") else None
+
+
+def form_lead(fields: dict, ads: bool = False) -> dict:
+    """Whatever a form calls its fields. `ads`: it came through the connect link (Facebook or Instagram lead ads by Zapier, Make or Pabbly)."""
+    clean = _fields(fields)
     found = {key: next((clean[n] for n in names if clean.get(n)), "") for key, names in FORM_NAMES.items()}
     if not found["name"] and (clean.get("first_name") or clean.get("last_name")):
         found["name"] = f"{clean.get('first_name', '')} {clean.get('last_name', '')}".strip()
-    found["portal"] = clean.get("source") or "Website form"
+    found["portal"] = clean.get("source") or _meta(clean, ads) or "Website form"
     found["wants"] = found["wants"][:400]
     ticked = next((clean[n] for n in CONSENT_NAMES if clean.get(n)), "")
-    found["consent"] = "Ticked on the website form" if ticked.lower() in ("yes", "y", "true", "on", "1", "agreed", "checked") else ""
+    found["consent"] = "Ticked on the website form" if ticked.lower() in YES else ""
+    whatsapp = next((clean[n] for n in WHATSAPP_NAMES if clean.get(n)), "")  # their own yes to WhatsApp messages (phase 4)
+    found["whatsapp_ok"] = ("Ticked on the Facebook or Instagram form" if ads else "Ticked on the website form") if whatsapp.lower() in YES else ""
     return found
 
 
-async def from_form(code: str, fields: dict) -> bool:
+async def from_form(code: str, fields: dict, ads: bool = False) -> bool:
+    """A website form, or a lead ad by the connect link. A lead_id makes a repeat count once (Zapier and Make send a lead again when they retry)."""
     async with async_session() as db:
         source = await _source(db, code)
     if source is None or not source.enabled:
         return False
-    found = form_lead(fields)
+    found = form_lead(fields, ads)
     if not (found["email"] or found["phone"]):
         return False
-    await _later(await _keep(source, "form", f"form:{secrets.token_hex(12)}", source=found["portal"][:40], raw=json.dumps(fields, ensure_ascii=False, default=str)[:TEXT_CHARS], found=found))
+    clean = _fields(fields)
+    lead_id = (clean.get("lead_id") or clean.get("leadgen_id") or "")[:100]
+    came = lead_origin.from_fields(clean, "meta_ads" if _meta(clean, ads) else "website")
+    await _later(await _keep(source, "form", f"lead:{lead_id}" if lead_id else f"form:{secrets.token_hex(12)}", source=found["portal"][:40],
+                             raw=json.dumps(fields, ensure_ascii=False, default=str)[:TEXT_CHARS], found=found, origin=came))
     return True
+
+
+def google_lead(payload: dict) -> tuple[dict, str]:
+    """The person in a lead from a Google lead form, and what they sent as text: the standard columns by their id, everything else they answered as "Question: answer"."""
+    found = {"portal": "Google lead form", "name": "", "phone": "", "email": "", "wants": "", "budget": "", "place": "", "company": ""}
+    names, answers, lines = {}, [], []
+    for column in payload.get("user_column_data") or []:
+        if not isinstance(column, dict):
+            continue
+        cid = str(column.get("column_id") or "").strip().upper()[:60]
+        value = str(column.get("string_value") or "").strip()[:300]
+        label = str(column.get("column_name") or "").strip()[:80] or cid.replace("_", " ").capitalize()
+        if not value:
+            continue
+        lines.append(f"{label}: {value}")
+        key = GOOGLE_COLUMNS.get(cid)
+        if key:
+            found[key] = found[key] or value
+        elif cid in ("FIRST_NAME", "LAST_NAME"):
+            names[cid] = value
+        elif cid == "PHONE_NUMBER_VERIFIED":
+            found["phone_verified"] = "Yes" if value.lower() in ("true", "yes", "1") else "No"
+        else:
+            answers.append(f"{label}: {value}")
+    found["name"] = found["name"] or " ".join(names[k] for k in ("FIRST_NAME", "LAST_NAME") if k in names)
+    found["wants"] = "; ".join(answers)[:400]
+    return found, "\n".join(lines)
+
+
+async def from_google(code: str, payload: dict) -> Optional[str]:
+    """A lead from a Google lead form. None when it's kept (or was kept before); else why it's refused: unknown, key, off, invalid.
+    Google retries a 5xx and never a 4xx, so only what can never be taken is refused. A test arriving with another key is kept with a note, as Google's
+    documents don't say which key its test button sends."""
+    async with async_session() as db:
+        source = await _source(db, code)
+    if source is None:
+        return "unknown"
+    given = str(next((v for k, v in payload.items() if str(k).lower() == "google_key"), "") or "")  # Google's own samples spell it two ways
+    right = bool(source.google_key) and hmac.compare_digest(given.encode(), source.google_key.encode())
+    test = payload.get("is_test") is True or str(payload.get("is_test")).lower() == "true"
+    if not right and not test:
+        return "key"
+    if not source.enabled and not test:
+        return "off"
+    lead_id = str(payload.get("lead_id") or "").strip()[:100]
+    if not lead_id:
+        return "invalid"
+    found, text = google_lead(payload)
+    note = None if right else "Google's test came with another key: copy the key from here into your Google lead form"
+    if test and not source.enabled:
+        note = "This works. Turn on Take leads from other places, or real leads won't come in"
+    await _later(await _keep(source, "google", f"google:{lead_id}", source="Google lead form", raw=text[:TEXT_CHARS], found=found, origin=lead_origin.from_google(payload),
+                             test=test or None, note=note))
+    return None
 
 
 async def process_due() -> None:
@@ -224,7 +313,8 @@ async def _finish(intake_id: str, status: str, note: Optional[str] = None, **fie
         await db.commit()
 
 
-async def process(intake_id: str) -> None:
+async def process(intake_id: str, email: Optional[bool] = None, call: Optional[bool] = None) -> None:
+    """`email`, `call`: a lead ads form's own switches (meta_leads), over the assistant's."""
     now = datetime.utcnow()
     async with async_session() as db:
         claimed = await db.execute(update(LeadIntake).where(
@@ -237,6 +327,9 @@ async def process(intake_id: str) -> None:
         row = await db.get(LeadIntake, intake_id)
         bot = await db.get(Bot, row.bot_id)
         channel, ref, subject, attempts, found = row.channel, row.ref, row.subject, row.attempts or 0, row.found
+        test, note, came = row.test, row.note, row.origin
+    if test:
+        return await _finish(intake_id, "done", note or TEST_NOTE)
     try:
         if channel == "email":
             fetched = await inbound.fetch(ref)
@@ -256,8 +349,14 @@ async def process(intake_id: str) -> None:
             if not found:
                 return await _finish(intake_id, "ignored", "Not a lead", raw=text[:TEXT_CHARS])
             await _finish(intake_id, "working", None, raw=text[:TEXT_CHARS], found=found, source=(found.get("portal") or "Forwarded email")[:40])
-        note, contact_id = await act(bot, found)
+        from leads import origin as lead_origin
+        form = ("google",) if channel == "google" else ("meta",) if (came or {}).get("channel") == "meta_ads" else ()  # an ad's lead form
+        journey = (*form, *(("ads",) if form else ()), *(("any_ad",) if lead_origin.from_ad(came) else ()))
+        note, contact_id = await act(bot, found, journey, email=email, call=call)
         await _finish(intake_id, "done", note, contact_id=contact_id)
+        if contact_id:
+            from leads import core as leads
+            await leads.came_in(bot.user_id, contact_id, found.get("portal") or "Another place", intake_id, found.get("wants"), origin=came)
     except Exception as e:
         logger.exception(f"Handling lead {intake_id} failed: {e}")
         await _finish(intake_id, "failed", "Something went wrong handling this lead")
@@ -279,23 +378,31 @@ async def _contact(db, bot: Bot, e164: Optional[str], address_: str, found: dict
         contact.name = name[:80]
     contact.email = contact.email or (address_[:120] or None)
     details = dict(contact.details or {})
-    for label, key in (("Wants", "wants"), ("Budget", "budget"), ("Place", "place"), ("Company", "company"), ("Came from", "portal")):
+    for label, key in (("Wants", "wants"), ("Budget", "budget"), ("Place", "place"), ("Company", "company"), ("Came from", "portal"), ("Phone checked by Google", "phone_verified"),
+                       ("Phone they gave", "phone_given")):
         if found.get(key):
             details[label] = str(found[key])[:200]
     contact.details = details
     return contact
 
 
-async def act(bot: Bot, found: dict) -> tuple[str, Optional[str]]:
-    """A lead with its details: a contact, the team told, their email, a call. Returns what was done, and the contact."""
+async def act(bot: Bot, found: dict, journey=None, email: Optional[bool] = None, call: Optional[bool] = None) -> tuple[str, Optional[str]]:
+    """A lead with its details: a contact, the team told, their email, a call. Returns what was done, and the contact.
+    Junk (leads/quality.py) is kept, marked, and reaches nobody; the same person again within a day is noted on their lead and told to nobody, as
+    the team has them already. `journey`: which new-lead journeys it starts (mail/journeys.py SOURCES, most specific first), else by the portal. `email`, `call`: False keeps the lead
+    email or the call from going (a lead ads form's switches, off until turned on); None leaves it to the assistant's settings."""
     import plans
+    from leads import core as leads
     from mail import small
     from notify import automations, events
     from voice import schedule
     e164 = to_e164(found.get("phone") or "")
     address_ = (found.get("email") or "").strip()
     address_ = address_ if automations.EMAIL_RE.fullmatch(address_) else ""
-    if not (e164 or address_):
+    junk = quality.why_junk(found.get("phone"), address_)
+    if e164 and quality.impossible(e164):  # nobody's number: never kept as one, so strangers who typed it aren't joined together, and nobody rings it
+        found, e164 = {**found, "phone_given": str(found.get("phone"))[:30]}, None
+    if not (e164 or address_ or junk):
         return "No phone number or email in it, so there's no one to reach", None
     done = []
     async with async_session() as db:
@@ -307,6 +414,11 @@ async def act(bot: Bot, found: dict) -> tuple[str, Optional[str]]:
             contact = await _contact(db, bot, e164, address_, found)
             await db.commit()
         contact_id, name = contact.id, contact.name
+        if junk and leads.mark_junk(db, contact, junk):
+            await db.commit()
+            return f"Marked as junk ({junk.lower()}): nobody was told or contacted", contact_id
+        seen = contact.last_enquiry_at  # as it was before this submission: two at once both see the same, and only one goes on
+        repeat = seen is not None and utc(datetime.utcnow()) - utc(seen) < quality.REPEAT
         included = await plans.includes(db, bot.bot_id)
         prefs = await setup.settings_for(db, bot.bot_id)
         settings = await schedule.settings_for(bot.bot_id, db)
@@ -314,23 +426,99 @@ async def act(bot: Bot, found: dict) -> tuple[str, Optional[str]]:
         team = await events._settings(db, bot.user_id)
         owner_email = (await db.execute(select(User.email).where(User.id == bot.user_id))).scalar_one_or_none()
     portal = found.get("portal") or "another place"
+    from leads import contact as reach
+    if found.get("whatsapp_ok") and e164:  # their own yes to WhatsApp, kept whenever they give it
+        async with async_session() as db:
+            await reach.record(db, await db.get(Contact, contact_id), "whatsapp", "granted", "form", str(found["whatsapp_ok"]))
+            await db.commit()
+    if repeat:
+        if found.get("consent") and address_:  # their own tick on their own form, whenever they give it
+            from mail import consent
+            async with async_session() as db:
+                await consent.give(db, bot.user_id, bot.bot_id, address_, "form", str(found["consent"]))
+                await db.commit()
+        return "They asked again within a day: the team has them already, so nobody was told again", contact_id
+    if not await reach.claim(bot.user_id, f"first:{contact_id}:{seen.isoformat() if seen else 'new'}"):  # two submissions at once, on two processes
+        return "Another submission from them is being handled at this moment: nobody is contacted twice", contact_id
     if team.email_alerts and included.team_alerts:
         lines = "\n".join(f"  {k}: {v}" for k, v in (("Name", name), ("Phone", display(e164) if e164 else None), ("Email", address_), ("Wants", found.get("wants")),
                                                      ("Budget", found.get("budget")), ("Place", found.get("place"))) if v)
         await events._email_team(events.recipients(team, owner_email), f"New lead from {portal} ({bot.bot_name})", f"A new lead came in from {portal}.\n\n{lines}", bot.user_id)
-    if address_ and await small.queue(bot.user_id, bot.bot_id, "lead_email", contact_id, address_, {"name": name, "portal": portal, "wants": found.get("wants") or ""}, stamp=datetime.utcnow().strftime("%Y%m%d%H%M")):
+    cause, wanted = f"Their enquiry on {portal}", prefs["lead_call"]
+    calling = bool(e164) and (wanted["enabled"] if call is None else call) and included.schedule and settings["callbacks"]["enabled"] and not blocked
+    async with async_session() as db:  # leads/contact.py, just before anything goes: their refusals, a wrong number, credits, the number's TRAI declaration
+        person = await db.get(Contact, contact_id)
+        mail_stop = (await reach.can_contact(db, person, "email", cause=cause, hours=False)) if address_ and email is not False else None
+        call_stop = (await reach.can_contact(db, person, "call", cause=cause, hours=False)) if calling else None
+        if call_stop is not None and call_stop.ok:
+            from_id = await schedule._from_number(db, CallbackJob(user_id=bot.user_id, bot_id=bot.bot_id, e164=e164), settings)
+            undeclared = reach.a2p_blocked(await db.get(PhoneNumber, from_id)) if from_id else None  # no number yet: Schedule says so when it's due
+            call_stop = reach.Verdict(False, undeclared, "a2p") if undeclared else call_stop
+        first = await _whatsapp_first(db, bot, person, found, cause)
+    if mail_stop is not None and not mail_stop.ok:
+        done.append(f"no email: {mail_stop.reason}")
+    elif mail_stop is not None and await small.queue(bot.user_id, bot.bot_id, "lead_email", contact_id, address_, {"name": name, "portal": portal, "wants": found.get("wants") or ""},
+                                                     stamp=datetime.utcnow().strftime("%Y%m%d%H%M")):
         done.append("email queued")
-    wanted = prefs["lead_call"]
-    if e164 and wanted["enabled"] and included.schedule and settings["callbacks"]["enabled"] and not blocked:
+    if first is not None:
+        done.append(await first())
+    if call_stop is not None and not call_stop.ok:
+        done.append(f"no call: {call_stop.reason}")
+    elif call_stop is not None:
         tz, hours = schedule.zone(settings), settings["callbacks"]["hours"]
         at = schedule.next_allowed(schedule.now_utc() + timedelta(minutes=int(wanted["minutes"])), hours, schedule.DAYS, tz)
         await schedule.book_callback(owner_id=bot.user_id, bot_id=bot.bot_id, e164=e164, at=at, about=f"Enquiry from {portal}: {found.get('wants') or ''}".strip()[:200], name=name,
-                                     source_call_id=None, number_id=None, tz=tz, consent=f"Enquired on {portal} on {datetime.utcnow():%d %b %Y}", tell_them=False)
+                                     source_call_id=None, number_id=None, tz=tz, consent=f"{schedule.LEAD_CALL} {portal} on {datetime.utcnow():%d %b %Y}", tell_them=False)
         done.append(f"call at {schedule.when_text(at, tz)}")
     from mail import consent, journeys
     if found.get("consent") and address_:  # their own tick on their own form
         async with async_session() as db:
             await consent.give(db, bot.user_id, bot.bot_id, address_, "form", str(found["consent"]))
             await db.commit()
-    await journeys.fire(bot.user_id, bot.bot_id, "new_lead", contact_id, "form" if portal == "Website form" else "portal")
+    chosen = [v for v in (journey if isinstance(journey, (list, tuple)) else [journey]) if v]
+    if not any(v in ("meta", "google", "ads") for v in chosen):  # not an ad's lead form: where it came from first, then "any ad" if one brought them
+        chosen.insert(0, "form" if portal == "Website form" else "portal")
+    await journeys.fire(bot.user_id, bot.bot_id, "new_lead", contact_id, tuple(chosen))
     return ("Contact saved; " + ", ".join(done)) if done else "Contact saved", contact_id
+
+
+async def _whatsapp_first(db, bot: Bot, contact: Contact, found: dict, cause: str):
+    """The assistant's WhatsApp template to a new lead who said yes to WhatsApp (Leads > Sources > the assistant's settings), as something to send once the
+    database is let go, or None when it isn't set or isn't allowed (a form's details alone never are: WhatsApp needs their own yes)."""
+    from leads import contact as reach, core as leads
+    from mail import compose, senders
+    from notify import channels
+    from whatsapp import numbers
+    prefs = await leads.settings_of(db, bot.bot_id)
+    template = prefs.get("whatsapp_first")
+    if not template or contact is None or not contact.e164:
+        return None
+    # Their enquiry is the cause (a lost lead asking again isn't closed); their yes to WhatsApp is still needed. The first answer goes at any hour.
+    verdict = await reach.can_contact(db, contact, "whatsapp", cause=cause, hours=False)
+    if not verdict.ok:
+        reason = verdict.reason
+        return lambda: _said(f"no WhatsApp: {reason}")
+    number = await numbers.workspace_number(db, bot.user_id)
+    if number is None or not number.access_token:
+        return lambda: _said("no WhatsApp: no WhatsApp number connected")
+    sender = await senders.sender_for(db, bot.user_id, bot.bot_id)
+    to, pid, token, language = contact.e164, number.phone_number_id, number.access_token, prefs.get("whatsapp_language") or "en"
+    params = [compose._first_name(contact.name or found.get("name")) or "there", sender.name]
+    contact_id = contact.id
+
+    async def send() -> str:
+        try:
+            await channels.send_whatsapp_template(to, template, language, params, phone_number_id=pid, token=token)
+        except Exception as e:  # noqa: BLE001
+            return f"WhatsApp didn't take the message: {str(e)[:120]}"
+        async with async_session() as db:
+            person = await db.get(Contact, contact_id)
+            if person is not None:
+                db.add(leads.event(person, "whatsapp", f"Sent the WhatsApp template {template}"))
+                await db.commit()
+        return "WhatsApp sent"
+    return send
+
+
+async def _said(text: str) -> str:
+    return text

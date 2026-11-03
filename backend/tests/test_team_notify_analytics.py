@@ -48,7 +48,7 @@ def test_team_roles_and_workspace_switching(client, make_user):
 def test_lead_alert_fires_once(client, make_user, run):
     u = make_user()
     bot = u.bot()
-    for value in ("98765 43210", "98765 43210"):
+    for value in ("98765 43217", "98765 43217"):
         r = client.post("/api/chat/variables", json={"bot_id": bot, "visitor_session_id": "lead-1",
                                                       "variable_name": "phone", "variable_value": value})
         assert r.status_code == 200
@@ -63,7 +63,7 @@ def test_lead_alert_fires_once(client, make_user, run):
                 return rows
         return rows
 
-    rows = run(logs)
+    rows = [r for r in run(logs) if r.kind != "lead_in"]  # lead_in: the lead in Leads (leads/core.py)
     assert [r.kind for r in rows] == ["lead_email"]
     assert rows[0].status == "skipped"  # no email provider configured in tests
 

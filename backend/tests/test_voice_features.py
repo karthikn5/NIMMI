@@ -296,7 +296,7 @@ def test_campaign_create_dispatch_and_finish(client, make_user, run, monkeypatch
     run(finish_second)
     run(scheduler.finish_campaigns)
     detail = client.get(f"/api/voice/campaigns/{camp['id']}", headers=u.h()).json()
-    assert detail["status"] == "completed" and [c["name"] for c in detail["contacts"]] == ["Ravi", "Asha"]
+    assert detail["status"] == "completed" and sorted(c["name"] for c in detail["contacts"]) == ["Asha", "Ravi"]  # saved in one moment: no order among them on Postgres
     assert client.get("/api/voice/campaigns", headers=u.h()).json()[0]["counts"]["done"] == 2
     assert client.get("/api/voice/callbacks/jobs", headers=u.h()).json() == []  # campaign calls aren't call-backs
 

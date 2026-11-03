@@ -450,16 +450,18 @@ async def drop_email_draft(tc, db, thread_id, draft_id):
     return {"message": "Dropped the draft.", "refresh": {"kind": "email_thread", "id": thread_id}}
 
 
-# ─── Leads from other places (Email > Lead sources) ─────────────────
+# ─── Leads from other places (Leads > Sources) ────────────────────
 
 @tool("email_lead_sources", "Where one assistant's leads from other places come in: whether it's on, the address to forward IndiaMART, JustDial "
-      "or property-portal emails to, Gmail's forwarding confirmation code if one came, the links for IndiaMART's Push API and website forms, "
-      "and the latest leads with what became of each.", "Reading lead sources",
+      "or property-portal emails to, Gmail's forwarding confirmation code if one came, the links for IndiaMART's Push API, website forms, Google lead forms "
+      "and Facebook or Instagram lead ads by Zapier, Make or Pabbly, and the latest leads with what became of each. Google's key isn't given: it's on Leads > Sources.",
+      "Reading lead sources",
       {"type": "object", "required": ["assistant_id"], "properties": {"assistant_id": {"type": "string"}}},
-      roles=MANAGERS, screens=AREAS["email"], routes=("GET /api/email/leads/{bot_id}",))
+      roles=MANAGERS, screens=AREAS["email"] + AREAS["leads"], routes=("GET /api/email/leads/{bot_id}",))
 async def email_lead_sources(tc, db, assistant_id):
     from mail.leads_api import detail
-    return await detail(db, await get_owned_bot(assistant_id, tc.ctx, db), tc.ctx, make=False)
+    shown = await detail(db, await get_owned_bot(assistant_id, tc.ctx, db), tc.ctx, make=False)
+    return {k: v for k, v in shown.items() if k != "google_key"}  # a secret: it never goes to an AI model
 
 
 async def _read_leads(ctx, db, entity: str, keys: list) -> dict:
@@ -478,7 +480,7 @@ adapter("email_leads", _read_leads, _write_leads, lambda entity: {"kind": "email
 @tool("set_lead_sources", "Turn an assistant's lead sources on or off: leads forwarded to its address, or sent by IndiaMART or a form, become contacts and "
       "get the new-lead email.", "Changing lead sources",
       {"type": "object", "required": ["assistant_id", "on"], "properties": {"assistant_id": {"type": "string"}, "on": {"type": "boolean"}}},
-      level="change", roles=MANAGERS, screens=AREAS["email"], routes=("PUT /api/email/leads/{bot_id}",))
+      level="change", roles=MANAGERS, screens=AREAS["email"] + AREAS["leads"], routes=("PUT /api/email/leads/{bot_id}",))
 async def set_lead_sources(tc, db, assistant_id, on):
     from fastapi import HTTPException
     bot = await get_owned_bot(assistant_id, tc.ctx, db)
@@ -533,7 +535,7 @@ async def set_journey(tc, db, journey_id, on):
 
 
 @tool("lead_board", "One assistant's leads by stage (new, contacted, interested, meeting, customer, lost), with status, who looks after each, and tags.", "Reading the lead board",
-      {"type": "object", "required": ["assistant_id"], "properties": {"assistant_id": {"type": "string"}}}, roles=MANAGERS, screens=AREAS["email"], routes=("GET /api/email/board/{bot_id}",))
+      {"type": "object", "required": ["assistant_id"], "properties": {"assistant_id": {"type": "string"}}}, roles=MANAGERS, screens=AREAS["email"] + AREAS["leads"], routes=("GET /api/email/board/{bot_id}",))
 async def lead_board(tc, db, assistant_id):
     from mail.journeys_api import board
     return await board((await get_owned_bot(assistant_id, tc.ctx, db)).bot_id, ctx=tc.ctx, db=db)
@@ -560,7 +562,7 @@ adapter("lead", _read_lead, _write_lead, lambda entity: {"kind": "lead", "id": e
 @tool("update_lead", "Change a lead's stage (new, contacted, interested, meeting, customer, lost), who looks after them, or their tags.", "Changing a lead",
       {"type": "object", "required": ["lead_id"], "properties": {"lead_id": {"type": "string"}, "stage": {"type": "string"}, "assigned_to": {"type": "string"},
                                                                  "tags": {"type": "array", "items": {"type": "string"}}}},
-      level="change", roles=MANAGERS, screens=AREAS["email"], routes=("PUT /api/email/board/leads/{contact_id}",))
+      level="change", roles=MANAGERS, screens=AREAS["email"] + AREAS["leads"], routes=("PUT /api/email/board/leads/{contact_id}",))
 async def update_lead_tool(tc, db, lead_id, stage=None, assigned_to=None, tags=None):
     from fastapi import HTTPException
     changes = {k: v for k, v in (("stage", stage), ("assigned_to", assigned_to), ("tags", tags)) if v is not None}

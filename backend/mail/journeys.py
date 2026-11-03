@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 
 TRIGGERS = {"new_lead": "A new lead", "status": "Their lead status changes", "meeting_booked": "A meeting is booked", "meeting_attended": "A meeting is attended",
             "meeting_missed": "A meeting is missed", "customer": "They become a customer", "date": "A date in their details"}
-SOURCES = {"chat": "Website chat", "call": "A phone call", "whatsapp": "WhatsApp", "form": "A website form", "portal": "A portal such as IndiaMART"}
+SOURCES = {"chat": "Website chat", "call": "A phone call", "whatsapp": "WhatsApp", "instagram": "Instagram (messages and comments)", "form": "A website form",
+           "portal": "A portal such as IndiaMART", "meta": "Facebook or Instagram lead ads", "google": "Google lead forms",
+           "ads": "An ad's lead form (Google, Facebook, Instagram)", "any_ad": "Any ad: lead forms, WhatsApp and Instagram ads, website visits from ads"}
 GOALS = {"replied": "They reply or talk to you", "booked": "They book a meeting", "customer": "They become a customer"}
 STEPS = ("email", "wait", "whatsapp", "call", "branch", "update", "notify")
 TESTS = {"replied": "They replied", "clicked": "They clicked a link", "downloaded": "They downloaded a file", "booked": "They booked a meeting"}
@@ -39,6 +41,7 @@ MAX_STEPS = 20
 BATCH = 20
 SAFETY = 12                             # steps one pass runs before it comes back
 STUCK = timedelta(minutes=5)            # a claim older than this was lost with its process
+PERSON_WAIT = timedelta(hours=6)        # someone on the team is working them: the journey looks again this much later
 START_DELAY = timedelta(seconds=30)     # lets what else is happening now (a welcome email) be queued first, so the cap sees it
 RESTART_AFTER = timedelta(days=30)      # someone going round the same journey again
 POLL = timedelta(hours=1)               # how often a wait for something looks again
@@ -220,26 +223,37 @@ async def _start(journey_id: str, owner_id: str, bot_id: str, contact_id: str, n
     return True
 
 
-async def fire(owner_id: str, bot_id: str, trigger: str, contact_id: Optional[str], value: Optional[str] = None, now: Optional[datetime] = None) -> int:
-    """Something happened to a contact: the journeys it starts. Best effort; never raises. Returns how many started."""
+async def fire(owner_id: str, bot_id: str, trigger: str, contact_id: Optional[str], value=None, now: Optional[datetime] = None) -> int:
+    """Something happened to a contact: the journeys it starts. `value`: one, or several from the most specific (a new lead from a Facebook lead ad is
+    "meta", "ads" and "any_ad"). A new lead gets one follow-up plan (instagram_plan.md 4.4: one chase at a time): the journey for the most specific
+    source, else one for any lead, and none while they're on a new-lead journey already. Best effort; never raises. Returns how many started."""
     if not contact_id or not bot_id:
         return 0
     import plans
+    values = [v for v in (value if isinstance(value, (list, tuple)) else [value]) if v]
     started = 0
     try:
         async with async_session() as db:
             if not (await plans.includes(db, bot_id)).email_alerts:
                 return 0
-            rows = (await db.execute(select(Journey).where(Journey.bot_id == bot_id, Journey.trigger == trigger, Journey.enabled.is_(True)))).scalars().all()
+            rows = (await db.execute(select(Journey).where(Journey.bot_id == bot_id, Journey.trigger == trigger, Journey.enabled.is_(True))
+                                     .order_by(Journey.created_at))).scalars().all()
+            if trigger == "new_lead" and (await db.execute(select(JourneyRun.id).join(Journey, Journey.id == JourneyRun.journey_id).where(
+                    JourneyRun.contact_id == contact_id, JourneyRun.status == "active", Journey.trigger == "new_lead").limit(1))).first():
+                return 0  # already on a new lead's journey: the chase they're in goes on
+        rows = sorted((j for j in rows if not j.trigger_value or j.trigger_value in values),
+                      key=lambda j: values.index(j.trigger_value) if j.trigger_value else len(values))
         for journey in rows:
-            if (not journey.trigger_value or journey.trigger_value == value) and await _start(journey.id, owner_id, bot_id, contact_id, now or datetime.utcnow()):
+            if await _start(journey.id, owner_id, bot_id, contact_id, now or datetime.utcnow()):
                 started += 1
+                if trigger == "new_lead":
+                    break
     except Exception as e:
         logger.warning(f"Starting journeys ({trigger}) for {contact_id} failed: {e}")
     return started
 
 
-async def fire_for(owner_id: str, bot_id: str, trigger: str, e164: Optional[str], address: Optional[str], value: Optional[str] = None) -> int:
+async def fire_for(owner_id: str, bot_id: str, trigger: str, e164: Optional[str], address: Optional[str], value=None) -> int:
     """`fire`, for someone known by number or email. Best effort; never raises."""
     try:
         async with async_session() as db:
@@ -267,9 +281,10 @@ async def stop_for(db, owner_id: str, contact_ids: list[str], why: str) -> int:
 async def stopped_by_reply(db, thread: EmailThread) -> None:
     """They replied, so nothing else goes out by itself (mail/inbound.py; the caller commits). Only with this assistant: one account can run several businesses."""
     people = (await db.execute(select(Contact).where(Contact.user_id == thread.user_id, Contact.bot_id == thread.bot_id, func.lower(Contact.email) == thread.email))).scalars().all()
+    from leads import contact as reach
     for contact in people:
         move_stage(contact, "contacted")
-    await stop_for(db, thread.user_id, [c.id for c in people], "They replied")
+        await reach.stop_chase(db, contact, "They replied")  # journeys, follow-up calls and the email agent's waiting emails, all at once
 
 
 # ─── what's known about them ─────────────────────────────────────
@@ -321,7 +336,7 @@ async def _test(db, test: str, run: JourneyRun, contact: Contact) -> bool:
 
 
 async def _why_stop(db, run: JourneyRun, journey: Optional[Journey], contact: Optional[Contact], bot: Optional[Bot]) -> Optional[tuple[str, str]]:
-    """Why this run ends before its next step: (status, why), or None."""
+    """Why this run ends before its next step: (status, why), or None. ("wait", why): not now, as a person on the team is working them."""
     import plans
     from voice import schedule
     if journey is None or bot is None:
@@ -344,6 +359,15 @@ async def _why_stop(db, run: JourneyRun, journey: Optional[Journey], contact: Op
         return "done", "They booked a meeting"
     if journey.goal == "customer" and "customer" in (contact.lead_status, contact.stage):
         return "done", "They became a customer"
+    from leads import contact as reach
+    # One chase at a time (leads/contact.py): junk, a person on the team working them, or (for a new lead's journey) a closed lead or a meeting ends it. A
+    # journey made for lost leads, customers or meetings isn't ended by what started it.
+    skip = ("closed", "meeting") if journey.trigger != "new_lead" else ()
+    stop = await reach.blockers(db, contact, "email" if contact.email else "call", "marketing" if (journey.options or {}).get("marketing") else "service", skip=skip)
+    if stop is not None and stop.code == "person":  # someone on the team is on it: the journey waits for them, it doesn't end
+        return "wait", stop.reason
+    if stop is not None and stop.code not in ("no_email", "no_number", "email_blocked", "dnc"):  # those are above, worded for journeys
+        return "stopped", stop.reason
     return None
 
 
@@ -437,6 +461,10 @@ async def _whatsapp(db, run: JourneyRun, contact: Contact, sender, step: dict, t
         _queue_email(db, run, contact, step.get("subject") or f"A message from {sender.name}", text, now)
         return "Outside WhatsApp's 24-hour window: sent by email instead"
     if chat is not None and step.get("template"):
+        from leads import contact as reach
+        allowed = await reach.can_contact(db, contact, "whatsapp", hours=False)
+        if not allowed.ok:
+            return f"Skipped the WhatsApp template: {allowed.reason}"
         await db.commit()
         try:
             await channels.send_whatsapp_template(contact.e164, step["template"], "en", [values["first_name"] or "there", values["business"]],
@@ -593,6 +621,11 @@ async def advance(run_id: str, now: Optional[datetime] = None) -> None:
         run = await db.get(JourneyRun, run_id)
         journey, contact, bot = await db.get(Journey, run.journey_id), await db.get(Contact, run.contact_id), await db.get(Bot, run.bot_id)
         ended = await _why_stop(db, run, journey, contact, bot)
+        if ended and ended[0] == "wait":
+            if not run.history or run.history[-1].get("what") != ended[1][:200]:  # once, not every few hours
+                _note(run, ended[1], now)
+            run.next_at, run.claimed_at = now + PERSON_WAIT, None
+            return await db.commit()
         if ended:
             _end(run, *ended)
             return await db.commit()

@@ -121,7 +121,7 @@ function BulkPageInner() {
                 </div>
                 <AskInChat key={botId} page={d} botId={botId} onChanged={() => { void reload(); }} />
                 <p className="border-t border-line px-5 py-3 text-[13px] text-stone-500">
-                    You can also note someone&apos;s yes on the Lead board, and website forms with a newsletter box send it with the lead.
+                    You can also note someone&apos;s yes on Leads &gt; Board, and website forms with a newsletter box send it with the lead.
                 </p>
             </Card>
             <Card>

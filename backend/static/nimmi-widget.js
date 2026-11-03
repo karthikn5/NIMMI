@@ -341,6 +341,29 @@
     }
     shadow.appendChild(launcher);
 
+    // Where this visitor first came from (an ad's tags on the address, the site before this one), kept on this site for 30 days, so
+    // the lead can say which ad brought them. Only these tags are read: the rest of the address can hold private details.
+    function firstTouch() {
+        const KEY = 'nimmi_first_touch', KEEP = 30 * 24 * 3600 * 1000;
+        const TAGS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'gbraid', 'wbraid', 'fbclid'];
+        const here = {};
+        try {
+            const query = new URLSearchParams(location.search);
+            TAGS.forEach((tag) => { const value = query.get(tag); if (value) here[tag] = value.slice(0, 200); });
+        } catch (e) { /* an address it can't read */ }
+        const tagged = Object.keys(here).length > 0;
+        let kept = null;
+        try { kept = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { /* storage unavailable */ }
+        if (kept && kept.origin && Date.now() - kept.at < KEEP && (kept.tagged || !tagged)) return kept.origin;
+        here.landing_page = (location.origin + location.pathname).slice(0, 200);
+        try {
+            const before = new URL(document.referrer);
+            if (before.host !== location.host) here.referrer = (before.origin + before.pathname).slice(0, 200);
+        } catch (e) { /* they came straight here */ }
+        try { localStorage.setItem(KEY, JSON.stringify({ at: Date.now(), tagged, origin: here })); } catch (e) { /* storage unavailable */ }
+        return here;
+    }
+
     // Chat Window
     const chatWindow = document.createElement('div');
     chatWindow.id = 'nimmi-chat-window';
@@ -353,7 +376,9 @@
         || (apiBase.includes('nimmiai.in') ? 'https://nimmiai.in' : 'http://localhost:3000');
         
     const isDemo = script.getAttribute('data-is-demo') === 'true';
-    iframe.src = `${dashboardBase}/widget/${botId}?t=` + Date.now() + (isDemo ? '&is_demo=true' : '');
+    const touch = firstTouch();
+    iframe.src = `${dashboardBase}/widget/${botId}?t=` + Date.now() + (isDemo ? '&is_demo=true' : '')
+        + (touch ? `&origin=${encodeURIComponent(JSON.stringify(touch))}` : '');
     iframe.setAttribute('allow', 'microphone'); // the chat's mic button (the visitor still has to allow it)
     chatWindow.appendChild(iframe);
     shadow.appendChild(chatWindow);

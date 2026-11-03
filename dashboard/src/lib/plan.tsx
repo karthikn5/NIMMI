@@ -8,10 +8,10 @@ import { Notice } from "@/components/ui";
 /** What a plan includes (backend plans.py `Includes`; "earlier": a 1/6/12 Month plan, everything until it ends). */
 export type Includes = {
     tier: "starter" | "growth" | "pro" | "earlier" | null; replies: number | null; seats: number; call_credits: number;
-    whatsapp: boolean; live_chat: boolean; email_alerts: boolean; team_alerts: boolean; welcome_email: boolean; schedule: boolean; campaigns: boolean; integrations: boolean;
+    whatsapp: boolean; instagram?: boolean; live_chat: boolean; email_alerts: boolean; team_alerts: boolean; welcome_email: boolean; schedule: boolean; campaigns: boolean; integrations: boolean;
     business_hours: boolean; transfers: boolean;
 };
-export type Feature = "whatsapp" | "live_chat" | "email_alerts" | "team_alerts" | "welcome_email" | "schedule" | "campaigns" | "integrations" | "business_hours" | "transfers";
+export type Feature = "whatsapp" | "instagram" | "live_chat" | "email_alerts" | "team_alerts" | "welcome_email" | "schedule" | "campaigns" | "integrations" | "business_hours" | "transfers";
 
 /** The workspace's plan limits (see backend/plans.py): `includes` is its best plan (for what assistants share), and
  * `assistant_plans` each assistant's, with its AI replies this month. */
@@ -34,6 +34,7 @@ export type Limits = {
 /** What each feature is called, and the plan it starts on (the backend's NEEDS). */
 export const NEEDS: Record<Feature, { text: string; tier: "Starter" | "Growth" | "Pro" }> = {
     whatsapp: { text: "WhatsApp comes", tier: "Growth" },
+    instagram: { text: "Instagram messages come", tier: "Growth" },
     live_chat: { text: "Live chat comes", tier: "Growth" },
     email_alerts: { text: "Emails after calls, follow-ups, your files and your own domain come", tier: "Growth" },
     team_alerts: { text: "Email alerts to your team come", tier: "Starter" },

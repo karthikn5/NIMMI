@@ -80,14 +80,17 @@ def missing_fields(bot: Bot, captured: Optional[dict]) -> list[tuple[str, str]]:
 
 
 # ─── instructions ─────────────────────────────────────────────────
+PLACES = {"whatsapp": "on WhatsApp", "instagram": "in Instagram direct messages"}
+
+
 def system_prompt(bot: Bot, *, captured: Optional[dict], first_message: bool, channel: str, knowledge_text: str) -> str:
     name = bot.bot_name or "Assistant"
     b = behaviour.clean(bot.behaviour) if bot.behaviour else None
     now = datetime.now(IST)
     # Nov 2026, on live: asked to send a confirmation, the assistant said it had, though nothing here can send anything.
-    cannot = "send emails" if channel == "whatsapp" else "send emails, files or WhatsApp messages"
+    cannot = "send emails" if channel in ("whatsapp", "instagram") else "send emails, files or WhatsApp messages"
     lines = [
-        f"You are {name}, the assistant for this business, chatting with a visitor {'on WhatsApp' if channel == 'whatsapp' else 'on its website'}.",
+        f"You are {name}, the assistant for this business, chatting with a visitor {PLACES.get(channel, 'on its website')}.",
         f"Today is {now:%A, %d %B %Y}, {now:%I:%M %p} India time.",
         "",
         "How to answer:",
@@ -105,6 +108,8 @@ def system_prompt(bot: Bot, *, captured: Optional[dict], first_message: bool, ch
     ]
     if channel == "whatsapp":
         lines.append("- Format for WhatsApp: short paragraphs, *bold* for emphasis, simple lists. No tables, no markdown headings.")
+    elif channel == "instagram":  # Instagram shows text exactly as written: stars and hashes would show
+        lines.append("- Format for Instagram: plain text in short paragraphs, simple lists. No *stars*, markdown or tables.")
     else:
         lines.append("- Keep it easy to read: short paragraphs, and a short list when listing options. No tables.")
     if b:

@@ -195,8 +195,8 @@ function EraseSection() {
         <section className="mt-10">
             <SectionHeader title="Erase a caller's data" description="When someone asks you to delete their information, erase it here. It removes their calls, recordings, transcripts and collected details." />
             <Card className="p-5">
-                <form className="flex flex-col sm:flex-row gap-3" onSubmit={(e) => { e.preventDefault(); if (number.replace(/\D/g, "").length >= 10) setConfirming(true); else toast("Enter a full 10-digit number."); }}>
-                    <Input type="tel" inputMode="tel" aria-label="Caller's phone number" placeholder="+91 98765 43210" className="sm:max-w-64 tabular-nums" value={number} onChange={(e) => setNumber(e.target.value)} />
+                <form className="flex flex-col sm:flex-row gap-3" onSubmit={(e) => { e.preventDefault(); if (number.includes("@") || number.replace(/\D/g, "").length >= 10) setConfirming(true); else toast("Enter a phone number with at least 10 digits, or an email"); }}>
+                    <Input aria-label="Their phone number or email" placeholder="Phone number or email" className="sm:max-w-64 tabular-nums" value={number} onChange={(e) => setNumber(e.target.value)} />
                     <Button type="submit" variant="danger">Erase data</Button>
                 </form>
             </Card>
@@ -205,13 +205,13 @@ function EraseSection() {
                 open={confirming}
                 onClose={() => setConfirming(false)}
                 title={`Erase all data for ${number}?`}
-                description="This can't be undone. The number is also added to your do-not-call list."
+                description="This can't be undone. Any number they gave is also added to your do-not-call list."
                 footer={<>
                     <Button variant="ghost" onClick={() => setConfirming(false)}>Cancel</Button>
                     <Button variant="danger" onClick={erase} disabled={busy}>{busy ? "Erasing…" : "Erase permanently"}</Button>
                 </>}
             >
-                <p className="text-[13px] text-stone-600">Calls, recordings, transcripts and lead details linked to this number will be deleted across all your assistants.</p>
+                <p className="text-[13px] text-stone-600">Calls, recordings, transcripts and lead details linked to them will be deleted across all your assistants.</p>
             </Dialog>
         </section>
     );

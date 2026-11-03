@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, BookmarkPlus, MessageCircle, Globe, Send, Settings } from "lucide-react";
+import { ArrowLeft, AtSign, BookmarkPlus, MessageCircle, Globe, Send, Settings } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
 import { Button, EmptyState, Segmented, Skeleton, Status, ToastProvider, cn, useToast } from "@/components/ui";
 import { LiveChatSettings, type SavedReply, type WorkspaceSettings } from "@/components/livechat/LiveChatSettings";
@@ -22,7 +22,7 @@ type Handoff = {
     agent_id: string | null;
     created_at: string;
     captured_data: Record<string, string> | null;
-    channel?: "web" | "whatsapp";
+    channel?: "web" | "whatsapp" | "instagram";
     lead?: Lead;
 };
 type Msg = { id?: string; text: string; sender: "user" | "agent" | "system" | "note"; at: Date; author?: string | null };
@@ -34,7 +34,7 @@ const fromSaved = (m: Saved): Msg => ({
 });
 
 const LEAD_TONE = { hot: "bad", warm: "warn", cold: "neutral" } as const;
-const isLiveSession = (s: string) => s.startsWith("widget-session-human-") || s.startsWith("wa:");
+const isLiveSession = (s: string) => s.startsWith("widget-session-human-") || s.startsWith("wa:") || s.startsWith("ig:");
 
 export default function LiveChatPage() {
     return (
@@ -210,7 +210,7 @@ function LiveChat() {
                 <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                     <div>
                         <h1 className="text-2xl font-semibold tracking-tight">Live chat</h1>
-                        <p className="text-sm text-stone-500 mt-1">People who asked for a person on your website or WhatsApp. Reply here; they see it where they wrote.</p>
+                        <p className="text-sm text-stone-500 mt-1">People who asked for a person on your website, WhatsApp or Instagram. Reply here; they see it where they wrote.</p>
                     </div>
                     <div className="flex items-center gap-3">
                         {ws && (
@@ -236,13 +236,14 @@ function LiveChat() {
                         <ul className="flex-1 overflow-y-auto">
                             {handoffs === null && <li className="p-4 space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12" />)}</li>}
                             {handoffs?.length === 0 && (
-                                <li><EmptyState title="Nobody is waiting" body="When someone asks for a person, on your website or WhatsApp, they show up here." /></li>
+                                <li><EmptyState title="Nobody is waiting" body="When someone asks for a person, on your website, WhatsApp or Instagram, they show up here." /></li>
                             )}
                             {handoffs?.map((h) => {
                                 const name = h.captured_data?.name || h.captured_data?.Name;
                                 const takenByOther = h.status === "human" && h.agent_id && h.agent_id !== me.current;
                                 const wa = h.channel === "whatsapp" || h.session_id.startsWith("wa:");
-                                const ChannelIcon = wa ? MessageCircle : Globe;
+                                const ig = h.channel === "instagram" || h.session_id.startsWith("ig:");
+                                const ChannelIcon = wa ? MessageCircle : ig ? AtSign : Globe;
                                 return (
                                     <li key={h.conversation_id}>
                                         <button
@@ -253,7 +254,7 @@ function LiveChat() {
                                             )}
                                         >
                                             <div className="flex items-center gap-2">
-                                                <ChannelIcon size={13} className="text-stone-400 shrink-0" aria-label={wa ? "WhatsApp" : "Website"} />
+                                                <ChannelIcon size={13} className="text-stone-400 shrink-0" aria-label={wa ? "WhatsApp" : ig ? "Instagram" : "Website"} />
                                                 <span className="text-sm font-medium truncate flex-1">{name || (wa ? `+${h.session_id.slice(3)}` : `Visitor ${h.session_id.slice(-5)}`)}</span>
                                                 {(unread[h.session_id] || 0) > 0 && (
                                                     <span className="min-w-5 h-5 px-1.5 rounded-full bg-signal text-white text-[11px] tabular-nums inline-flex items-center justify-center">
@@ -289,8 +290,8 @@ function LiveChat() {
                                         <ArrowLeft size={18} />
                                     </button>
                                     <div className="min-w-0 flex-1">
-                                        <p className="text-sm font-medium truncate">{selected.captured_data?.name || selected.captured_data?.Name || (selected.session_id.startsWith("wa:") ? `+${selected.session_id.slice(3)}` : `Visitor ${selected.session_id.slice(-5)}`)}</p>
-                                        <p className="text-xs text-stone-500 truncate">{selected.bot_name} · {selected.session_id.startsWith("wa:") ? "WhatsApp" : "Website chat"}</p>
+                                        <p className="text-sm font-medium truncate">{selected.captured_data?.name || selected.captured_data?.Name || (selected.session_id.startsWith("wa:") ? `+${selected.session_id.slice(3)}` : selected.session_id.startsWith("ig:") ? (selected.captured_data?.instagram || "Instagram user") : `Visitor ${selected.session_id.slice(-5)}`)}</p>
+                                        <p className="text-xs text-stone-500 truncate">{selected.bot_name} · {selected.session_id.startsWith("wa:") ? "WhatsApp" : selected.session_id.startsWith("ig:") ? "Instagram" : "Website chat"}</p>
                                     </div>
                                     <Button size="sm" onClick={resolve}>Resolve</Button>
                                 </div>

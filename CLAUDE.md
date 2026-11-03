@@ -22,6 +22,7 @@ only on the owner's machines): @.claude/private-notes.md
   agent page; "the call is cut" = the call drops; "credits" (before Oct 2026: "min left" / "minutes") = the voice wallet;
   "model" / "AI model" = the agent's AI model (Voice > Agents).
 - "schedule" = Voice > Schedule: call-backs callers ask for, follow-ups by lead status, meetings the owner approves.
+- "leads" = the Leads section (Needs attention, All leads, Board, Sources, Reports; instagram_plan.md).
 - "deployment(s)" = the Vercel-like static website hosting feature; "live chat" = human handoff chat
   (dashboard Live chat page + the widget's "Talk to a person"); "watermark" = the "Powered by Nimmi" line.
 - "free tier rules" = free plan: 1 assistant + 1 website + 10 voice credits (calls are pay as you go with credit packs);
@@ -35,7 +36,7 @@ only on the owner's machines): @.claude/private-notes.md
   - `routers/`: auth_routes, bots (builder, knowledge, install, WordPress plugin), chat (public widget
     API), handoffs (live chat, agent side), workspace, team, analytics, integrations, email_center, sites.
   - `voice/`: phone assistant (see Voice). `whatsapp/`: WhatsApp (see WhatsApp). `sites/`: static site hosting.
-    `notify/`: email + events.
+    `notify/`: email + events. `leads/`: the Leads section (see Leads).
     `plugins/wordpress/`: WordPress plugin source. `ops/`: runbooks (SITES_SETUP.md, backups).
   - Core modules: `models.py` (SQLAlchemy models), `database.py` (engine, pool), `auth.py` (JWT, workspaces,
     roles owner/admin/agent, rate limits), `plans.py` (free/paid limits), `secretbox.py` (encrypted
@@ -326,6 +327,50 @@ only on the owner's machines): @.claude/private-notes.md
 - Tests: `tests/test_whatsapp.py` (FakeMeta). Local run without a number: `dev-scripts/whatsapp/fake_meta.py` +
   `sim_chat.py` (backend started with `WHATSAPP_GRAPH_URL=http://127.0.0.1:8790`); UI: `dev-scripts/ui-checks/whatsapp_ui.mjs`.
 
+## Instagram (instagram_plan.md phases 5 and 6)
+
+- `backend/instagram/`, built like `whatsapp/`: Business Login for Instagram (`accounts.py`: scopes `instagram_business_basic`,
+  `instagram_business_manage_messages`, and `instagram_business_manage_comments`, optional: DMs work without it; Instagram returns to `/dashboard/instagram/settings`, finished with the signed-in person's token and a state naming
+  workspace and person; one account per workspace, a disconnected one's old chats stay with the old workspace; the long-lived token (60 days) renewed weekly
+  by `tick`, claimed; ran out or refused: status `token`/`permission` with its repair). `graph.py`: graph.instagram.com v26.0, Bearer header, Meta's error
+  codes as sentences (190 token, 10/2534022 window, 200/2534041 access turned off, 551 unavailable, 4/613 busy); `INSTAGRAM_GRAPH_URL`, `INSTAGRAM_API_URL`,
+  `INSTAGRAM_DIALOG_URL` point at `dev-scripts/instagram/fake_instagram.py`. Needs `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`, `INSTAGRAM_VERIFY_TOKEN`.
+- Webhook `/api/instagram/webhook` (object "instagram", entries by account id, events in `messaging`; a list or one object): signed with
+  `INSTAGRAM_APP_SECRET` or `META_APP_SECRET` (Meta's pages don't say which); kept before the 200, each `mid` once (`InstagramMessage.mid` unique); entries
+  for an account nobody has connected are ignored. `/api/instagram/deauthorize` and `/deletion` (signed_request) forget the sign-in.
+- Windows (`chats.py`): anything within 24 hours of their last message, 7 days after a first message from a Click-to-Direct ad (`ad_window_until`);
+  after that only a person's reply with the HUMAN_AGENT tag, up to 7 days (`reply_route`: open, human_agent, closed). The assistant answers only inside
+  the first window; `outbound.send_text` refuses the tag for anything but a team member's reply (`TagRefused`). Each send is kept as "sending" before
+  Meta is asked, so its echo (which can beat Meta's answer) is recognised; any other echo was written in the Instagram app: kept as `sent_by` "app", the
+  assistant paused (`pause_hours`), never answered.
+- Replies (`replies.py`): WhatsApp's steps and helpers (claim, sweep, flow, hand-over, `parse`, `script_of`); typing and seen as sender actions;
+  "one moment" (`HOLDING`) if nothing is written `HOLD_AT` (20) seconds after their message, as Meta expects an answer within 30; quick replies from
+  `[BUTTONS: a | b]`; every message within 1,000 UTF-8 bytes (`pieces`); photos, voice messages and PDFs understood from Meta's CDN address
+  (`understand.py`, WhatsApp's `_hear`); plain text only (the prompt's "instagram" channel, `brain.PLACES`).
+- Leads (`contacts.py`): a new chat reads their profile (only allowed once they've written) and makes a `Contact` with `instagram_id`/`instagram_username`,
+  no phone or email, and `came_in` "Instagram" (answered, no first task, while the assistant is on). A number or email they type
+  (`events.lead_captured`, "ig:" sessions) goes on their contact, or joins it to the contact that has it (`leads.core.merge`: everything moves, nothing by
+  name or photo). Erase by number or email removes their Instagram chats too. Origins `instagram_ad`, `instagram_link` (`leads/origin.from_instagram`).
+- Live chat replies to "ig:" sessions go through `realtime.relay_to_instagram` (`api.team_reply`: the same windows and tag). Plans: `Includes.instagram`
+  (Growth up, as WhatsApp).
+- Comments (phase 6, `comments.py`, Instagram > Comments): `InstagramRule` per account (posts or all, words in any script matched inside the text after NFKC
+  and casefold, one private reply with `{{username}}`, up to 5 public replies, off until turned on). The webhook's comments (Business Login puts `field`/`value`
+  on the entry, Meta's other logins `changes`; `comments._value` takes both) are kept once (`InstagramComment.comment_id` unique) before the 200, then
+  claimed by one process (`process`, `tick` for retries). Never answered: the account's own comments and Nimmi's public replies coming back; skipped with a
+  reason: no rule, over 7 days old (Instagram's limit for a private reply), no Growth plan. A sign-in that ended waits for "Connect again". The private reply is
+  addressed to the comment (`graph.private_reply`), one per comment; 750 an hour per account (`HOURLY`, `_slot`: one UPDATE under a row lock on the account,
+  which only Postgres needs: `test_two_processes_never_pass_the_hour_together`). The comment (quoted, as data) and the private reply start their chat, a lead,
+  origin `instagram_comment` with the rule's name (`rule`, "Comment rule" on the lead) or `instagram_ad`; their comment doesn't open the 24 hours, their answer does. An echo of a private reply that beats Meta's answer
+  is recognised (`recent_own_send`). Each rule's report (`report`): comments, private and public replies, conversations (they wrote after it), leads, sales.
+- Also phase 6: ice breakers (4) and the menu (5, https links or sent as their message) through `/me/messenger_profile` (Assistant tab, `set_profile`);
+  ig.me links with a `ref` (Settings; `origin.instagram_link`; a new chat's ref comes only with an ice breaker tap, an existing chat's restarts the 24 hours);
+  story replies (`reply_to.story`, kind `story_reply`) and mentions (`story_mention`) answered like DMs.
+- Dashboard: `/dashboard/instagram` (Overview, Inbox, Comments, Assistant, Settings), `lib/instagram.ts`; Instagram in the top bar after WhatsApp; Live chat lists
+  "ig:" sessions (it once dropped them: `isLiveSession`).
+- Tests: `tests/test_instagram.py`, `tests/test_instagram_comments.py` (a fake Instagram through `graph.client` MockTransport); browser:
+  `dev-scripts/ui-checks/instagram_ui.mjs`, `instagram_comments_ui.mjs` (trial with the INSTAGRAM_* variables at `fake_instagram.py` on :8796, started fresh,
+  `DASHBOARD_URL=http://localhost:3000`). Never tried against real Instagram yet.
+
 ## Email (mail_plan.md)
 
 - Phases 0-9 in `mail_plan.md` (written 1 Nov 2026 from the owner's idea, with market research). Phase 0 live 1 Nov
@@ -472,6 +517,103 @@ only on the owner's machines): @.claude/private-notes.md
   `email_journeys_ui.mjs`, `email_bulk_ui.mjs`, `email_reports_ui.mjs` with `email_seed.py`, `email_agent_ui.mjs` (+ `email_agent_seed.py`), `email_mailbox_ui.mjs` (+ `fake_mailbox.py`), `email_crm_ui.mjs` (+ `fake_crm.py`), `dev-scripts/email/bulk_probe.py` (1,000 people, run the trial with `--workers 2`) and
   `dev-scripts/email/fake_resend.py` (domains, keys, sending, received emails, and Resend's signed reports back to the backend).
 - Backups (`ops/backup.py`) never run with LOCAL_DEV: a developer's .env can hold the live storage keys.
+
+## Leads (instagram_plan.md)
+
+- Plan: `instagram_plan.md` (2 Nov 2026, from the owner's plan, with research: TRAI's A2P rules read from the regulation, Meta Lead Ads, Instagram
+  messaging, Google lead forms): phases 0-11, status in its section 11. Phases 1 (Leads home), 2 (sources that need no review) and 3 (Meta lead ads
+  connected directly) built 2 Nov 2026, phases 4 (first response and one set of stop rules), 5 (Instagram DMs), 6 (Instagram comments, stories, links) and 7 (promises, one
+  follow-up plan per lead) 3 Nov 2026, local.
+- One person is one `Contact` per assistant, whatever brought them and however often they ask; each submission stays in `LeadIntake`, each outcome in
+  `LeadDeal` (won with an amount, lost with a reason), so someone who bought and asks again keeps the old sale and gets new work. `LeadTask` (the next step:
+  due, whose, finished once by an atomic update), `LeadEvent` (the story, stamped in code each later than the last: the database's clock gives a whole save one
+  time), `LeadSettings` (per assistant: new leads to nobody, one person or by turns, a backup, minutes to respond; a turn is one UPDATE, so four processes never
+  give one lead twice). `Contact.quality`: None, ok (a manager overruled junk), junk, wrong_number, old (imported).
+- `backend/leads/`: `core.py` (`visible(ctx)` is the one place saying who sees what: an agent only the leads given to them; `came_in` once per ref through
+  NotificationLog, never raises, claims `last_enquiry_at` first so two submissions at once make one first step; `after_call`: someone who rang and talked is a
+  lead the assistant answered, no first task; `queues` (Needs attention; Schedule's waiting calls and meetings count as next steps); `tick` (scheduler):
+  reminders to whoever has the task, a first step nobody took moves to the backup, each claimed; `timeline` reads calls, meetings, emails, replies, chats and forms
+  from their own tables, only this assistant's), `api.py` (`/api/crm`), `origin.py`, `quality.py`.
+- Hooks: chat and WhatsApp leads (`events.lead_captured`, which also links the chat to the lead), forms and portals (`mail/intake.process`), callers
+  (`pipeline._remember_and_plan`), the board (`journeys_api.update_lead` closes through `leads.close`), someone leaving the team (`routers/team.py`: their leads and
+  tasks wait for a manager), Compliance > Erase (by number or now email; tasks, events and deals go by cascade).
+- The 7 days: TRAI (Regulation 05 of 2026) lets an enquiry kept in writing be followed up for seven days; a lead shows the days left from `last_enquiry_at`.
+  An imported list isn't an enquiry: no days.
+- Sources that need no review (phase 2): Google lead forms (`/api/leads/in/<code>/google`; the key comes in the body, `LeadSource.google_key`; Google retries a 5xx
+  and never a 4xx: a wrong key or the switch off is 403, busy 503, a repeated lead_id 200; a test lead is kept apart and reaches nobody, even with another key,
+  as Google's documents don't say which key its test button sends). Facebook and Instagram lead ads by the business's own Zapier, Make or Pabbly (`/connect`:
+  Meta's field names, lead_id once, platform ig is Instagram, no limit per address: every lead comes from their servers). Website forms keep the page's tags.
+  The embed (`nimmi-widget.js` `firstTouch`: UTM tags and click ids from the host page's address, the landing page and the site before, kept 30 days on that
+  site) passes the first touch to the widget, which sends it with the chat (`Conversation.origin`, kept once; `origin.from_widget` takes only a page's own tags, as
+  anyone can post to the chat). A Click-to-WhatsApp ad's referral is kept on the
+  chat (once) and the assistant is told the ad's words. `origin.py` keeps only known keys, as plain text; the dashboard shows them as text, never links.
+- Facebook and Instagram lead ads, connected directly (phase 3, `backend/meta_leads/`, `/api/meta`; shown when META_APP_ID, META_APP_SECRET and
+  META_LOGIN_CONFIG_ID are set, else Sources says to use the Zapier link): Facebook Login for Business returns to Leads > Sources, which finishes with the
+  signed-in person's token (`read_state` must match workspace and person); a long-lived user token (60 days) gives each Page its own token, which doesn't
+  expire; both sealed (`EncryptedText`). A Page belongs to one workspace (`MetaPage.page_id` unique; another's is named, not taken). A manager starts a Page's
+  leads (`subscribed_apps`, leadgen), and gives each form an assistant (Growth); a form with none holds its leads (`MetaEvent` "waiting") until it gets one.
+  Meta's webhook (`/api/meta/webhook`, `X-Hub-Signature-256` on the raw body with the app secret, `META_LEADS_VERIFY_TOKEN`) only names leads: each is kept
+  once (`MetaEvent.leadgen_id` unique) before the 200, then one process (claimed) fetches it with the Page's token and hands it to `mail/intake.process` as
+  channel "meta", source Facebook or Instagram lead ads, with the campaign, ad set, ad and form (`origin`) and Meta's tick boxes (`consents`). A form's email
+  and call are off until its own switches are turned on (`act(email=, call=)`). Meta busy: tried again 1, 5, 15, 60, 180, 720 minutes on, then failed; a
+  sign-in that ended or a missing permission shows on the Page with its repair, and its leads wait however long it takes (connecting again frees them). A
+  catch-up every 15 minutes (`tick`) reads each routed form's leads since `checked_through` less 30 minutes, page by page, and moves on only past a complete
+  read. "Bring in older leads" (90 days, Meta's limit) adds them as old leads, nobody contacted. Meta's deauthorize and data deletion callbacks
+  (`/api/meta/deauthorize`, `/deletion`, signed_request) forget the person's sign-ins. Tokens go in a header, never an address, and the httpx log line hides
+  `access_token`, `client_secret`, `code` and `fb_exchange_token` (`graph._HideSecrets`). `META_GRAPH_URL` and `META_DIALOG_URL` point at
+  `dev-scripts/meta/fake_graph.py`. Graph v26.0; Meta's documents read 2 Nov 2026 (see `meta_leads/graph.py`). Never tried against real Meta yet.
+- Junk (`quality.why_junk`): only when nobody could ever reach them: a number nobody has (one digit over and over, an Indian number starting with 0 or 1;
+  98765 43210 isn't junk, it's someone's real number too) and no real email, or only a throwaway email. Kept, marked, told to nobody (no alert, email, call,
+  journey or first task), hidden from All leads unless asked for, counted apart in Reports; such a number is never kept as `e164`, so strangers who typed it aren't
+  joined together. Only a lead nothing real has happened with (`quality.fresh`): someone who called is real whatever they type. A manager overrules it (not marked
+  again). The same person within 24 hours (`quality.REPEAT`): told to nobody again, noted "asked again"; their own consent tick is still kept.
+- Import (`POST /api/crm/import`, managers): old leads from a CSV (the email import's column names, plus source, stage, notes), `quality` old: in All leads, not in
+  Needs attention or Reports, no task, email, call or journey; when they ask again they're a lead like any other.
+- Dashboard: `/dashboard/leads` (Needs attention, All leads, Board and Sources for managers, Reports; a lead at `/dashboard/leads/[id]`), `components/leads/`,
+  `lib/leads.ts`. The Lead board and Lead sources moved here from Email (the old addresses redirect). Top bar: Leads after Assistants; Reference is in the account menu.
+- Nimmi: `agent/tools/leads.py` (leads_attention, find_leads with junk, lead_details, leads_report); the board's and sources' tools come on Leads' screens too;
+  `go_to` opens one lead (`leads_lead`, through `_lead`, so an agent can't open another's).
+- Who may be contacted (phase 4, `leads/contact.py`): `can_contact(contact, channel, purpose)` is the one check every automatic channel makes just before it sends
+  (the first email, call and WhatsApp to a new lead in `mail/intake.act`, `schedule.dial_check` for follow-ups and first calls, journeys, the email agent); each
+  `Verdict` has a sentence for people and a code. `blockers` (whatever else says yes): junk or a wrong number, no number or email, do-not-call, unsubscribe or
+  bounce, their own refusal (`ChannelPermission`, per channel and purpose, with where it came from; the team can't turn their no into a yes), and unless they asked
+  for it themselves (`cause`): a closed lead, a meeting waiting (a request is never called booked: `MEETING_STATE`), or a person on it (`person_on_it`: a chat
+  taken over, the WhatsApp chat paused, a result logged in 24 h, a team task due within 24 h). Then what allows it: a call, their enquiry in 7 days (TRAI) or a
+  call they agreed to (lasts 7 days); WhatsApp, a message from them in 24 h, their yes (a form's tick: `whatsapp_ok` / a Meta form's `whatsapp_tick`), or a chat
+  they started (a form alone never is); email about their enquiry for 30 days, offers only with `Consent`. Calls also need credits. A call-back they asked for
+  stops only for a refusal given after they asked (`since`).
+  One chase at a time (`stop_chase`): their email reply, their WhatsApp message, a team takeover (live chat, WhatsApp Inbox or phone app), a meeting asked for,
+  do-not-call, won or lost cancel waiting follow-up calls, journeys and the email agent's queued emails, never a call-back they asked for; journeys wait 6 h while a
+  person works the lead (`PERSON_WAIT`). Two submissions at once make one first contact (a NotificationLog claim keyed by the `last_enquiry_at` both saw).
+  TRAI's A2P declaration: an Indian number (`+91`) dials nothing automatic until it's marked declared with proof (`PhoneNumber.a2p_*`, Voice > Numbers,
+  `PUT /api/voice/numbers/{id}/a2p`); checked in `dial_check` and in the dialler (campaigns pause); `A2P_GATE=off` only in tests. "Call me" isn't gated. A dial
+  whose request went out without an answer (`scheduler.maybe_placed`: read timeout, dropped connection) goes to `review`, never retried by itself.
+  WhatsApp templates per assistant (`LeadSettings`: `whatsapp_first` to a new lead who said yes, {{1}} first name {{2}} business; `alert_template` to the person
+  given the lead and the backup, {{1}} the lead {{2}} the link, to `User.whatsapp` from Profile), Growth up; the settings route saves only the fields sent.
+- Plans as built: Leads home on every plan; reminder emails need Starter (`team_alerts`); Google and Zapier ride on Take leads from other places (Growth, as before);
+  what each lead gets stays per plan (team alert Starter, lead email Growth, call Pro). instagram_plan.md 8.1's table is a proposal for the owner.
+- Promises (phase 7, `leads/promises.py`, `LeadPromise`, the lead page's Promises card, Needs attention, Reports): what the business promised a lead (kind send,
+  price, callback, visit, other), open until a record shows it was done, never because the AI said so. Found by the after-call analysis (`llm.summarize` key
+  `promises`, with the assistant's own words; a `call_back_at` is one too; no extra model call; `pipeline._remember_and_plan` -> `from_call`; not test calls), by
+  one fast model call (`_ask`, Groq then Gemini, JSON) on a chat or email conversation with a lead quiet for 30 minutes (`scan`: claimed by `Conversation.promises_at`
+  / `EmailThread.promises_at` set to the last message's time; only what's new; email by `promises_seen` ids, as a draft can go out long after it was written; a plan
+  needed), or added by the team. A quote that isn't really in what the business said is dropped (`quoted`, after NFKC and quote marks); the same promise again isn't
+  kept twice. Closed by records after it was made (`evidence`/`actions`, `settle` every 2 minutes per promise, claimed, and when the lead's page opens): a call-back by
+  an outgoing call they talked on or the team's "Spoke to them"; send by a file on WhatsApp or an email with a file; price by an amount (`MONEY`, any script's
+  digits) or a file named like a price list or quotation; visit by a confirmed meeting; other only by a person. A person closes one by choosing a record since it
+  (`/api/crm/promises/{id}/evidence`, `/done` with kind and id) or writing what they did (`how`, `note`); never a bare done; Nimmi's agent never closes one
+  (coverage.py). Lost cancels what's open (`core.close`); a customer keeps theirs; do-not-call cancels a call-back. Due ones: the lead's person is told once
+  (`remind`, Starter up, `core._alert`). `Conversation.last_message_at` is set by a hook on every new Message (models.py `_conversation_moved`); `messages` has an
+  index on `conversation_id` since phase 7 (every chat answer reads its history by it).
+- Journeys for the new sources (phase 7): `new_lead` values `meta` (Facebook or Instagram lead ads, direct or by Zapier), `google`, `ads`, `any_ad`
+  (`origin.from_ad`: an ad's channel, gclid/gbraid/wbraid/ctwa_clid/ad_id, utm_medium paid; never fbclid alone, Facebook adds it to every link), `instagram`
+  (fired when they first write, `instagram/contacts.first_dm`). `journeys.fire` takes values from the most specific; a new lead gets one follow-up plan: the
+  most specific matching journey, else one for any lead, and none while they're on a new-lead journey already (status, meeting and customer journeys still run
+  beside it, under the one cap). Reports: `lost_by_source` and `promises` (made, kept, on time, late, cancelled, by where made).
+- Tests: `tests/test_leads.py`, `tests/test_lead_sources.py`, `tests/test_meta_leads.py` (a fake Graph shaped like Meta's documents), `tests/test_lead_contact.py`
+  (phase 4; its lead page checks pin the clock to daytime, `daytime`), `tests/test_promises.py` (phase 7); browser: `dev-scripts/ui-checks/leads_ui.mjs` with
+  `leads_seed.py` (after `email_seed.py`), `meta_leads_ui.mjs` (trial in "meta" mode, `fake_graph.py` on :8795), `lead_contact_ui.mjs` with `lead_contact_seed.py`
+  (after `leads_seed.py`), `promises_ui.mjs` with `promises_seed.py` (after `email_seed.py`).
 
 ## Public site and SEO
 

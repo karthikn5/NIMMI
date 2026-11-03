@@ -358,7 +358,7 @@ def test_a_time_in_the_past_or_too_far_is_refused(shop):
 
 def test_each_persons_usual_hour(shop, run):
     last = datetime(2026, 11, 2, 12, 0)  # 5:30 pm in India
-    s = shop(people=1, last_call_at=last)
+    s = shop(people=1, last_call_at=last, created_at=last - timedelta(days=30))  # their last touch is the call, whatever today's date
     broadcast = s.draft()
     now = datetime(2026, 11, 3, 3, 30)  # 9 am in India
     assert s.send(broadcast, usual_hour=True).status_code == 200

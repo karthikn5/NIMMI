@@ -12,16 +12,17 @@ import AgentToggle from "@/components/agent/AgentToggle";
 
 const nav = [
     { href: "/dashboard", label: "Assistants", exact: true },
+    { href: "/dashboard/leads", label: "Leads" },
     { href: "/dashboard/deployments", label: "Deployments", managerOnly: true },
     { href: "/dashboard/live-chat", label: "Live chat" },
     { href: "/dashboard/questions", label: "Questions", managerOnly: true },
     { href: "/dashboard/voice", label: "Voice" },
     { href: "/dashboard/whatsapp", label: "WhatsApp" },
+    { href: "/dashboard/instagram", label: "Instagram" },
     { href: "/dashboard/email", label: "Email", managerOnly: true },
     { href: "/dashboard/integrations", label: "Integrations", managerOnly: true }, // agents can't change settings
     { href: "/dashboard/analytics", label: "Analytics" },
     { href: "/dashboard/billing", label: "Billing", ownerOnly: true },
-    { href: "/dashboard/reference", label: "Reference" },
 ] as { href: string; label: string; exact?: boolean; ownerOnly?: boolean; managerOnly?: boolean }[];
 
 type Workspace = { owner_id: string; name: string; role: "owner" | "admin" | "agent" };
@@ -136,6 +137,7 @@ export default function AppHeader({ userName }: { userName?: string }) {
                                 </div>
                             )}
                             <MenuLink href="/dashboard/profile" onClick={() => setMenu(false)}>Profile</MenuLink>
+                            <MenuLink href="/dashboard/reference" onClick={() => setMenu(false)}>Reference</MenuLink>
                             {role === "owner" && <MenuLink href="/dashboard/team" onClick={() => setMenu(false)}>Team</MenuLink>}
                             {role !== "agent" && <MenuLink href="/dashboard/integrations" onClick={() => setMenu(false)}>Integrations</MenuLink>}
                             <button role="menuitem" onClick={signOut} className="w-full text-left px-3 py-1.5 text-stone-600 hover:bg-stone-50 hover:text-ink">

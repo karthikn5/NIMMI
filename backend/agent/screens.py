@@ -106,9 +106,44 @@ SCREENS: dict[str, dict] = {
     "whatsapp_settings": {"title": "WhatsApp: Settings", "path": "/dashboard/whatsapp/settings", "about": (
         "Connecting a WhatsApp number (from their own Meta app for now: token and app secret), replacing a token or "
         "secret, sending a test message, disconnecting, and WhatsApp messages after phone calls. Owners and admins.")},
+    "instagram_overview": {"title": "Instagram: Overview", "path": "/dashboard/instagram", "about": (
+        "Instagram at a glance: the connected account, which assistant answers it, and this month's chats (answered, waiting for the team).")},
+    "instagram_inbox": {"title": "Instagram: Inbox", "path": "/dashboard/instagram/inbox", "about": (
+        "Instagram direct messages. The assistant answers within Instagram's 24 hours after their last message; after that only the team can "
+        "reply, for up to 7 days. A team reply, here or from the Instagram app, pauses the assistant on that chat until 'Hand back'.")},
+    "instagram_comments": {"title": "Instagram: Comments", "path": "/dashboard/instagram/comments", "about": (
+        "Comment rules: when someone comments with chosen words on chosen posts (or all), they get one private message and, if set, a "
+        "short public reply. Instagram allows the private message within 7 days of the comment, up to 750 an hour. Each rule shows its "
+        "comments, replies, conversations, leads and sales; the latest comments say what happened to each. Owners and admins.")},
+    "instagram_assistant": {"title": "Instagram: Assistant", "path": "/dashboard/instagram/assistant", "about": (
+        "How the assistant answers Instagram messages (the assistant used, waiting before answering, typing, short messages, voice "
+        "messages and photos, quick replies, when the team steps in), and the questions to tap and the menu Instagram shows in the chat.")},
+    "instagram_settings": {"title": "Instagram: Settings", "path": "/dashboard/instagram/settings", "about": (
+        "Connecting the business's Instagram professional account (Instagram's sign-in), which assistant answers it, links that open a "
+        "chat (ig.me, with a name for where it's shared), and disconnecting. Owners and admins.")},
     "integrations": {"title": "Integrations", "path": "/dashboard/integrations", "about": (
         "What happens after chats and calls (paid plans): WhatsApp messages, webhooks and LeadSquared, each on or off, "
         "with their recent activity; email has its own section. Owners and admins.")},
+    "leads_attention": {"title": "Leads: Needs attention", "path": "/dashboard/leads", "about": (
+        "What the team should do now: overdue tasks, promises due (what the assistant or the team told someone would be done, not shown done yet), tasks due today, "
+        "new leads nobody looks after, leads with no next step, people who asked for a person, meetings to approve.")},
+    "leads_all": {"title": "Leads: All leads", "path": "/dashboard/leads/all", "about": (
+        "Every lead, with search, filters by stage, owner, source and assistant, each lead's next task, adding a lead by hand, importing old leads from a CSV (nobody is "
+        "contacted because of it), a CSV export, and the leads the junk filter marked.")},
+    "leads_lead": {"title": "A lead", "path": "/dashboard/leads/{lead}", "about": (
+        "One lead: who they are, Call, WhatsApp and Email buttons, how a call went, next tasks, promises (what the assistant or the team said would be done: each "
+        "stays open until a record shows it was done, and a person closes one by choosing that record or writing down what they did), owner, stage, notes, "
+        "Won with an amount or Lost with a reason, and everything that happened.")},
+    "leads_board": {"title": "Leads: Board", "path": "/dashboard/leads/board", "about": (
+        "Every lead by stage: new, contacted, interested, meeting, customer, lost, with who looks after them and their tags. Stages move forward by themselves; the team can move anyone. "
+        "A lead the email agent handed over shows its brief: what they want, what they were told, the next step.")},
+    "leads_sources": {"title": "Leads: Sources", "path": "/dashboard/leads/sources", "about": (
+        "Where leads come in, per assistant: the address to forward IndiaMART, JustDial and property-portal emails to, with Gmail's confirmation code, the links for IndiaMART's Push API and website forms, "
+        "Google lead forms (a webhook address and key), Facebook and Instagram lead ads through their own Zapier, Make or Pabbly (the connection link), "
+        "the email and call each lead gets, who gets new leads and how fast, and the latest leads, test leads marked.")},
+    "leads_reports": {"title": "Leads: Reports", "path": "/dashboard/leads/reports", "about": (
+        "How leads did: by source, value won, how fast people were first tried, each person's tasks, promises made and kept on time, and why leads were lost, "
+        "overall and by where they came from.")},
     "email_overview": {"title": "Email: Overview", "path": "/dashboard/email", "about": (
         "How their customer emails are going over the last 30 days (sent, delivered, bounced, reported as spam, "
         "failed), which automatic emails are on, their sending domains, and recent problems. Owners and admins.")},
@@ -123,9 +158,6 @@ SCREENS: dict[str, dict] = {
     "email_journeys": {"title": "Email: Journeys", "path": "/dashboard/email/journeys", "about": (
         "What each lead gets, as a list of steps: emails, WhatsApp messages, calls, waits, checks, changes to the contact, a word to the team. Each starts from a trigger and ends at "
         "its goal; a reply ends it, and so does an unsubscribe or the do-not-call list. One cap limits emails to one person.")},
-    "email_board": {"title": "Email: Lead board", "path": "/dashboard/email/board", "about": (
-        "Every lead by stage: new, contacted, interested, meeting, customer, lost, with who looks after them and their tags. Stages move forward by themselves; the team can move anyone. "
-        "A lead the email agent handed over shows its brief: what they want, what they were told, the next step.")},
     "email_reports": {"title": "Email: Reports", "path": "/dashboard/email/reports", "about": (
         "How email did over 7, 30 or 90 days: each kind of email, journey and bulk email (sent, delivered, clicked by people, replied, unsubscribed); the funnel from "
         "leads to customers; the team's answers and waiting times; deliverability against Gmail's limits, DMARC on each domain, and how to set up Postmaster Tools. "
@@ -134,12 +166,9 @@ SCREENS: dict[str, dict] = {
         "The AI's emails after calls that wait for the team: read each with the reason it was held, change the recap, "
         "answers, next step, files or subject, then send or discard it, or have it written again. After 20 approved "
         "emails it offers to send them automatically. Above them, the email agent's emails: why it wrote each, change, send or drop it, or send the ready ones.")},
-    "email_leads": {"title": "Email: Lead sources", "path": "/dashboard/email/leads", "about": (
-        "Where leads from other places come in, per assistant: the address to forward IndiaMART, JustDial and property-portal emails to, with "
-        "Gmail's confirmation code, the links for IndiaMART's Push API and website forms, the email and call each lead gets, and the latest leads.")},
     "email_bulk": {"title": "Email: Bulk email", "path": "/dashboard/email/bulk", "about": (
         "One email to the people who agreed to offers and news (the chat's tick box, a form's newsletter box, an import that says how they agreed, or the "
-        "team's note on the Lead board), narrowed by status, stage, source, tags or activity; groups can be saved. A test to yourself, then now, at a time, or "
+        "team's note on Leads > Board), narrowed by status, stage, source, tags or activity; groups can be saved. A test to yourself, then now, at a time, or "
         "at each person's usual hour, at a set pace; two subjects can be tried on a fifth of the list. It pauses by itself when spam reports or bounces rise. "
         "Invitations collect Yes, Maybe and No and remind those coming. Up to 2,000 people and 5 sends a day; Nimmi's own address has a daily limit.")},
     "email_history": {"title": "Email: History", "path": "/dashboard/email/history", "about": (
@@ -165,12 +194,14 @@ SCREENS: dict[str, dict] = {
 # What point_at can highlight: names the pages put on their elements (data-agent="...").
 POINTS = {
     **{f"nav.{k}": f"the {v} menu in the top bar" for k, v in (
-        ("assistants", "Assistants"), ("deployments", "Deployments"), ("live_chat", "Live chat"),
-        ("questions", "Questions"), ("voice", "Voice"), ("whatsapp", "WhatsApp"), ("email", "Email"),
+        ("assistants", "Assistants"), ("leads", "Leads"), ("deployments", "Deployments"), ("live_chat", "Live chat"),
+        ("questions", "Questions"), ("voice", "Voice"), ("whatsapp", "WhatsApp"), ("instagram", "Instagram"), ("email", "Email"),
         ("integrations", "Integrations"), ("analytics", "Analytics"), ("billing", "Billing"))},
     **{f"email.tab.{k}": f"the Email section's {v} tab" for k, v in (
-        ("overview", "Overview"), ("inbox", "Inbox"), ("automations", "Automations"), ("drafts", "Drafts"), ("leads", "Lead sources"), ("bulk", "Bulk email"), ("history", "History"),
+        ("overview", "Overview"), ("inbox", "Inbox"), ("automations", "Automations"), ("drafts", "Drafts"), ("bulk", "Bulk email"), ("history", "History"),
         ("settings", "Settings"))},
+    **{f"leads.tab.{k}": f"the Leads section's {v} tab" for k, v in (
+        ("attention", "Needs attention"), ("all", "All leads"), ("board", "Board"), ("sources", "Sources"), ("reports", "Reports"))},
     **{f"builder.tab.{k}": f"the builder's {k.capitalize()} tab" for k in ("design", "knowledge", "behaviour", "flow", "leads")},
     "builder.test": "the builder's Test button", "builder.install": "the builder's 'Add to website' button",
     "voice.use_own_number": "Voice > Numbers: Use your own number (Twilio or Exotel)", "voice.get_number": "Voice > Numbers: Get a number",
@@ -181,6 +212,8 @@ POINTS = {
         ("numbers", "Numbers"), ("compliance", "Compliance"))},
     **{f"whatsapp.tab.{k}": f"the WhatsApp {v} tab" for k, v in (
         ("overview", "Overview"), ("inbox", "Inbox"), ("assistant", "Assistant"), ("files", "Files"), ("settings", "Settings"))},
+    **{f"instagram.tab.{k}": f"the Instagram {v} tab" for k, v in (
+        ("overview", "Overview"), ("inbox", "Inbox"), ("comments", "Comments"), ("assistant", "Assistant"), ("settings", "Settings"))},
 }
 
 
@@ -208,6 +241,7 @@ AREAS = {
     "voice": tuple(k for k in SCREENS if k.startswith("voice_")),
     "whatsapp": tuple(k for k in SCREENS if k.startswith("whatsapp_")),
     "email": tuple(k for k in SCREENS if k.startswith("email_")),
+    "leads": tuple(k for k in SCREENS if k.startswith(("leads_", "instagram_"))),  # everyone who writes on Instagram is a lead
     "account": ("integrations", "billing", "profile", "team"),
 }
 

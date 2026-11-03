@@ -8,7 +8,7 @@ import { Button, Card, Input, SettingRow, Skeleton, ToastProvider, useToast } fr
 import { apiJson, clearSession, currentUserId, saveSession, type Session } from "@/lib/api";
 import { formatDate } from "@/lib/voice/api";
 
-type Profile = { user_id: string; email: string; name: string; has_password: boolean; created_at: string | null };
+type Profile = { user_id: string; email: string; name: string; has_password: boolean; created_at: string | null; whatsapp?: string | null };
 
 export default function ProfilePage() {
     return (
@@ -22,7 +22,7 @@ function ProfileView() {
     const router = useRouter();
     const toast = useToast();
     const [profile, setProfile] = useState<Profile | null>(null);
-    const [form, setForm] = useState({ name: "", email: "" });
+    const [form, setForm] = useState({ name: "", email: "", whatsapp: "" });
     const [confirmPw, setConfirmPw] = useState("");
     const [saving, setSaving] = useState(false);
     const [pw, setPw] = useState({ current: "", next: "" });
@@ -35,22 +35,25 @@ function ProfileView() {
             return;
         }
         apiJson<Profile>("/api/auth/profile")
-            .then((p) => { setProfile(p); setForm({ name: p.name, email: p.email }); })
+            .then((p) => { setProfile(p); setForm({ name: p.name, email: p.email, whatsapp: p.whatsapp ?? "" }); })
             .catch((e) => toast((e as Error).message));
     }, [router, toast]);
 
-    const dirty = profile && (form.name !== profile.name || form.email !== profile.email);
+    const hasWhatsapp = !!profile && "whatsapp" in profile;  // an older backend doesn't send it yet
+    const dirty = profile && (form.name !== profile.name || form.email !== profile.email || (hasWhatsapp && form.whatsapp !== (profile.whatsapp ?? "")));
     const emailChanged = !!profile && form.email.trim().toLowerCase() !== profile.email.toLowerCase();
 
     const save = async (e: React.FormEvent) => {
         e.preventDefault();
         setSaving(true);
         try {
-            const res = await apiJson<{ name: string; email: string }>("/api/auth/profile", {
-                method: "PATCH", json: { ...form, ...(emailChanged ? { current_password: confirmPw } : {}) },
+            const { whatsapp, ...rest } = form;
+            const res = await apiJson<{ name: string; email: string; whatsapp?: string | null }>("/api/auth/profile", {
+                method: "PATCH", json: { ...rest, ...(hasWhatsapp ? { whatsapp } : {}), ...(emailChanged ? { current_password: confirmPw } : {}) },
             });
             setConfirmPw("");
             setProfile((p) => (p ? { ...p, ...res } : p));
+            if (hasWhatsapp) setForm((f) => ({ ...f, whatsapp: res.whatsapp ?? "" }));
             try {
                 localStorage.setItem("nimmi_user_name", res.name);
                 localStorage.setItem("nimmi_user_email", res.email);
@@ -118,6 +121,12 @@ function ProfileView() {
                                     <Input id="email" type="email" autoComplete="email" value={form.email} disabled={!profile.has_password}
                                            onChange={(e) => setForm({ ...form, email: e.target.value })} />
                                 </SettingRow>
+                                {hasWhatsapp && (
+                                    <SettingRow label="WhatsApp" htmlFor="whatsapp" hint="Your own number, for alerts about leads given to you, if your manager turns them on in Leads > Sources.">
+                                        <Input id="whatsapp" type="tel" autoComplete="tel" placeholder="+91 98765 43210" value={form.whatsapp}
+                                               onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} />
+                                    </SettingRow>
+                                )}
                                 {emailChanged && (
                                     <SettingRow label="Current password" htmlFor="confirm_pw" hint="To protect your account, confirm it's you before changing the email.">
                                         <Input id="confirm_pw" type="password" autoComplete="current-password" required

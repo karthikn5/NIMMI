@@ -230,11 +230,16 @@ def test_the_cap_holds_across_three_journeys_and_counts_other_emails(make_user, 
     async def go():
         one, cid, bot = await _seed(user, [{"type": "email", "subject": "One", "body": "x"}])
         async with async_session() as db:
-            two = Journey(user_id=user.id, bot_id=bot, name="Two", trigger="new_lead", steps=[{"type": "email", "subject": "Two", "body": "x"}], enabled=True)
-            three = Journey(user_id=user.id, bot_id=bot, name="Three", trigger="new_lead", steps=[{"type": "email", "subject": "Three", "body": "x"}], enabled=True)
-            db.add_all([two, three])
+            # A new lead gets one follow-up plan (phase 7); journeys for later events run beside it, all under the one cap.
+            two = Journey(user_id=user.id, bot_id=bot, name="Two", trigger="status", steps=[{"type": "email", "subject": "Two", "body": "x"}], enabled=True)
+            three = Journey(user_id=user.id, bot_id=bot, name="Three", trigger="customer", steps=[{"type": "email", "subject": "Three", "body": "x"}], enabled=True)
+            four = Journey(user_id=user.id, bot_id=bot, name="Four", trigger="new_lead", steps=[{"type": "email", "subject": "Four", "body": "x"}], enabled=True)
+            db.add_all([two, three, four])
             await db.commit()
-        assert await journeys.fire(user.id, bot, "new_lead", cid, now=AT_NOON) == 3
+        assert await journeys.fire(user.id, bot, "new_lead", cid, now=AT_NOON) == 1
+        assert await journeys.fire(user.id, bot, "status", cid, "hot", now=AT_NOON) == 1
+        assert await journeys.fire(user.id, bot, "customer", cid, now=AT_NOON) == 1
+        assert await journeys.fire(user.id, bot, "new_lead", cid, now=AT_NOON) == 0  # on a new lead's journey already
         clock = AT_NOON + journeys.START_DELAY
         await journeys.tick(clock)
         assert len(await _emails(user)) == 1, "one a day"

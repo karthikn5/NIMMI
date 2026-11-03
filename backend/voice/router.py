@@ -1156,7 +1156,10 @@ def _number_json(n: PhoneNumber) -> dict:
             "monthly_fee": n.monthly_fee, "provider": n.provider, "country": n.country,
             "next_charge_at": n.next_charge_at.isoformat() if n.next_charge_at else None,
             "documents": [d.get("kind") for d in (n.kyc_documents or [])],
-            "source": "own" if own else "nimmi", "account_id": n.account_id, "can_replace": replace_open}
+            "source": "own" if own else "nimmi", "account_id": n.account_id, "can_replace": replace_open,
+            # TRAI (instagram_plan.md 4.5): an Indian number needs declaring for automated calls before Nimmi dials from it by itself
+            "a2p": {"needed": bool(n.e164 and n.e164.startswith("+91")), "declared_at": n.a2p_declared_at.isoformat() if n.a2p_declared_at else None,
+                    "proof": n.a2p_proof}}
 
 
 async def _ops_email(subject: str, body: str) -> None:
@@ -1205,6 +1208,27 @@ async def route_number(number_id: str, data: dict, ctx: AuthContext = Depends(re
     if bot_id:
         await get_owned_bot(bot_id, ctx, db)
     number.bot_id = bot_id or None
+    await db.commit()
+    return _number_json(number)
+
+
+class A2PIn(BaseModel):
+    declared: bool
+    proof: Optional[str] = Field(None, max_length=300)
+
+
+@router.put("/numbers/{number_id}/a2p")
+async def declare_a2p(number_id: str, data: A2PIn, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    """The business says it declared this number for automated calls with its phone provider (TRAI Regulation 05 of 2026), with what shows it: the
+    provider's reference or the date of their email. Until then nothing automatic dials from an Indian number."""
+    number = (await db.execute(select(PhoneNumber).where(PhoneNumber.id == number_id, PhoneNumber.user_id == ctx.owner_id))).scalars().first()
+    if not number:
+        raise HTTPException(status_code=404, detail="Number not found")
+    proof = (data.proof or "").strip()
+    if data.declared and not proof:
+        raise HTTPException(status_code=400, detail="Write what shows it, e.g. the provider's reference or the date of their confirmation")
+    number.a2p_declared_at = datetime.utcnow() if data.declared else None
+    number.a2p_proof, number.a2p_by = (proof[:300], ctx.user_id) if data.declared else (None, None)
     await db.commit()
     return _number_json(number)
 
@@ -1469,6 +1493,8 @@ async def add_dnc(data: DncAdd, ctx: AuthContext = Depends(require_manager), db:
         entry = (await db.execute(select(DncEntry).where(DncEntry.user_id == ctx.owner_id, DncEntry.e164 == e164))).scalars().first()
     await db.execute(sa_delete(CallbackJob).where(CallbackJob.user_id == ctx.owner_id, CallbackJob.e164 == e164,
                                                   CallbackJob.status == "queued"))
+    from leads import contact as reach
+    await reach.stop_chase_for(db, ctx.owner_id, None, e164=e164, why="Added to the do-not-call list")
     await db.commit()
     return _dnc_json(entry)
 
@@ -1484,15 +1510,42 @@ async def remove_dnc(entry_id: str, ctx: AuthContext = Depends(require_manager),
 
 
 class EraseRequest(BaseModel):
-    number: str
+    number: str  # or an email address, for a lead who never gave a number
+
+
+async def _erase_address(address: str, owner_id: str, db: AsyncSession) -> dict:
+    """Someone known only by email. With a number on their contact, Erase goes by the number, which covers this too."""
+    from backend.models import Consent, EmailRsvp, QuestionAsker
+    from mail import retention
+    contact_ids = (await db.execute(select(Contact.id).where(Contact.user_id == owner_id, func.lower(Contact.email) == address))).scalars().all()
+    from instagram import contacts as instagram_contacts
+    await instagram_contacts.erase(db, owner_id, contact_ids)  # their Instagram DMs go too
+    await db.execute(sa_delete(Contact).where(Contact.id.in_(contact_ids)))
+    await db.execute(sa_delete(Consent).where(Consent.user_id == owner_id, Consent.email == address))
+    await db.execute(sa_delete(EmailRsvp).where(EmailRsvp.user_id == owner_id, EmailRsvp.email == address))
+    await retention.erase(db, owner_id, [address])
+    await retention.erase_leads(db, owner_id, contact_ids)
+    bot_ids = list((await _bot_names(owner_id, db)).keys())
+    convs = (await db.execute(select(Conversation).where(Conversation.bot_id.in_(bot_ids)))).scalars().all() if bot_ids else []
+    chats = [c for c in convs if (extract_contact(c.captured_data).get("email") or "").lower() == address]
+    if bot_ids:
+        await db.execute(sa_delete(QuestionAsker).where(QuestionAsker.bot_id.in_(bot_ids), QuestionAsker.who.in_([f"email:{address}", *(f"chat:{c.conversation_id}" for c in chats)])))
+    for conv in chats:
+        await db.delete(conv)
+    await db.commit()
+    return {"status": "erased", "calls_deleted": 0, "chats_deleted": len(chats)}
 
 
 @router.post("/erase")
 async def erase_caller(data: EraseRequest, ctx: AuthContext = Depends(require_owner), db: AsyncSession = Depends(get_db)):
     """DPDP erasure: delete a caller's calls, recordings, transcripts and callback requests."""
-    e164 = to_e164(data.number)
+    address = data.number.strip().lower() if "@" in data.number else None
+    e164 = to_e164(data.number) if not address else (await db.execute(
+        select(Contact.e164).where(Contact.user_id == ctx.owner_id, func.lower(Contact.email) == address, Contact.e164.isnot(None)))).scalars().first()
+    if address and not e164:
+        return await _erase_address(address, ctx.owner_id, db)
     if not e164:
-        raise HTTPException(status_code=400, detail="Enter a valid phone number")
+        raise HTTPException(status_code=400, detail="Enter a valid phone number or email")
     calls = (await db.execute(select(CallLog).where(CallLog.user_id == ctx.owner_id, CallLog.caller_e164 == e164))).scalars().all()
     for call in calls:
         try:
@@ -1504,6 +1557,8 @@ async def erase_caller(data: EraseRequest, ctx: AuthContext = Depends(require_ow
     await db.execute(sa_delete(Meeting).where(Meeting.user_id == ctx.owner_id, Meeting.e164 == e164))
     addresses = (await db.execute(select(Contact.email).where(Contact.user_id == ctx.owner_id, Contact.e164 == e164, Contact.email.isnot(None)))).scalars().all()
     contact_ids = (await db.execute(select(Contact.id).where(Contact.user_id == ctx.owner_id, Contact.e164 == e164))).scalars().all()
+    from instagram import contacts as instagram_contacts
+    await instagram_contacts.erase(db, ctx.owner_id, contact_ids)  # their Instagram DMs go too
     await db.execute(sa_delete(Contact).where(Contact.user_id == ctx.owner_id, Contact.e164 == e164))
 
     # Chat leads that captured the same number.

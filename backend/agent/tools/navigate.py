@@ -9,14 +9,20 @@ from agent.registry import ToolError, tool
 PAGES = screens.pages()
 
 
-@tool("go_to", "Open a dashboard page for them. Pages with {assistant} in their path need assistant_id.",
+@tool("go_to", "Open a dashboard page for them. Pages with {assistant} in their path need assistant_id; leads_lead needs lead_id.",
       "Opening the page", {"type": "object", "required": ["page"], "properties": {
           "page": {"type": "string", "enum": sorted(PAGES)},
           "assistant_id": {"type": "string", "description": "For the builder, a voice agent or a voice script."},
+          "lead_id": {"type": "string", "description": "For leads_lead (use find_leads)."},
           "tab": {"type": "string", "enum": ["design", "knowledge", "behaviour", "flow", "leads"], "description": "Builder only."},
           "direction": {"type": "string", "enum": ["inbound", "outbound"], "description": "Voice agent and script pages only."}}})
-async def go_to(tc, db, page, assistant_id=None, tab=None, direction=None):
+async def go_to(tc, db, page, assistant_id=None, tab=None, direction=None, lead_id=None):
+    from leads.api import _lead
     path = PAGES[page]
+    if "{lead}" in path:
+        if not lead_id:
+            raise ToolError("Opening a lead needs lead_id (use find_leads).")
+        path = path.replace("{lead}", (await _lead(lead_id, tc.ctx, db)).id)
     if "{assistant}" in path:
         if not assistant_id:
             raise ToolError(f"{screens.SCREENS[page]['title']} needs assistant_id (use list_assistants).")

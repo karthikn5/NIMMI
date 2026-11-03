@@ -55,6 +55,8 @@ from mail.answers import router as answers_router  # noqa: E402
 from mail.broadcasts_api import router as broadcasts_router  # noqa: E402
 from mail.agent_api import router as email_agent_router  # noqa: E402
 from mail.connections_api import router as mail_connections_router  # noqa: E402
+from leads.api import router as crm_router  # noqa: E402
+from meta_leads.api import router as meta_router  # noqa: E402
 from routers.team import router as team_router  # noqa: E402
 from voice import scheduler as voice_scheduler  # noqa: E402
 from voice.numbers_api import router as numbers_router  # noqa: E402
@@ -64,6 +66,8 @@ from voice.schedule_api import router as schedule_router  # noqa: E402
 from voice.live_api import router as live_calls_router  # noqa: E402
 from voice.router import router as voice_router  # noqa: E402
 from whatsapp.api import router as whatsapp_router  # noqa: E402
+from instagram.api import router as instagram_router  # noqa: E402
+from instagram.webhook import router as instagram_webhook_router  # noqa: E402
 from whatsapp.webhook import router as whatsapp_webhook_router  # noqa: E402
 from whatsapp.numbers import move_old_settings as move_old_whatsapp_settings  # noqa: E402
 from routers.workspace import router as workspace_router  # noqa: E402
@@ -124,7 +128,7 @@ app.mount("/static", StaticFiles(directory=os.path.join(_HERE, "static")), name=
 
 for router in (auth_router, bots_router, chat_router, handoffs_router, numbers_router, phone_accounts_router, campaigns_router,
                schedule_router, live_calls_router, voice_router,
-               integrations_router, email_center_router, mail_router, mail_connections_router, inbox_router, email_pages_router, leads_router, journeys_router, answers_router, broadcasts_router, email_agent_router, analytics_router, team_router, whatsapp_router, whatsapp_webhook_router, workspace_router,
+               integrations_router, email_center_router, mail_router, mail_connections_router, crm_router, meta_router, inbox_router, email_pages_router, leads_router, journeys_router, answers_router, broadcasts_router, email_agent_router, analytics_router, team_router, whatsapp_router, whatsapp_webhook_router, instagram_router, instagram_webhook_router, workspace_router,
                sites_router, plans_router, agent_router, mcp_router):
     app.include_router(router)
 app.include_router(payments_router, prefix="/api/payments")

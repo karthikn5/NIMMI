@@ -57,6 +57,15 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
     const searchParams = useSearchParams();
     const isDemo = searchParams.get("is_demo") === "true";
     const inApp = searchParams.get("app") === "1"; // a phone app shows this page full screen: no close button
+    // Where the visitor first came from (an ad's tags, the landing page), as the embed saw it on the business's own site: their lead shows it.
+    const [origin] = useState<Record<string, string> | null>(() => {
+        try {
+            const given = JSON.parse(searchParams.get("origin") ?? "null");
+            return given && typeof given === "object" && !Array.isArray(given) ? given : null;
+        } catch {
+            return null;
+        }
+    });
     const [aiMessages, setAiMessages] = useState<Message[]>([]);
     const [humanMessages, setHumanMessages] = useState<Message[]>([]);
     const [input, setInput] = useState("");
@@ -119,7 +128,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
             await Promise.all(Object.entries(varsRef.current).map(([k, v]) => fetch(`${apiBase}/api/chat/variables`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ bot_id: botId, visitor_session_id: humanSession, variable_name: k, variable_value: v }),
+                body: JSON.stringify({ bot_id: botId, visitor_session_id: humanSession, variable_name: k, variable_value: v, origin }),
             }).catch(() => {})));
             if (res.ok) {
                 const body = await res.json().catch(() => ({}));
@@ -152,9 +161,9 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
         return fetch(`${apiBase}/api/chat/variables`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ bot_id: botId, visitor_session_id: aiSession, variable_name: name, variable_value: value }),
+            body: JSON.stringify({ bot_id: botId, visitor_session_id: aiSession, variable_name: name, variable_value: value, origin }),
         }).catch(() => {});
-    }, [apiBase, botId, aiSession]);
+    }, [apiBase, botId, aiSession, origin]);
 
     const proxy = (url: string, method: string, body: Record<string, unknown>) => fetch(`${apiBase}/api/chat/proxy-http`, {
         method: "POST",
@@ -490,7 +499,7 @@ function WidgetContent({ params }: { params: Promise<{ botId: string }> }) {
                 method: "POST",
                 // Demo mode only counts when the bot owner is signed in on this dashboard.
                 headers: { "Content-Type": "application/json", ...demoHeaders },
-                body: JSON.stringify({ bot_id: botId, message: text, visitor_session_id: aiSession, history, is_demo: isDemo }),
+                body: JSON.stringify({ bot_id: botId, message: text, visitor_session_id: aiSession, history, is_demo: isDemo, origin }),
             });
             if (!res.ok || !res.body) throw new Error("Failed to get response");
             const reader = res.body.getReader();

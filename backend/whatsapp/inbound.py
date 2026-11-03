@@ -18,6 +18,7 @@ from sqlalchemy.future import select
 
 from backend.models import Message, WhatsAppChat, WhatsAppMessage, WhatsAppNumber
 from database import async_session
+from leads import origin as lead_origin
 from notify.events import fire_and_forget, lead_captured
 from realtime import notify_owner
 from whatsapp import chats, graph, live, numbers, settings
@@ -111,6 +112,9 @@ async def message(number: WhatsAppNumber, msg: dict, contacts: list[dict]) -> Op
             logger.warning(f"WhatsApp number {number.phone_number_id} has no assistant to answer")
             return None
         conv, new = await chats.conversation(db, chat, bot)
+        ad = lead_origin.from_whatsapp(msg.get("referral"))  # a Click-to-WhatsApp ad: Meta sends it with the first message after the tap
+        if ad and not conv.origin:  # kept once: the ad that brought them stays theirs
+            conv.origin = ad
         at = chats.now()
         m = Message(conversation_id=conv.conversation_id, role="user", content=text, timestamp=at)
         db.add(m)
@@ -133,6 +137,9 @@ async def message(number: WhatsAppNumber, msg: dict, contacts: list[dict]) -> Op
             return None
     if new and chat.wa_id:
         fire_and_forget(lead_captured(conv.conversation_id))  # a WhatsApp chat comes with a number to reach them
+    elif kind != "reaction":
+        from leads.contact import WROTE, stop_for_chat
+        fire_and_forget(stop_for_chat(conv.conversation_id, WROTE))  # they answered: whatever was chasing them stops
     await live.message(number.user_id, chat, m, w)
     # Live chat shows the conversation's messages too (old event name, kept for it).
     await notify_owner(number.user_id, "new_message", {
@@ -226,6 +233,8 @@ async def echo(number: WhatsAppNumber, e: dict) -> None:
         except IntegrityError:
             await db.rollback()
             return
+    from leads.contact import stop_for_chat
+    fire_and_forget(stop_for_chat(conv.conversation_id))  # the team wrote from the phone app: they have them now
     await live.message(number.user_id, chat, m, w)
 
 

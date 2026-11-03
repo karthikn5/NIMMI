@@ -929,8 +929,13 @@ else "",
 "call_back_at": if the assistant agreed to call them back at a set time, that time as YYYY-MM-DD HH:MM, else null,
 "meeting_at": if the caller agreed on this call to meet the team at a set time, that time as YYYY-MM-DD HH:MM, else null,
 "meeting_kind": "online", "in_person" or "phone", if they said which kind of meeting, else null,
-"meeting_about": what they want to discuss at that meeting, in a few words, else ""HANDLED_KEY.
-The call ended NOW_TEXT.
+"meeting_about": what they want to discuss at that meeting, in a few words, else "",
+"promises": what the assistant said the business would do for the caller after this call, other than the call-back or
+meeting above: send something (a brochure, photos, details), share a price or quote, arrange a visit, or anything else, as a
+list of {"kind": "send", "price", "visit" or "other", "what": what was promised in a few words, "due": "YYYY-MM-DD HH:MM" or
+"YYYY-MM-DD" if a time or day was said, else null, "words": the assistant's own words that promised it, copied exactly},
+else []HANDLED_KEY.
+The call ended NOW_TEXT. NEXT_DAYS
 Only use what was actually said. Never guess.HANDLED_LIST
 """
 LEADS = ("hot", "warm", "cold", "not_interested", "new")
@@ -1030,13 +1035,14 @@ async def summarize(bot: Bot, transcript: list[dict], agent: Optional[VoiceAgent
     which of them this call took care of."""
     empty = {"summary": "", "fields": {}, "successful": None, "sentiment": None, "wants_callback": False, "lead": None,
              "lead_reason": "", "follow_up": "", "follow_up_on": None, "call_back_at": None, "meeting_at": None,
-             "meeting_kind": None, "meeting_about": "", "handled": []}
+             "meeting_kind": None, "meeting_about": "", "promises": [], "handled": []}
     lines = _lines(transcript)
     if not lines.strip():
         return empty
     goal = (agent.call_goal if agent else None) or ""
     success_spec = (f"whether the call achieved this goal: {goal}" if goal else
                     "whether the caller's need was handled or a clear next step was agreed")
+    from leads.promises import next_days
     from voice.schedule import zone_of
     ended = datetime.now(zone_of(zone_name))
     known = {str(c["id"]): c["about"] for c in open_calls or []}
@@ -1046,6 +1052,7 @@ async def summarize(bot: Bot, transcript: list[dict], agent: Optional[VoiceAgent
                     "\n".join(f"- {k}: {v}" for k, v in known.items())) if known else ""
     prompt = (SUMMARY_PROMPT.replace("FIELDS_SPEC", _fields_spec(agent)).replace("SUCCESS_SPEC", success_spec)
               .replace("NOW_TEXT", f"on {ended:%A} {ended.day} {ended:%B %Y} at {ended:%H:%M} ({zone_name})")
+              .replace("NEXT_DAYS", next_days(ended))
               .replace("HANDLED_KEY", handled_key).replace("HANDLED_LIST", handled_list))
     try:
         raw = await _complete(bot, prompt, lines)
@@ -1084,11 +1091,27 @@ async def summarize(bot: Bot, transcript: list[dict], agent: Optional[VoiceAgent
             "meeting_at": meeting_at[:16] if re.match(r"^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}", meeting_at) else None,
             "meeting_kind": meeting_kind if meeting_kind in ("online", "in_person", "phone") else None,
             "meeting_about": str(data.get("meeting_about") or "").strip()[:300],
+            "promises": _promises(data.get("promises")),
             "handled": [h for h in dict.fromkeys(handled) if h in known],
         }
     except Exception as e:
         logger.warning(f"Call summary failed: {e}")
         return empty
+
+
+PROMISE_KINDS = ("send", "price", "visit", "other")  # a call-back and a meeting have their own keys
+
+
+def _promises(found) -> list[dict]:
+    """The analysis's promises in a fixed shape. Whether each quote is really in what the assistant said is checked later (leads/promises.py)."""
+    out = []
+    for p in found if isinstance(found, list) else []:
+        if not isinstance(p, dict):
+            continue
+        kind, what, words = str(p.get("kind") or "").strip().lower(), str(p.get("what") or "").strip(), str(p.get("words") or "").strip()
+        if kind in PROMISE_KINDS and what and words:
+            out.append({"kind": kind, "what": what[:200], "due": str(p.get("due") or "").strip()[:16] or None, "words": words[:400]})
+    return out[:5]
 
 
 async def transfer_brief(bot: Bot, transcript: list[dict], caller: Optional[str]) -> str:

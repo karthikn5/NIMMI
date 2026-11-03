@@ -242,6 +242,7 @@ class LeadIn(BaseModel):
 
 @router.put("/board/leads/{contact_id}")
 async def update_lead(contact_id: str, data: LeadIn, ctx: AuthContext = Depends(require_manager), db: AsyncSession = Depends(get_db)):
+    from leads import core as leads
     from voice import schedule
     c = (await db.execute(select(Contact).where(Contact.id == contact_id, Contact.user_id == ctx.owner_id))).scalars().first()
     if c is None:
@@ -251,16 +252,22 @@ async def update_lead(contact_id: str, data: LeadIn, ctx: AuthContext = Depends(
         if data.stage not in journeys.STAGES:
             raise HTTPException(status_code=400, detail="That stage doesn't exist")
         became_customer = data.stage == "customer" and "customer" not in (c.stage, c.lead_status)
-        wanted = STATUS_OF_STAGE.get(data.stage)  # the status says the same thing, so Schedule's calls follow
-        if wanted:
-            schedule.rate(c, wanted, "Set by the team", by=ctx.user_id)
-        elif c.lead_status in STATUS_OF_STAGE.values():
-            schedule.rate(c, "warm", "Set by the team", by=ctx.user_id)
-        c.stage = data.stage
+        if data.stage in ("customer", "lost") and c.stage != data.stage:
+            await leads.close(db, c, "won" if data.stage == "customer" else "lost", ctx.user_id, reason=None if data.stage == "customer" else "Moved on the board")
+        else:
+            if c.stage in ("customer", "lost") and data.stage != c.stage:  # moved back from closed: the same as Reopen on the lead's page
+                await leads.reopen(db, c, ctx.user_id)
+            wanted = STATUS_OF_STAGE.get(data.stage)  # the status says the same thing, so Schedule's calls follow
+            if wanted:
+                schedule.rate(c, wanted, "Set by the team", by=ctx.user_id)
+            elif c.lead_status in STATUS_OF_STAGE.values():
+                schedule.rate(c, "warm", "Set by the team", by=ctx.user_id)
+            leads.stage(db, c, data.stage, ctx.user_id)
     if data.assigned_to is not None:
-        if data.assigned_to and data.assigned_to not in {t["id"] for t in await _team(db, ctx.owner_id)}:
+        people = {t["id"]: t["name"] for t in await _team(db, ctx.owner_id)}
+        if data.assigned_to and data.assigned_to not in people:
             raise HTTPException(status_code=400, detail="That person isn't on your team")
-        c.assigned_to = data.assigned_to or None
+        await leads.assign(db, c, data.assigned_to or None, ctx.user_id, people)
     if data.tags is not None:
         c.tags = sorted({t.strip()[:40] for t in data.tags if t.strip()})
     await db.commit()

@@ -52,8 +52,18 @@ def next_window_start(now_utc: datetime, start: str) -> datetime:
     return candidate.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def maybe_placed(e: Exception) -> bool:
+    """Whether a failed dial request may still have placed the call: the request went out and no answer came back (a timeout while reading, the
+    connection dropped mid-answer). Errors before anything was sent (no connection, a full pool) and the provider's own refusals are safe to retry."""
+    import httpx
+    if isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.ProxyError, httpx.UnsupportedProtocol)):
+        return False
+    return isinstance(e, (httpx.ReadTimeout, httpx.WriteTimeout, httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError))
+
+
 async def dispatch_due_callbacks() -> None:
     """Dial queued call-backs and campaign calls that are due, within their calling hours and limits."""
+    from leads import contact as reach
     now = datetime.utcnow()
     async with async_session() as db:
         jobs = (await db.execute(
@@ -131,6 +141,18 @@ async def dispatch_due_callbacks() -> None:
             if not number or not number.e164:
                 job.status, job.last_error = "failed", "No active number to call from"
                 continue
+            undeclared = reach.a2p_blocked(number)  # TRAI: no automated call from an Indian number not declared for them
+            if undeclared:
+                job.last_error = undeclared
+                if job.campaign_id:
+                    campaigns[job.campaign_id].status = "paused"  # it waits for the declaration; Resume after it
+                else:
+                    job.status = "failed"
+                continue
+            busy = (await db.execute(select(CallbackJob.id).where(CallbackJob.user_id == job.user_id, CallbackJob.e164 == job.e164, CallbackJob.status == "calling",
+                                                                  CallbackJob.id != job.id).limit(1))).first()
+            if busy:
+                continue  # a call to them is under way: never two at once
             agent = (await db.execute(select(VoiceAgent).where(VoiceAgent.bot_id == job.bot_id))).scalars().first()
             detect = number.provider == "twilio" and bool(agent) and (agent.voicemail_action or "off") != "off"
 
@@ -165,8 +187,13 @@ async def dispatch_due_callbacks() -> None:
                 # Through Nimmi's account, or the customer's own Twilio/Exotel account for their numbers.
                 job.provider_call_id = await accounts.dial(db, number, job.e164, job.id, detect_voicemail=detect)
             except Exception as e:
-                logger.warning(f"Callback {job.id} failed to dial: {e}")
-                await retry_later(db, job, str(e)[:300], max_attempts)
+                logger.warning(f"Callback {job.id} failed to dial: {e!r}")
+                if maybe_placed(e):  # the provider may have taken it: dialling again could ring them twice
+                    job.status = "review"
+                    job.last_error = ("The phone service stopped answering after the call was sent, so it may have gone through. "
+                                      "Check Calls before calling again.")
+                else:
+                    await retry_later(db, job, str(e)[:300], max_attempts)
         await db.commit()
 
 
@@ -345,8 +372,18 @@ async def _loop() -> None:
             from voice import calendars
             fire_and_forget(email_agent.tick())  # the email agent, at each assistant's hour
             fire_and_forget(calendars.tick())  # the team's calendars: busy times, and meetings it hasn't caught up with
+            from leads import core as leads, promises as lead_promises
+            fire_and_forget(leads.tick())  # tasks that have come due, and first steps nobody took
+            fire_and_forget(lead_promises.tick())  # promises kept (from the records), the ones come due told, quiet conversations read for new ones
+            from meta_leads import core as meta_leads
+            fire_and_forget(meta_leads.tick())  # lead ads Meta named but nobody fetched yet, and the 15-minute catch-up
             from whatsapp import memory as whatsapp_memory, replies as whatsapp_replies
             await whatsapp_replies.sweep()  # WhatsApp answers whose timer was lost (a restart)
+            from instagram import accounts as instagram_accounts, replies as instagram_replies
+            await instagram_replies.sweep()  # Instagram answers whose timer was lost
+            fire_and_forget(instagram_accounts.tick())  # Instagram sign-ins renewed weekly, and ones that ran out shown
+            from instagram import comments as instagram_comments
+            fire_and_forget(instagram_comments.tick())  # comments waiting for a slot in Instagram's hour, or a reconnection
             if datetime.utcnow() - last_summaries > timedelta(minutes=2):
                 await whatsapp_memory.summarise_quiet()  # what quiet WhatsApp chats were about, for calls and later chats
                 from mail import small

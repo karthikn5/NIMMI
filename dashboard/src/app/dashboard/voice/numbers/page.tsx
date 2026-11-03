@@ -31,6 +31,7 @@ export default function NumbersPage() {
     const [docsFor, setDocsFor] = useState<PhoneNumber | null>(null);
     const [releasing, setReleasing] = useState<PhoneNumber | null>(null);
     const [swapping, setSwapping] = useState<PhoneNumber | null>(null);
+    const [declaring, setDeclaring] = useState<PhoneNumber | null>(null);
     const [topUp, setTopUp] = useState(false);
     const wallet = useBalance();
     // Your own Twilio/Exotel accounts. Only the workspace owner can see these (they hold keys).
@@ -102,6 +103,14 @@ export default function NumbersPage() {
                                             )}
                                             <Status tone={STATUS[n.status].tone}>{STATUS[n.status].label}</Status>
                                         </p>
+                                        {n.a2p?.needed && (
+                                            <p className="text-[13px] text-stone-500 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                                                {n.a2p.declared_at
+                                                    ? <span>Declared for automated calls on {formatDate(n.a2p.declared_at)}{n.a2p.proof ? ` (${n.a2p.proof})` : ""}.</span>
+                                                    : <span>Not declared for automated calls, so call-backs, follow-ups and campaigns won&apos;t dial from it.</span>}
+                                                <button type="button" className="text-plum hover:underline" onClick={() => setDeclaring(n)}>{n.a2p.declared_at ? "Change" : "Mark as declared"}</button>
+                                            </p>
+                                        )}
                                     </div>
                                     <Select
                                         aria-label={`Assistant for ${n.number}`}
@@ -208,6 +217,7 @@ export default function NumbersPage() {
                 needed={Math.max(0, (wallet.data?.monthly_commitment ?? 0) - (wallet.data?.balance ?? 0))}
                 onPaid={() => { wallet.reload(); numbers.reload(); }}
             />
+            <DeclareDialog key={declaring?.id ?? "none"} number={declaring} onClose={() => setDeclaring(null)} onSaved={(n) => { replace(n); setDeclaring(null); }} />
             <DocumentsDialog number={docsFor} onClose={() => setDocsFor(null)} onUpdated={(n) => { replace(n); setDocsFor(n.status === "pending_kyc" ? n : null); }} />
         </>
     );
@@ -323,6 +333,40 @@ const JOB_LABEL: Record<CallbackJob["status"], string> = {
 const JOB_TONE: Record<CallbackJob["status"], "good" | "warn" | "neutral" | "bad"> = {
     queued: "neutral", calling: "neutral", done: "good", failed: "bad", cancelled: "warn",
 };
+
+/** TRAI's Regulation 05 of 2026: every business declares, in advance, the numbers its automated calls come from to its phone provider. Nimmi can't do it for
+ * them: they confirm it here, with what shows it, and only then does anything automatic dial from the number. */
+function DeclareDialog({ number, onClose, onSaved }: { number: PhoneNumber | null; onClose: () => void; onSaved: (n: PhoneNumber) => void }) {
+    const toast = useToast();
+    const [proof, setProof] = useState(number?.a2p?.proof ?? "");
+    const [busy, setBusy] = useState(false);
+    const save = async (declared: boolean) => {
+        if (!number) return;
+        setBusy(true);
+        const res = await apiSave(`/api/voice/numbers/${number.id}/a2p`, "PUT", { declared, proof: declared ? proof : null });
+        setBusy(false);
+        if (!res.ok) return toast(res.message);
+        onSaved(res.data as PhoneNumber);
+        toast(declared ? "Saved. Automated calls can go from this number." : "Automated calls won't go from this number.");
+    };
+    return (
+        <Dialog open={!!number} onClose={onClose} title="Declared for automated calls"
+                description="Indian rules (TRAI, from November 2026) treat automated calls from a number not declared with its phone provider as spam, and the provider can block the number."
+                footer={<>
+                    {number?.a2p?.declared_at && <Button variant="ghost" disabled={busy} onClick={() => save(false)}>Not declared</Button>}
+                    <Button variant="ghost" onClick={onClose}>Cancel</Button>
+                    <Button variant="primary" disabled={busy || !proof.trim()} onClick={() => save(true)}>Save</Button>
+                </>}>
+            <div className="space-y-3 text-[13px] text-stone-600">
+                <p>Ask your phone provider (for Exotel: your account manager or support) to register {number?.number ?? "this number"} for automated (A2P) calls. Once they confirm, write down what shows it.</p>
+                <label className="block">
+                    <span className="text-xs text-stone-500">Their reference, or the date of their confirmation</span>
+                    <Input aria-label="What shows it" className="mt-1" maxLength={300} placeholder="Exotel ticket 4411, confirmed 3 Nov" value={proof} onChange={(e) => setProof(e.target.value)} />
+                </label>
+            </div>
+        </Dialog>
+    );
+}
 
 function DocumentsDialog({ number, onClose, onUpdated }: { number: PhoneNumber | null; onClose: () => void; onUpdated: (n: PhoneNumber) => void }) {
     const toast = useToast();

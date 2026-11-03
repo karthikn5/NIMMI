@@ -206,11 +206,14 @@ export interface LeadSources {
     address: string | null;
     indiamart_url: string | null;
     form_url: string | null;
+    google_url: string | null;    // Google lead forms
+    google_key: string | null;
+    connect_url: string | null;   // Zapier, Make, Pabbly
     forwarding: { code: string | null; link: string | null; at: string } | null;  // Gmail's confirmation
     lead_email: { enabled: boolean };
     lead_call: { enabled: boolean; minutes: number };
     recent: { id: string; channel: string; source: string | null; status: string; note: string | null; subject: string | null;
-              found: { name?: string; phone?: string; email?: string; wants?: string }; created_at: string | null }[];
+              found: { name?: string; phone?: string; email?: string; wants?: string }; created_at: string | null; test?: boolean }[];
 }
 
 /* Conversations by email (backend mail/inbox.py, mail/replies.py). */

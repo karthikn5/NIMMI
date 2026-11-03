@@ -16,6 +16,7 @@ from sqlalchemy.future import select
 from auth import AuthContext, client_ip, get_optional_ctx, rate_limit
 from database import async_session, get_db
 from backend.models import Bot, Conversation, Message
+from leads import origin as lead_origin
 from netsafe import UnsafeUrl, assert_public_url, safe_client
 import assist
 import behaviour
@@ -63,6 +64,7 @@ class ChatMessage(BaseModel):
     visitor_session_id: str = SessionId
     history: List[dict] = Field(default_factory=list)  # only the last 20 turns are kept
     is_demo: Optional[bool] = False
+    origin: Optional[dict] = None  # where the visitor first came from, as the embed saw it on the business's site (leads/origin.py)
 
     @field_validator("history")
     @classmethod
@@ -77,6 +79,7 @@ class VariableCapture(BaseModel):
     visitor_session_id: str = SessionId
     variable_name: str = Field(..., min_length=1, max_length=80)
     variable_value: str = Field("", max_length=50_000)  # stored up to 2000 characters
+    origin: Optional[dict] = None
 
 
 class AIPromptRequest(BaseModel):
@@ -137,6 +140,12 @@ async def _plan_ok(bot: Bot, chat_is_demo: bool, ctx: Optional[AuthContext], db:
     return await active_subscription(bot.bot_id, db) is not None
 
 
+def _first_touch(conv: Conversation, given: Optional[dict]) -> None:
+    """What brought the visitor, kept once: a later page of theirs doesn't change where they first came from."""
+    if given and not conv.origin:
+        conv.origin = lead_origin.from_widget(given)
+
+
 async def _conversation(bot: Bot, session_id: str, db: AsyncSession) -> Optional[Conversation]:
     return (await db.execute(
         select(Conversation).where(Conversation.bot_id == bot.bot_id, Conversation.visitor_session_id == session_id)
@@ -183,6 +192,7 @@ async def _pre_ai(chat: ChatMessage, bot: Bot, db: AsyncSession, live_chat: bool
         if not conv:
             conv = Conversation(bot_id=bot.bot_id, visitor_session_id=chat.visitor_session_id)
             db.add(conv)
+        _first_touch(conv, chat.origin)
         conv.handoff_requested, conv.handoff_status, conv.handoff_at = True, "pending", datetime.utcnow()
         await db.commit()
         await _request_handoff(bot, conv, chat.message)
@@ -194,6 +204,10 @@ async def _pre_ai(chat: ChatMessage, bot: Bot, db: AsyncSession, live_chat: bool
     if not conv:
         conv = Conversation(bot_id=bot.bot_id, visitor_session_id=chat.visitor_session_id)
         db.add(conv)
+        _first_touch(conv, chat.origin)
+        await db.commit()
+    elif chat.origin and not conv.origin:
+        _first_touch(conv, chat.origin)
         await db.commit()
     return conv, None, {}
 
@@ -387,6 +401,7 @@ async def capture_variables(data: VariableCapture, request: Request, db: AsyncSe
         rate_limit(f"new-conv:{client_ip(request)}", 30, 3600)  # many fresh "visitors" from one address is a script
         conv = Conversation(bot_id=bot.bot_id, visitor_session_id=data.visitor_session_id, captured_data={})
         db.add(conv)
+    _first_touch(conv, data.origin)
     captured = dict(conv.captured_data or {})
     if data.variable_name not in captured and len(captured) >= MAX_FIELDS:
         raise HTTPException(status_code=400, detail="Too many details for one conversation")

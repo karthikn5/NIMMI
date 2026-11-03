@@ -123,6 +123,9 @@ async def remove_member(member_id: str, ctx: AuthContext = Depends(get_ctx), db:
         raise HTTPException(status_code=404, detail="Member not found")
     owner_id, person_id = member.owner_id, member.member_id
     await db.delete(member)
+    if person_id:
+        from leads.core import let_go
+        await let_go(db, owner_id, person_id)
     await db.commit()
     if person_id:  # their mailbox and calendar leave with them
         from mail import mailbox

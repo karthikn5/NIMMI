@@ -20,6 +20,7 @@ from auth import AuthContext, get_ctx, rate_limit, require_manager
 from backend.models import (Bot, Conversation, IntegrationSettings, Message, TeamMember, User, WhatsAppChat, WhatsAppFile,
                             WhatsAppMessage, WhatsAppNumber)
 from database import get_db
+from notify.events import fire_and_forget
 from phone import to_e164
 from whatsapp import chats, graph, live, numbers, outbound, settings, storage
 
@@ -354,6 +355,9 @@ async def send_in_chat(chat_id: str, data: SendIn, ctx: AuthContext = Depends(ge
     await db.execute(update(WhatsAppMessage).where(WhatsAppMessage.chat_id == chat.id, WhatsAppMessage.direction == "in",
                                                    WhatsAppMessage.handled.is_(False)).values(handled=True))
     await db.commit()
+    if conv is not None:
+        from leads.contact import stop_for_chat
+        fire_and_forget(stop_for_chat(conv.conversation_id))  # one chase at a time: the team has them now
     if f is not None:
         w = await outbound.send_file(n, chat, f, sent_by="team", author_id=ctx.user_id, caption=data.caption)
     else:
@@ -377,6 +381,9 @@ async def pause_ai(chat_id: str, data: PauseIn, ctx: AuthContext = Depends(get_c
     if conv is not None:
         conv.handoff_status, conv.agent_id = "human", ctx.user_id
     await db.commit()
+    if conv is not None:
+        from leads.contact import stop_for_chat
+        fire_and_forget(stop_for_chat(conv.conversation_id))
     await live.chat_changed(ctx.owner_id, chat)
     return live.chat_json(chat)
 

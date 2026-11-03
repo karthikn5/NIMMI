@@ -22,6 +22,7 @@ os.environ.update({
     "GEMINI_API_KEY": "", "OPENAI_API_KEY": "", "PINECONE_API_KEY": "",  # tests never call real AI or search services
     "RESEND_API_KEY": "", "SMTP_HOST": "", "SARVAM_API_KEY": "",
     "ENFORCE_PLAN_LIMITS": "false",  # most tests aren't about plans; test_sites turns the limits on
+    "A2P_GATE": "off",  # most tests dial from Indian numbers nobody declared; test_lead_contact turns the TRAI check on
     "SITES_DOMAIN": "sites.test", "SITES_DIR": os.path.join(os.path.dirname(_DB), "site_files"),
     "CLOUDFLARE_API_TOKEN": "", "CLOUDFLARE_ZONE_ID": "", "SITES_EDGE_KEY": "edge-key",
     "VOICE_CHECK_PUBLIC_URL": "false",

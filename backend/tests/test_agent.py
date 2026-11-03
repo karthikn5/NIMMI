@@ -553,9 +553,17 @@ def test_every_read_tool_works_stays_in_the_workspace_and_never_calls_an_ai(clie
             db.add(call)
             await db.commit()
             return call.id
+    async def a_lead():
+        from backend.models import Contact
+        from database import async_session
+        async with async_session() as db:
+            lead = Contact(user_id=owner.id, bot_id=mine, e164="+919876543211", details={}, calls=1)
+            db.add(lead)
+            await db.commit()
+            return lead.id
     special = {"go_to": {"page": "builder", "assistant_id": mine}, "point_at": {"element": "nav.voice"},
                "connection_guide": {"provider": "calcom", "assistant_id": mine}, "get_call": {"call_id": run(a_call)},
-               "email_design": {"assistant_id": mine, "kind": "welcome"}}
+               "email_design": {"assistant_id": mine, "kind": "welcome"}, "lead_details": {"lead_id": run(a_lead)}}
     for name, t in registry.TOOLS.items():
         if t.level != "read" or t.internal:  # Nimmi's own tools act on a run: tested with the plan
             continue
@@ -603,10 +611,13 @@ def test_the_dashboard_and_the_agent_name_the_same_screens_and_elements():
     pages = "\n".join(p.read_text() for p in dashboard.rglob("*.tsx"))
     named = set(re.findall(r'data-agent="([a-z_.]+)"', pages))
     # Names built from a list in the page (data-agent={`nav.${...}`}): the list's items.
-    built = {"nav": ("assistants", "deployments", "live_chat", "questions", "voice", "whatsapp", "email", "integrations", "analytics", "billing"),
+    built = {"nav": ("assistants", "leads", "deployments", "live_chat", "questions", "voice", "whatsapp", "instagram", "email", "integrations", "analytics",
+                     "billing"),
              "voice.tab": ("overview", "agents", "knowledge", "contacts", "calls", "schedule", "campaigns", "data", "numbers", "compliance"),
              "whatsapp.tab": ("overview", "inbox", "assistant", "files", "settings"),
-             "email.tab": ("overview", "inbox", "automations", "journeys", "board", "drafts", "leads", "bulk", "reports", "history", "settings"),
+             "instagram.tab": ("overview", "inbox", "comments", "assistant", "settings"),
+             "email.tab": ("overview", "inbox", "automations", "journeys", "drafts", "bulk", "reports", "history", "settings"),
+             "leads.tab": ("attention", "all", "board", "sources", "reports"),
              "builder.tab": ("design", "knowledge", "behaviour", "flow", "leads")}
     for prefix, values in built.items():
         if "data-agent={`" + prefix + ".${" in pages:
